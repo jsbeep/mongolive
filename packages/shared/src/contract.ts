@@ -55,6 +55,46 @@ export interface DocumentSummary {
   updatedAt: number;
 }
 
+// ── 문서 목록 페이지 ──────────────────────────────────────────────────────────
+
+// 한 페이지(문서 목록)·한 화면(필드 목록)에 보여 줄 개수. 둘이 같은 단위를 쓴다.
+export const PAGE_SIZE = 5;
+
+export type DocumentSort =
+  | 'none'
+  | 'title-asc'
+  | 'title-desc'
+  | 'fields-desc'
+  | 'fields-asc'
+  | 'updated-desc'
+  | 'updated-asc';
+
+export interface DocumentQuery {
+  // 0부터 시작
+  page?: number;
+  pageSize?: number;
+  // 제목/미리보기에 포함된 글자(대소문자 무시)
+  filter?: string;
+  sort?: DocumentSort;
+  // 이 id의 문서가 들어 있는 페이지를 달라 — 참조를 따라 다른 페이지의 문서로 이동할 때.
+  // 그 문서가 (필터 결과에) 없으면 page를 그대로 쓴다.
+  aroundId?: string;
+  // 이 id의 문서가 몇 페이지에 있는지 알려 달라(응답의 markedPage) — 현재 선택된 문서의 페이지를 레일에 표시
+  markId?: string;
+}
+
+export interface DocumentPage {
+  items: DocumentSummary[];
+  page: number;
+  pageSize: number;
+  // 필터 적용 후 개수
+  total: number;
+  // 필터 적용 전 컬렉션 전체 개수
+  totalUnfiltered: number;
+  // markId 문서가 있는 페이지(필터 결과에 없으면 없음)
+  markedPage?: number;
+}
+
 export interface ReferenceInfo {
   databaseName: string;
   collectionName: string;

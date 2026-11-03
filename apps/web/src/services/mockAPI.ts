@@ -20,7 +20,9 @@ import {
   type ConnectionResult,
   type DatabaseSummary,
   type Document,
-  type DocumentSummary,
+  queryDocuments,
+  type DocumentPage,
+  type DocumentQuery,
   type FieldReferenceCandidate,
   type FieldValueCandidate,
   type FriendlyPatchEvent,
@@ -115,16 +117,17 @@ export const getCollections = async (dbId: string): Promise<CollectionSummary[]>
   }));
 };
 
-export const getDocuments = async (collectionId: string): Promise<DocumentSummary[]> => {
+export const getDocuments = async (collectionId: string, query?: DocumentQuery): Promise<DocumentPage> => {
   const snapshot = getSnapshot();
   const location = findCollection(snapshot, collectionId);
   if (!location) {
     return rejectWith('Collection not found');
   }
 
-  return location.collection.documents.map((document, index) =>
+  const summaries = location.collection.documents.map((document, index) =>
     summarizeDocument(document, location.collection.updatedAt, location.collection.titleKey, location.collection.primaryKey, index),
   );
+  return queryDocuments(summaries, query);
 };
 
 export const mutateData = async (op: MutationRequest): Promise<MutationResult> => {

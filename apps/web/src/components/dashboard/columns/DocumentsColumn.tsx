@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FileText, Tag, Check, X, ArrowLeft, KeyRound, Lock, Link, AlertTriangle, Filter } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import type { ActivePath, CollectionSummary, DocumentSummary, JsonObject, MutationRequest } from '../../../types/explorer';
+import type { ActivePath, CollectionSummary, DocumentSort, DocumentSummary, JsonObject, MutationRequest } from '../../../types/explorer';
+import type { DocumentListQuery, DocumentPageInfo } from '../../../hooks/useExplorerState';
 import { ColumnItem, ColumnSkeletonList } from './ColumnItem';
 import { AddItemButton } from './AddItemButton';
 import { DropOverlay } from './DropOverlay';
@@ -14,6 +15,7 @@ import { columnListStyles as styles } from './columnListStyles';
 import { isPathChanged } from '../../../utils/changedPaths';
 import { useFileDrop } from '../../../hooks/useFileDrop';
 import { FilterSortToolbar, type SortOption } from './FilterSortToolbar';
+import { PageRail, PageTransition } from './PageRail';
 
 const DOCUMENT_SORT_OPTIONS: SortOption[] = [
   { value: 'none', label: 'Default order' },
@@ -25,11 +27,22 @@ const DOCUMENT_SORT_OPTIONS: SortOption[] = [
   { value: 'updated-asc', label: 'Oldest updated' },
 ];
 
+// 검색어 입력이 멈춘 뒤 이만큼 기다렸다가 요청 — 글자마다 서버에 묻지 않도록
+const FILTER_DEBOUNCE_MS = 250;
+
 // ── Props ─────────────────────────────────────────────────────────────────────
+
+// 문서 목록의 페이지·검색·정렬 — 실제 처리는 데이터 소스(Mock/서버)가 하고 여기선 보여주기만 한다
+export interface DocumentListControls {
+  page: DocumentPageInfo | null;
+  query: DocumentListQuery;
+  onQueryChange: (patch: Partial<DocumentListQuery>) => void;
+}
 
 interface DocumentsColumnProps {
   path: ActivePath;
   documents: DocumentSummary[];
+  documentList: DocumentListControls;
   collections: CollectionSummary[];
   activeDocumentOid: string | null;
   isLoading: boolean;
@@ -51,6 +64,7 @@ interface DocumentsColumnProps {
 export function DocumentsColumn({
   path,
   documents,
+  documentList,
   collections,
   activeDocumentOid,
   isLoading,
@@ -82,41 +96,37 @@ export function DocumentsColumn({
   const [primaryKeyInput, setPrimaryKeyInput] = useState('');
   const [isManagingRefs, setIsManagingRefs] = useState(false);
 
-  // 문서 검색/정렬 — 토글 가능한 보조 툴바 (헤더의 필터 아이콘)
+  // 문서 검색/정렬 — 토글 가능한 보조 툴바 (헤더의 필터 아이콘). 거르기·정렬·페이지 자르기는
+  // 데이터 소스가 하고(현재 페이지만 받아오므로 브라우저에서 정렬하면 그 페이지 안에서만 섞인다),
+  // 여기서는 입력값만 넘긴다.
   const [isDocToolbarOpen, setIsDocToolbarOpen] = useState(false);
-  const [docFilterText, setDocFilterText] = useState('');
-  const [docSortMode, setDocSortMode] = useState('none');
-  const isDocFilterActive = docFilterText.trim().length > 0 || docSortMode !== 'none';
+  const { page: pageInfo, query, onQueryChange } = documentList;
+  const [filterInput, setFilterInput] = useState(query.filter);
+  // 컬렉션이 바뀌어 검색어가 초기화되면 입력창도 맞춘다
+  useEffect(() => { setFilterInput(query.filter); }, [query.filter]);
+  useEffect(() => {
+    if (filterInput === query.filter) return;
+    const timer = setTimeout(() => onQueryChange({ filter: filterInput }), FILTER_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+    // query.filter가 바뀐 경우는 위 effect가 입력창을 맞추므로 여기선 입력값 변화에만 반응
+  }, [filterInput]); // eslint-disable-line react-hooks/exhaustive-deps
+  const isDocFilterActive = query.filter.trim().length > 0 || query.sort !== 'none';
+  const totalAll = pageInfo?.totalUnfiltered ?? documents.length;
+  const totalMatched = pageInfo?.total ?? documents.length;
+  const pageCount = pageInfo ? Math.ceil(pageInfo.total / pageInfo.pageSize) : 1;
+  // 선택된 문서가 있는 페이지 — 지금 페이지에 보이면 지금 페이지, 아니면 서버가 알려준 페이지.
+  // 서버 값은 그걸 계산할 때의 선택(markId)이 지금 선택과 같을 때만 믿는다.
+  const markedPage = !activeDocumentOid
+    ? undefined
+    : documents.some((d) => d.id === activeDocumentOid)
+      ? pageInfo?.page
+      : pageInfo?.markId === activeDocumentOid
+        ? pageInfo.markedPage
+        : undefined;
 
-  const displayDocuments = (() => {
-    const needle = docFilterText.trim().toLowerCase();
-    let result = !needle
-      ? documents
-      : documents.filter((doc) => doc.title.toLowerCase().includes(needle) || doc.preview.toLowerCase().includes(needle));
-    switch (docSortMode) {
-      case 'title-asc':
-        result = [...result].sort((a, b) => a.title.localeCompare(b.title));
-        break;
-      case 'title-desc':
-        result = [...result].sort((a, b) => b.title.localeCompare(a.title));
-        break;
-      case 'fields-asc':
-        result = [...result].sort((a, b) => a.fieldCount - b.fieldCount);
-        break;
-      case 'fields-desc':
-        result = [...result].sort((a, b) => b.fieldCount - a.fieldCount);
-        break;
-      case 'updated-asc':
-        result = [...result].sort((a, b) => a.updatedAt - b.updatedAt);
-        break;
-      case 'updated-desc':
-        result = [...result].sort((a, b) => b.updatedAt - a.updatedAt);
-        break;
-      default:
-        break;
-    }
-    return result;
-  })();
+  // 페이지를 바꾸면 목록 맨 위부터 보이게
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { listRef.current?.scrollTo({ top: 0 }); }, [query.page]);
 
   // 컬럼 전체에 파일을 드롭하면 "문서 추가" 에디터를 열고 그 파일을 업로드한 것처럼 처리
   const { isDragOver: isColumnDragOver, dragHandlers } = useFileDrop((file) => {
@@ -227,7 +237,7 @@ export function DocumentsColumn({
             <div className="relative flex items-center gap-0 leading-none mr-0.5">
               <FileText size={15} className={styles.headerIcon} />
               <span className="absolute pl-[1px] -bottom-[0.2rem] right-0.5 translate-x-1/2 text-xs font-mono text-slate-500 tabular-nums shrink-0 leading-[0.9] bg-white rounded-s">
-                {isDocFilterActive ? `${displayDocuments.length}/${documents.length}` : documents.length}
+                {isDocFilterActive ? `${totalMatched}/${totalAll}` : totalAll}
               </span>
             </div>
             <span className={styles.headerTitle}>{collectionLabel}</span>
@@ -305,17 +315,18 @@ export function DocumentsColumn({
       {/* 문서 검색/정렬 툴바 */}
       {isDocToolbarOpen && (
         <FilterSortToolbar
-          filterText={docFilterText}
-          onFilterTextChange={setDocFilterText}
+          filterText={filterInput}
+          onFilterTextChange={setFilterInput}
           filterPlaceholder="Search title or preview…"
-          sortValue={docSortMode}
-          onSortChange={setDocSortMode}
+          sortValue={query.sort}
+          onSortChange={(value) => onQueryChange({ sort: value as DocumentSort })}
           sortOptions={DOCUMENT_SORT_OPTIONS}
         />
       )}
 
-      {/* 목록 */}
-      <div className={styles.list}>
+      {/* 목록 + 오른쪽 페이지 레일 */}
+      <div className="flex flex-1 min-h-0">
+      <div ref={listRef} className={styles.list}>
         {onBack && (
           <button
             type="button"
@@ -331,7 +342,14 @@ export function DocumentsColumn({
         {isLoading && !documents.length ? (
           <ColumnSkeletonList count={5} />
         ) : (
-          displayDocuments.map((doc) => {
+          <PageTransition
+            /* 전환 기준은 클릭한 번호(query.page)가 아니라 실제로 받아 온 페이지(pageInfo.page) —
+               응답 전에 펼쳐지면 이전 페이지 내용이 잠깐 다시 보인다 */
+            pageKey={pageInfo?.page ?? 0}
+            disabled={reduceMotion}
+            className="flex flex-col gap-0.5"
+          >
+          {documents.map((doc) => {
             const isEditing = editingId === `document:${doc.id}`;
             const isHighlighted = activeDatabaseName && activeCollectionName
               ? isPathChanged(changedPaths, `databases.${activeDatabaseName}.collections.${activeCollectionName}.documents.${doc.id}`)
@@ -387,7 +405,8 @@ export function DocumentsColumn({
                 onDelete={() => setDeleteTarget(doc)}
               />
             );
-          })
+          })}
+          </PageTransition>
         )}
 
         {/* 추가 카드 */}
@@ -426,18 +445,26 @@ export function DocumentsColumn({
             reduceMotion={reduceMotion}
           />
         )}
-        {!documents.length && (
+        {!isLoading && totalAll === 0 && (
           <div className={styles.empty}>
             <FileText size={28} className="opacity-30" />
             <span>No documents</span>
           </div>
         )}
-        {!!documents.length && !displayDocuments.length && (
+        {totalAll > 0 && totalMatched === 0 && (
           <div className={styles.empty}>
             <FileText size={28} className="opacity-30" />
             <span>No documents match the filter</span>
           </div>
         )}
+      </div>
+      <PageRail
+        page={query.page}
+        pageCount={pageCount}
+        markedPage={markedPage}
+        isBusy={isLoading}
+        onChange={(page) => onQueryChange({ page })}
+      />
       </div>
 
       {/* 삭제 확인 모달 */}

@@ -11,6 +11,8 @@ import {
   type ConnectionStatus,
   type DatabaseSummary,
   type Document,
+  type DocumentPage,
+  type DocumentSort,
   type DocumentSummary,
   type ExplorerPathSegment,
   type JsonValue,
@@ -69,6 +71,17 @@ export interface PendingFieldReference {
 
 // ── UseExplorerStateResult 타입 (Header 등 외부 컴포넌트에서 Pick 가능) ────────
 
+export interface DocumentListQuery {
+  page: number;
+  filter: string;
+  sort: DocumentSort;
+}
+
+// markId = markedPage를 계산할 때 기준이 된 문서 id(그 사이 선택이 바뀌었으면 markedPage는 낡은 값)
+export type DocumentPageInfo = Omit<DocumentPage, 'items'> & { markId?: string };
+
+const EMPTY_DOCUMENT_QUERY: DocumentListQuery = { page: 0, filter: '', sort: 'none' };
+
 export interface UseExplorerStateResult {
   // 상태
   connectionStatus: ConnectionStatus;
@@ -77,6 +90,9 @@ export interface UseExplorerStateResult {
   databases: DatabaseSummary[];
   collections: CollectionSummary[];
   documents: DocumentSummary[];
+  // 문서 목록 페이지 정보(현재 페이지·전체 개수) — 컬렉션을 안 열었으면 null
+  documentPage: DocumentPageInfo | null;
+  documentQuery: DocumentListQuery;
   openDocument: Document | null;
   editingId: string | null;
   isLoading: boolean;
@@ -96,6 +112,8 @@ export interface UseExplorerStateResult {
   selectDatabase: (name: string) => Promise<void>;
   selectCollection: (name: string, label: string) => Promise<void>;
   selectDocument: (oid: string, title: string) => Promise<void>;
+  // 문서 목록 검색어/정렬/페이지 변경. 검색어나 정렬이 바뀌면 첫 페이지로 간다.
+  setDocumentQuery: (patch: Partial<DocumentListQuery>) => Promise<void>;
   pushJsonPath: (path: ActivePath) => void;
   popToIndex: (index: number) => void;
   pushFieldPath: (segments: string[]) => void;
@@ -125,6 +143,45 @@ export function useExplorerState(): UseExplorerStateResult {
   const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [documentPage, setDocumentPage] = useState<DocumentPageInfo | null>(null);
+  const [documentQuery, setDocumentQueryState] = useState<DocumentListQuery>(EMPTY_DOCUMENT_QUERY);
+  const documentQueryRef = useRef<DocumentListQuery>(EMPTY_DOCUMENT_QUERY);
+  // 문서 목록 요청 번호 — 검색어를 빠르게 치면 응답이 순서 없이 올 수 있어, 마지막 요청의 응답만 반영한다
+  const documentRequestSeq = useRef(0);
+
+  const applyDocumentQuery = useCallback((query: DocumentListQuery) => {
+    documentQueryRef.current = query;
+    setDocumentQueryState(query);
+  }, []);
+
+  // 문서 목록을 비운다(컬렉션을 벗어날 때) — 검색어/정렬/페이지도 초기화
+  const clearDocuments = useCallback(() => {
+    documentRequestSeq.current += 1;
+    setDocuments([]);
+    setDocumentPage(null);
+    applyDocumentQuery(EMPTY_DOCUMENT_QUERY);
+  }, [applyDocumentQuery]);
+
+  // 한 페이지를 받아 상태에 반영한다. aroundId를 주면 그 문서가 있는 페이지를 받는다.
+  // 반환값 false = 더 늦게 보낸 요청이 있어서 이 응답은 버렸다.
+  const loadDocuments = useCallback(async (
+    database: string,
+    collection: string,
+    query: DocumentListQuery,
+    aroundId?: string,
+  ): Promise<boolean> => {
+    const seq = ++documentRequestSeq.current;
+    // 선택된 문서가 몇 페이지에 있는지도 같이 묻는다(레일 표시용) — 참조 이동이면 그 대상이 곧 선택될 문서
+    const markId = aroundId ?? activeDocumentOidRef.current ?? undefined;
+    const page = await api.getDocuments(collectionKey(database, collection), { ...query, aroundId, markId });
+    if (seq !== documentRequestSeq.current) return false;
+    const { items, ...info } = page;
+    setDocuments(items);
+    setDocumentPage({ ...info, markId });
+    // 서버가 페이지 번호를 고쳤을 수 있다(범위 밖 → 마지막 페이지, aroundId → 그 문서의 페이지)
+    applyDocumentQuery({ ...query, page: page.page });
+    return true;
+  }, [applyDocumentQuery]);
   const [openDocument, setOpenDocument] = useState<Document | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -235,7 +292,7 @@ export function useExplorerState(): UseExplorerStateResult {
       activeDocumentOidRef.current = null;
       setActiveDatabase(name);
       setCollections(cols);
-      setDocuments([]);
+      clearDocuments();
       setOpenDocument(null);
       setActivePaths([
         {
@@ -252,7 +309,7 @@ export function useExplorerState(): UseExplorerStateResult {
     } finally {
       setIsLoading(false);
     }
-  }, [showToast]);
+  }, [showToast, clearDocuments]);
 
   const selectCollection = useCallback(async (name: string, label: string) => {
     if (activeCollectionRef.current === name && activePaths.length > 1) {
@@ -264,10 +321,9 @@ export function useExplorerState(): UseExplorerStateResult {
     try {
       // DB로 한정해서 조회한다 — 이름만 넘기면 findCollection이 전체 DB를 훑어
       // 다른 DB의 동명 컬렉션(users 등)을 먼저 집어온다
-      const docs = await api.getDocuments(collectionKey(activeDatabaseRef.current ?? '', name));
+      await loadDocuments(activeDatabaseRef.current ?? '', name, EMPTY_DOCUMENT_QUERY);
       activeCollectionRef.current = name;
       activeDocumentOidRef.current = null;
-      setDocuments(docs);
       setOpenDocument(null);
       setActivePaths((prev) => {
         const base: NormalActivePath = {
@@ -423,9 +479,10 @@ export function useExplorerState(): UseExplorerStateResult {
         return;
       }
       const { databaseName, collectionName, collectionLabel, documentTitle } = info;
-      const [cols, docs, doc] = await Promise.all([
+      // 문서 목록은 그 문서가 들어 있는 페이지로 연다(aroundId)
+      const [cols, , doc] = await Promise.all([
         api.getCollections(databaseName),
-        api.getDocuments(collectionKey(databaseName, collectionName)),
+        loadDocuments(databaseName, collectionName, EMPTY_DOCUMENT_QUERY, oid),
         api.getFullDocumentById(oid),
       ]);
 
@@ -435,7 +492,6 @@ export function useExplorerState(): UseExplorerStateResult {
 
       setActiveDatabase(databaseName);
       setCollections(cols);
-      setDocuments(docs);
       setOpenDocument(doc);
       setActivePaths([
         {
@@ -507,9 +563,9 @@ export function useExplorerState(): UseExplorerStateResult {
   }, []);
 
   const finalizeNavigateFieldReference = useCallback(async (candidate: FieldReferenceCandidate) => {
-    const [cols, docs, doc] = await Promise.all([
+    const [cols, , doc] = await Promise.all([
       api.getCollections(candidate.database),
-      api.getDocuments(collectionKey(candidate.database, candidate.collection)),
+      loadDocuments(candidate.database, candidate.collection, EMPTY_DOCUMENT_QUERY, candidate.documentId),
       api.getFullDocumentByIdInCollection(candidate.database, candidate.collection, candidate.documentId),
     ]);
 
@@ -519,7 +575,6 @@ export function useExplorerState(): UseExplorerStateResult {
 
     setActiveDatabase(candidate.database);
     setCollections(cols);
-    setDocuments(docs);
     setOpenDocument(doc);
     setActivePaths([
       {
@@ -614,7 +669,7 @@ export function useExplorerState(): UseExplorerStateResult {
     activeCollectionRef.current = null;
     activeDocumentOidRef.current = null;
     setActiveDatabase(nextDb);
-    setDocuments([]);
+    clearDocuments();
     setOpenDocument(null);
     setEditingId(null);
     if (!nextDb) {
@@ -649,13 +704,13 @@ export function useExplorerState(): UseExplorerStateResult {
         // 현재 보고 있던 컬렉션 자체가 삭제됨 — 문서/탐색 상태 초기화 (getDocuments 호출 시 실패하므로 분기)
         activeCollectionRef.current = null;
         activeDocumentOidRef.current = null;
-        setDocuments([]);
+        clearDocuments();
         setOpenDocument(null);
         setActivePaths((prev) => prev.slice(0, 1));
         setEditingId(null);
       } else if ('collection' in op && typeof op.collection === 'string' && activeCollectionRef.current === op.collection) {
-        const docs = await api.getDocuments(collectionKey(activeDatabaseRef.current ?? '', op.collection));
-        setDocuments(docs);
+        // 같은 검색어/정렬/페이지로 다시 받는다
+        await loadDocuments(activeDatabaseRef.current ?? '', op.collection, documentQueryRef.current);
         // 문서 추가/삭제/수정으로 컬렉션 용량(sizeMb)·문서 수가 바뀌므로 컬렉션 메타도 같이 갱신
         if ('database' in op && typeof op.database === 'string') {
           const cols = await api.getCollections(op.database);
@@ -718,7 +773,7 @@ export function useExplorerState(): UseExplorerStateResult {
         setCollections(await api.getCollections(db));
         const col = activeCollectionRef.current;
         if (col) {
-          setDocuments(await api.getDocuments(collectionKey(db, col)));
+          await loadDocuments(db, col, documentQueryRef.current);
           const docId = activeDocumentOidRef.current;
           if (docId) {
             setOpenDocument(await api.getFullDocumentByIdInCollection(db, col, docId).catch(() => null));
@@ -743,7 +798,7 @@ export function useExplorerState(): UseExplorerStateResult {
       activeCollectionRef.current = null;
       activeDocumentOidRef.current = null;
       setCollections(cols);
-      setDocuments([]);
+      clearDocuments();
       setOpenDocument(null);
       setActivePaths([
         {
@@ -770,10 +825,27 @@ export function useExplorerState(): UseExplorerStateResult {
     const key = collectionKey(database, collection);
     return api.subscribeToChanges(key, () => {
       if (activeDatabaseRef.current === database && activeCollectionRef.current === collection) {
-        void api.getDocuments(key).then(setDocuments);
+        void loadDocuments(database, collection, documentQueryRef.current);
       }
     });
-  }, []);
+  }, [loadDocuments]);
+
+  const setDocumentQuery = useCallback(async (patch: Partial<DocumentListQuery>) => {
+    const prev = documentQueryRef.current;
+    const next = { ...prev, ...patch };
+    const criteriaChanged = next.filter !== prev.filter || next.sort !== prev.sort;
+    if (criteriaChanged && patch.page === undefined) next.page = 0;
+    // 입력창이 바로 반응하도록 먼저 반영하고, 결과는 응답이 오면 채운다
+    applyDocumentQuery(next);
+    const db = activeDatabaseRef.current;
+    const col = activeCollectionRef.current;
+    if (!db || !col) return;
+    try {
+      await loadDocuments(db, col, next);
+    } catch {
+      showToast('Could not load documents.', 'error');
+    }
+  }, [applyDocumentQuery, loadDocuments, showToast]);
 
   return {
     connectionStatus,
@@ -782,6 +854,8 @@ export function useExplorerState(): UseExplorerStateResult {
     databases,
     collections,
     documents,
+    documentPage,
+    documentQuery,
     openDocument,
     editingId,
     isLoading,
@@ -797,6 +871,7 @@ export function useExplorerState(): UseExplorerStateResult {
     selectDatabase,
     selectCollection,
     selectDocument,
+    setDocumentQuery,
     pushJsonPath,
     popToIndex,
     pushFieldPath,

@@ -8,7 +8,8 @@ import type {
   ConnectionResult,
   DatabaseSummary,
   Document,
-  DocumentSummary,
+  DocumentPage,
+  DocumentQuery,
   FieldReferenceCandidate,
   FieldValueCandidate,
   JsonValue,
@@ -22,8 +23,8 @@ export interface DataSource {
   connect(config: ConnectionConfig): Promise<ConnectionResult>;
   listDatabases(): Promise<DatabaseSummary[]>;
   getCollections(database: string): Promise<CollectionSummary[]>;
-  // collectionId는 collectionKey(database, collection) 형식
-  getDocuments(collectionId: string): Promise<DocumentSummary[]>;
+  // collectionId는 collectionKey(database, collection) 형식. 필터·정렬·페이지는 데이터 소스가 처리한다.
+  getDocuments(collectionId: string, query?: DocumentQuery): Promise<DocumentPage>;
 
   // ── 문서 ──
   getDocumentById(oid: string, projectionPath?: string[]): Promise<Document>;

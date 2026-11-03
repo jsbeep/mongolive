@@ -4,6 +4,7 @@ import { Check, X, Trash2, ChevronRight, ToggleLeft, Hash, Type, Braces, List, L
 import { cn } from '../../utils/cn';
 import { SPRING_SHARP } from '../../utils/motionPresets';
 import {
+  collectionKey,
   dateMs,
   displayValue,
   isOid,
@@ -263,11 +264,12 @@ export function InlineSegmentEditor({
   }, [selectedType, objectIdMode, activeDatabaseName]);
 
   useEffect(() => {
-    if (!refCollectionName) { setRefDocs([]); return; }
-    api.getDocuments(refCollectionName)
-      .then((docs) => setRefDocs(docs.map((d) => ({ id: d.id, title: d.title }))))
+    if (!refCollectionName || !activeDatabaseName) { setRefDocs([]); return; }
+    // 드롭다운으로 고르는 용도라 한 페이지가 아니라 넉넉히(서버 상한 500) 받는다
+    api.getDocuments(collectionKey(activeDatabaseName, refCollectionName), { pageSize: 500 })
+      .then((page) => setRefDocs(page.items.map((d) => ({ id: d.id, title: d.title }))))
       .catch(() => setRefDocs([]));
-  }, [refCollectionName]);
+  }, [refCollectionName, activeDatabaseName]);
 
   // 필드 기반 참조(FK)로 선언된 필드 — 값 입력 보조용 후보 목록
   const [fieldRefCandidates, setFieldRefCandidates] = useState<FieldValueCandidate[]>([]);

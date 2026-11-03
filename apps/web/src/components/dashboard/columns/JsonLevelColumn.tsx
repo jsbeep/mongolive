@@ -19,6 +19,7 @@ import {
   type MutationRequest,
   type NormalActivePath,
   type ReferenceActivePath,
+  PAGE_SIZE,
 } from '../../../types/explorer';
 import { api } from '../../../services/api';
 import { InlineSegmentEditor } from '../../editors/InlineSegmentEditor';
@@ -28,6 +29,7 @@ import { CopyBtn } from './CopyBtn';
 import { FieldItem } from './FieldItem';
 import { HeaderIcon } from './HeaderIcon';
 import { DropOverlay } from './DropOverlay';
+import { PageRail, PageTransition } from './PageRail';
 import { getFieldType, resolveAtPath, getEntries, hasExtendedTypes } from '../../../utils/jsonTree';
 import { isPathChanged } from '../../../utils/changedPaths';
 import { useFileDrop } from '../../../hooks/useFileDrop';
@@ -41,8 +43,6 @@ const FIELD_SORT_OPTIONS: SortOption[] = [
   { value: 'type', label: 'Type' },
 ];
 
-// 필드/배열 요소가 이 개수를 넘으면 한 번에 다 그리지 않고 일부만 렌더링한다
-const ENTRY_RENDER_CAP = 100;
 
 // 재귀 중첩 모드 — 스크롤하다 헤더가 위로 지나간 단계들을 모아 보여주는 sticky breadcrumb 높이(px)
 const CHAIN_BREADCRUMB_HEIGHT = 36;
@@ -198,9 +198,9 @@ export function JsonLevelColumn({
   // 않는다 — 그러면 막 켠 토글이 첫 필드를 추가하기도 전에 꺼져버린다.
   const [ejsonMode, setEjsonMode] = useState(() => hasExtendedTypes(currentNode));
 
-  // 노드를 옮길 때마다 "더 보기" 상태 초기화
-  const [showAllEntries, setShowAllEntries] = useState(false);
-  useEffect(() => { setShowAllEntries(false); }, [displayDoc, projectionPath.join('.')]);
+  // 필드가 PAGE_SIZE개를 넘으면 페이지로 나눠 그린다(문서 목록과 같은 단위). 문서는 이미 통째로
+  // 받아와 있으므로 서버에 묻지 않고 화면에서만 자른다.
+  const [entryPage, setEntryPage] = useState(0);
 
   // 필드 검색/정렬 — 토글 가능한 보조 툴바 (헤더의 필터 아이콘)
   const [isFieldToolbarOpen, setIsFieldToolbarOpen] = useState(false);
@@ -229,8 +229,31 @@ export function JsonLevelColumn({
     return result;
   })();
 
-  const hasMoreEntries = displayEntries.length > ENTRY_RENDER_CAP && !showAllEntries;
-  const visibleEntries = hasMoreEntries ? displayEntries.slice(0, ENTRY_RENDER_CAP) : displayEntries;
+  const entryPageCount = Math.max(1, Math.ceil(displayEntries.length / PAGE_SIZE));
+  // 필드가 지워져 페이지 수가 줄면 마지막 페이지로
+  const currentEntryPage = Math.min(entryPage, entryPageCount - 1);
+  const visibleEntries = displayEntries.slice(currentEntryPage * PAGE_SIZE, (currentEntryPage + 1) * PAGE_SIZE);
+
+  // 다음 컬럼에 펼쳐져 있는 필드의 key — 그 필드가 다른 페이지에 있으면 그 페이지를 보여준다
+  // (브레드크럼/경로 입력으로 깊은 곳에 바로 들어왔을 때 활성 표시가 안 보이는 일이 없게)
+  const nextProjection = nextActivePath?.projectionPath;
+  const activeChildKey =
+    nextProjection && nextProjection.length === projectionPath.length + 1 && projectionPath.every((seg, i) => nextProjection[i] === seg)
+      ? nextProjection[nextProjection.length - 1]
+      : undefined;
+  const activeChildIndex = activeChildKey === undefined ? -1 : displayEntries.findIndex((e) => e.key === activeChildKey);
+
+  // 다른 노드로 옮기거나 검색/정렬을 바꾸면 첫 페이지(또는 활성 필드가 있는 페이지)부터
+  useEffect(() => {
+    setEntryPage(activeChildIndex >= 0 ? Math.floor(activeChildIndex / PAGE_SIZE) : 0);
+    // activeChildIndex는 이 시점의 값만 쓰면 된다 — 사용자가 다른 페이지로 넘긴 뒤 다시 끌려가지 않게
+  }, [displayDoc, projectionPath.join('.'), fieldFilterText, fieldSortMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (activeChildIndex >= 0) setEntryPage(Math.floor(activeChildIndex / PAGE_SIZE));
+  }, [activeChildKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 페이지를 넘기면 목록 맨 위부터(중첩 컬럼은 자체 스크롤이 없으니 head 컬럼 몫)
+  useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [currentEntryPage]);
 
   // ── 탐색 — goSibling 패턴 ─────────────────────────────────────────────────
 
@@ -809,8 +832,9 @@ export function JsonLevelColumn({
         />
       )}
 
-      {/* 목록 */}
-      <div ref={scrollRef} className={cn('px-2 py-2 flex flex-col gap-0.5', isNested ? 'min-h-0' : 'flex-1 overflow-y-auto min-h-0')}>
+      {/* 목록 + 오른쪽 페이지 레일 */}
+      <div className={cn('flex min-h-0', !isNested && 'flex-1')}>
+      <div ref={scrollRef} className={cn('flex-1 min-w-0 px-2 py-2 flex flex-col gap-0.5', isNested ? 'min-h-0' : 'overflow-y-auto min-h-0')}>
         {!isNested && isInlineChain && chainBreadcrumb.length > 0 && (
           <div
             className="sticky -top-2 z-10 shrink-0 -mx-2 -mt-2 mb-1 flex items-center gap-1.5 overflow-x-auto whitespace-nowrap bg-white/95 backdrop-blur px-3 border-b border-slate-100/80"
@@ -831,20 +855,15 @@ export function JsonLevelColumn({
         ) : entries.length > 0 && !displayEntries.length ? (
           <p className="flex-1 flex items-center justify-center text-sm text-slate-400 py-10">No fields match the filter</p>
         ) : (
-          <AnimatePresence>
-            {visibleEntries.map(({ key, value }) => renderField(key, value))}
-          </AnimatePresence>
+          <PageTransition pageKey={currentEntryPage} disabled={reduceMotion} className="flex flex-col gap-0.5">
+            {/* initial={false}: 페이지째 펼쳐지므로 행마다 따로 나타나는 애니메이션은 생략(행 수만큼 드는 비용).
+                이 페이지를 보는 중에 새로 추가된 필드는 그대로 애니메이션된다. */}
+            <AnimatePresence initial={false}>
+              {visibleEntries.map(({ key, value }) => renderField(key, value))}
+            </AnimatePresence>
+          </PageTransition>
         )}
 
-        {hasMoreEntries && (
-          <button
-            type="button"
-            className="mx-1 my-1 px-3 py-2.5 rounded-2xl text-sm font-medium text-slate-500 bg-slate-50 hover:bg-slate-100 transition-colors"
-            onClick={() => setShowAllEntries(true)}
-          >
-            Showing {ENTRY_RENDER_CAP.toLocaleString()} of {displayEntries.length.toLocaleString()} · Show more
-          </button>
-        )}
 
         {/* 필드 추가 — object/array 노드면 depth 무관하게 항상 표시 */}
         {canAddField && (
@@ -897,6 +916,15 @@ export function JsonLevelColumn({
             />
           )
         )}
+      </div>
+      <PageRail
+        page={currentEntryPage}
+        pageCount={entryPageCount}
+        markedPage={activeChildIndex >= 0 ? Math.floor(activeChildIndex / PAGE_SIZE) : undefined}
+        onChange={setEntryPage}
+        // 중첩 컬럼은 자체 스크롤이 없다 — head 컬럼의 스크롤 안에서 위에 붙어 따라오게
+        className={isNested ? 'self-start sticky top-0' : undefined}
+      />
       </div>
 
       {/* 삭제 확인 모달 — createPortal로 최상위에 렌더 */}

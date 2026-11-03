@@ -1,7 +1,7 @@
 import { AnimatePresence, m } from 'framer-motion';
 import type { ActivePath, CollectionSummary, DocumentSummary, MutationRequest } from '../../../types/explorer';
 import { CollectionsColumn } from './CollectionsColumn';
-import { DocumentsColumn } from './DocumentsColumn';
+import { DocumentsColumn, type DocumentListControls } from './DocumentsColumn';
 import { SPRING_SOFT } from '../../../utils/motionPresets';
 
 // 컬렉션↔문서 전환 — 문서로 들어갈 땐 오른쪽에서, 뒤로 갈 땐 왼쪽에서 슬라이드
@@ -18,6 +18,7 @@ interface CollectionsDocumentsColumnProps {
   documentsPath: ActivePath | null;
   collections: CollectionSummary[];
   documents: DocumentSummary[];
+  documentList: DocumentListControls;
   activeCollectionName: string | null;
   activeDocumentOid: string | null;
   activeDatabaseName: string | null;
@@ -41,6 +42,7 @@ export function CollectionsDocumentsColumn({
   documentsPath,
   collections,
   documents,
+  documentList,
   activeCollectionName,
   activeDocumentOid,
   activeDatabaseName,
@@ -73,6 +75,7 @@ export function CollectionsDocumentsColumn({
             <DocumentsColumn
               path={documentsPath}
               documents={documents}
+              documentList={documentList}
               collections={collections}
               activeDocumentOid={activeDocumentOid}
               isLoading={isLoading}

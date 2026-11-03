@@ -50,6 +50,9 @@ type MillerColumnsProps = Pick<
   | 'maxVisibleColumns'
   | 'collections'
   | 'documents'
+  | 'documentPage'
+  | 'documentQuery'
+  | 'setDocumentQuery'
   | 'openDocument'
   | 'isLoading'
   | 'changedPaths'
@@ -78,6 +81,9 @@ export function MillerColumns({
   maxVisibleColumns,
   collections,
   documents,
+  documentPage,
+  documentQuery,
+  setDocumentQuery,
   openDocument,
   isLoading,
   changedPaths,
@@ -223,6 +229,7 @@ export function MillerColumns({
                   documentsPath={slot.documentsPath ?? null}
                   collections={collections}
                   documents={documents}
+                  documentList={{ page: documentPage, query: documentQuery, onQueryChange: (patch) => void setDocumentQuery(patch) }}
                   activeCollectionName={activeCollectionName}
                   activeDocumentOid={activeDocumentOid}
                   activeDatabaseName={activeDatabaseName}
@@ -245,6 +252,9 @@ export function MillerColumns({
                   reduceMotion={reduceMotion}
                   collections={collections}
                   documents={documents}
+                  documentPage={documentPage}
+                  documentQuery={documentQuery}
+                  setDocumentQuery={setDocumentQuery}
                   openDocument={openDocument}
                   isLoading={isLoading}
                   changedPaths={changedPaths}
@@ -329,6 +339,7 @@ function ColumnContent({ col, visibleLength, slotIndex, jsonChainTail, ...rest }
       <DocumentsColumn
         path={col}
         documents={rest.documents}
+        documentList={{ page: rest.documentPage, query: rest.documentQuery, onQueryChange: (patch) => void rest.setDocumentQuery(patch) }}
         collections={rest.collections}
         activeDocumentOid={rest.activeDocumentOid}
         isLoading={rest.isLoading}

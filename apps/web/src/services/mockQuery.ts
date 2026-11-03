@@ -1,17 +1,15 @@
 // path: src/services/mockQuery.ts
 import {
   collectionKey,
+  getDocumentId,
+  INDEX_FALLBACK_PREFIX,
+  summarizeDocument,
+  projectDocument,
   compareKey,
-  displayValue,
   idString,
-  isContainer,
   isOid,
-  isPlainObject,
-  valueKind,
   type DatabaseSummary,
   type Document,
-  type DocumentSummary,
-  type JsonObject,
   type JsonValue,
   type MockCollectionRecord,
   type MockDatabaseRecord,
@@ -58,58 +56,8 @@ export const estimateCollectionSizeMb = (
     ).toFixed(2),
   );
 
-const summarizePreviewValue = (value: JsonValue): string => {
-  if (isOid(value)) {
-    return `ObjectId(${value.$oid.slice(-8)})`;
-  }
-
-  if (isPlainObject(value) && typeof value.$ref === 'string' && isOid(value.$id)) {
-    return `DBRef(${value.$ref}:${value.$id.$oid.slice(-8)})`;
-  }
-
-  return displayValue(value);
-};
-
-export const summarizeDocument = (
-  document: Document,
-  updatedAt: number,
-  titleKey?: string,
-  primaryKey?: string,
-  index?: number,
-): DocumentSummary => {
-  const id = getDocumentId(document, primaryKey, index);
-  // 인덱스 fallback 토큰은 사용자에게 보여줄 의미가 없으니 표시용으로는 없는 셈 취급
-  const displayableId = id && !id.startsWith(INDEX_FALLBACK_PREFIX) ? id : undefined;
-  let title = displayableId ? (isOid(document._id) ? displayableId.slice(-8) : displayableId) : '[document]';
-
-  if (titleKey) {
-    const candidate = document[titleKey];
-    if (typeof candidate === 'string' && candidate.trim().length > 0) {
-      title = candidate;
-    }
-  } else {
-    const nameCandidate = document.name;
-    const titleCandidate = document.title;
-    if (typeof nameCandidate === 'string' && nameCandidate.trim().length > 0) {
-      title = nameCandidate;
-    } else if (typeof titleCandidate === 'string' && titleCandidate.trim().length > 0) {
-      title = titleCandidate;
-    }
-  }
-
-  const previewParts: string[] = [];
-  for (const [key, value] of Object.entries(document).slice(0, 2)) {
-    previewParts.push(`${key}: ${summarizePreviewValue(value as JsonValue)}`);
-  }
-
-  return {
-    id: id ?? '',
-    title,
-    preview: previewParts.join(', '),
-    fieldCount: Object.keys(document).length,
-    updatedAt,
-  };
-};
+// 문서 요약/식별자 규칙은 서버와 공유한다(@mongolive/shared/summary)
+export { getDocumentId, INDEX_FALLBACK_PREFIX, summarizeDocument };
 
 export const findCollection = (snapshot: MockSnapshot, targetCollectionId: string): CollectionLocation | undefined => {
   for (const [databaseName, database] of Object.entries(snapshot.databases)) {
@@ -152,22 +100,6 @@ export const findDocument = (snapshot: MockSnapshot, oid: string): DocumentLocat
 // findDocument/checkReference는 oid만 보도록 별도로 inline 비교를 쓰고 이 함수에 의존하지 않는다).
 // mutate/delete/duplicate/upsert 같은 "문서 자체를 가리키는" 경로에서 쓴다.
 //
-// _id가 없으면 컬렉션에 선언된 primaryKey 필드의 값을 식별자로 쓰고, 그 값도 없으면
-// (식별자가 정말 하나도 없는 raw plain 문서) 배열 인덱스로 fallback한다 — plain JSON을
-// 그대로 두고 싶다는 게 이 앱의 목표라, _id/PK가 없다고 강제로 뭔가를 채워 넣지 않는다.
-export const INDEX_FALLBACK_PREFIX = '__idx_';
-
-export const getDocumentId = (document: Document, primaryKey?: string, fallbackIndex?: number): string | undefined => {
-  const fromId = idString(document._id);
-  if (fromId !== undefined) return fromId;
-  if (primaryKey) {
-    const fromPk = idString(document[primaryKey]);
-    if (fromPk !== undefined) return fromPk;
-  }
-  if (fallbackIndex !== undefined) return `${INDEX_FALLBACK_PREFIX}${fallbackIndex}`;
-  return undefined;
-};
-
 export const findDocumentById = (
   snapshot: MockSnapshot,
   databaseName: string,
@@ -258,60 +190,5 @@ export const findDocumentsByField = (
   return matches;
 };
 
-// 프로젝션 미리보기 — 컨테이너는 비우고 스칼라(래퍼 포함)는 그대로 둔다
-const previewValue = (value: JsonValue): JsonValue => {
-  if (!isContainer(value)) {
-    return value;
-  }
-
-  return valueKind(value) === 'array' ? [] : {};
-};
-
-const shallowDocument = (document: Document): Document => {
-  const preview: JsonObject = {};
-  for (const [key, value] of Object.entries(document)) {
-    preview[key] = previewValue(value as JsonValue);
-  }
-  return preview as Document;
-};
-
-const projectValue = (value: JsonValue, path: string[]): JsonValue => {
-  if (path.length === 0) {
-    return previewValue(value);
-  }
-
-  const [segment, ...rest] = path;
-
-  if (Array.isArray(value)) {
-    const index = Number(segment);
-    if (!Number.isInteger(index) || index < 0 || index >= value.length) {
-      throw new Error('Projection path not found');
-    }
-
-    return [projectValue(value[index], rest)];
-  }
-
-  if (!isJsonObject(value)) {
-    throw new Error('Projection path not found');
-  }
-
-  const objectValue: JsonObject = value;
-  if (!(segment in objectValue)) {
-    throw new Error('Projection path not found');
-  }
-
-  const nextValue = objectValue[segment];
-  const projected: JsonObject = {
-    [segment]: projectValue(nextValue, rest),
-  };
-
-  return projected;
-};
-
-export const projectDocument = (document: Document, projectionPath?: string[]): Document => {
-  if (!projectionPath || projectionPath.length === 0) {
-    return shallowDocument(document);
-  }
-
-  return projectValue(document, projectionPath) as Document;
-};
+// 프로젝션은 서버 연결(RemoteDataSource)과 공유한다(@mongolive/shared/projection)
+export { projectDocument };

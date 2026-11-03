@@ -5,6 +5,8 @@
   "packageManager": "pnpm@12.16.1",
   "scripts": {
     "dev:web": "pnpm --filter @mongolive/web dev",
+    "dev:web:remote": "VITE_DATA_SOURCE=remote pnpm --filter @mongolive/web dev",
+    "dev:server": "pnpm --filter @mongolive/server dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck"
   }

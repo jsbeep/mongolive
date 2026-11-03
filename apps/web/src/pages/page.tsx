@@ -41,6 +41,9 @@ export default function ExplorerPage() {
     databases,
     collections,
     documents,
+    documentPage,
+    documentQuery,
+    setDocumentQuery,
     openDocument,
     isLoading,
     changedPaths,
@@ -103,6 +106,9 @@ export default function ExplorerPage() {
             maxVisibleColumns={maxVisibleColumns}
             collections={collections}
             documents={documents}
+            documentPage={documentPage}
+            documentQuery={documentQuery}
+            setDocumentQuery={setDocumentQuery}
             openDocument={openDocument}
             isLoading={isLoading}
             changedPaths={changedPaths}
