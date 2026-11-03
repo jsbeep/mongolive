@@ -56,7 +56,6 @@ import {
 } from './mockEventBus';
 import { generateObjectId } from '../utils/objectId';
 
-export { subscribeToChanges } from './mockEventBus';
 
 const rejectWith = <T>(message: string): Promise<T> => Promise.reject(new Error(message));
 

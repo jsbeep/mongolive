@@ -1,8 +1,10 @@
 // 서버 진입점: express 앱을 만들고, MongoDB에 연결한 뒤, 포트를 연다.
 import express, { type ErrorRequestHandler } from 'express';
+import { Server as SocketServer } from 'socket.io';
 import { config } from './config';
 import { checkMongo, closeClient } from './db';
 import { HttpError } from './names';
+import { startRealtime } from './realtime';
 import { mutateRouter } from './routes/mutate';
 import { readRouter } from './routes/read';
 import { refsRouter } from './routes/refs';
@@ -50,8 +52,15 @@ const start = async () => {
     console.log(`[server] http://${config.host}:${config.port}`);
   });
 
+  // 실시간 변경 전달 — 같은 포트의 /socket.io 경로. CORS를 열지 않으므로 다른 사이트의 페이지는 붙을 수 없다
+  // (개발 중엔 Vite 프록시를 거쳐 같은 주소로 들어온다)
+  const io = new SocketServer(server, { serveClient: false });
+  const realtime = startRealtime(io);
+
   // Ctrl+C / 재시작 시 Mongo 연결을 정리하고 종료
   const shutdown = async () => {
+    await realtime.stop();
+    io.close();
     server.close();
     await closeClient();
     process.exit(0);

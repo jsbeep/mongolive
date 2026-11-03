@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { Pencil, ChevronRight, Zap } from 'lucide-react';
 import { cn } from '../../../utils/cn';
 import { SPRING_HOVER } from '../../../utils/motionPresets';
 import { useHover } from '../../../hooks/useHover';
+import { ChangeFlash } from '../../common/ChangeFlash';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -38,17 +38,8 @@ export function ColumnItem({
   onEdit,
   onDelete,
 }: ColumnItemProps) {
-  const ref = useRef<HTMLDivElement>(null);
   const { hovered, hoverHandlers } = useHover();
   const hasActions = !!(onEdit || onDelete);
-
-  useEffect(() => {
-    if (!isHighlighted || !ref.current) return;
-    ref.current.animate(
-      [{ backgroundColor: '#d1fae5' }, { backgroundColor: 'transparent' }],
-      { duration: 700, easing: 'ease-out' },
-    );
-  }, [isHighlighted]);
 
   if (isLoading) {
     return <div className="h-[58px] rounded-2xl bg-slate-100/80 animate-pulse" />;
@@ -56,10 +47,10 @@ export function ColumnItem({
 
   return (
     <m.div
-      ref={ref}
       layout={!reduceMotion}
       className={cn(
-        'relative flex items-center gap-3 px-4 py-3.5 rounded-2xl cursor-pointer select-none transition-colors',
+        // isolate: 변경 강조 막(ChangeFlash)이 배경 위·글자 아래에 깔리도록
+        'relative isolate flex items-center gap-3 px-4 py-3.5 rounded-2xl cursor-pointer select-none transition-colors',
         isActive
           ? 'bg-emerald-50/80'
           : 'hover:bg-slate-50/80 active:bg-slate-100/50',
@@ -69,6 +60,7 @@ export function ColumnItem({
       whileTap={{ scale: 0.99 }}
       transition={{ type: 'spring', stiffness: 500, damping: 40 }}
     >
+      <ChangeFlash active={isHighlighted} />
       {/* 선택 인디케이터 — 왼쪽 작은 도트 (border-l 대신) */}
       <AnimatePresence>
         {isActive && (

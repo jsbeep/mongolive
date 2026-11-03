@@ -5,6 +5,7 @@ import { ChevronRight, Pencil } from 'lucide-react';
 import { cn } from '../../../utils/cn';
 import { SPRING_SNAPPY, SPRING_HOVER } from '../../../utils/motionPresets';
 import { useHover } from '../../../hooks/useHover';
+import { ChangeFlash } from '../../common/ChangeFlash';
 
 export interface FieldItemProps {
   fieldKey: string;
@@ -38,13 +39,15 @@ export function FieldItem({
       exit={{ opacity: 0 }}
       transition={SPRING_SNAPPY}
       className={cn(
-        'relative flex items-center gap-3 px-4 py-3.5 rounded-2xl',
+        // isolate: 변경 강조 막(ChangeFlash)이 배경 위·글자 아래에 깔리도록
+        'relative isolate flex items-center gap-3 px-4 py-3.5 rounded-2xl',
         onClick ? 'cursor-pointer hover:bg-slate-50/80 active:bg-slate-100/60' : 'cursor-default',
-        isActive ? 'bg-emerald-50/70' : isHighlighted ? 'bg-emerald-50/40' : '',
+        isActive && 'bg-emerald-50/70',
       )}
       {...hoverHandlers}
       onClick={onClick ?? undefined}
     >
+      <ChangeFlash active={isHighlighted} />
       {/* 현재 펼쳐진 경로(다음 컬럼으로 이어지는 필드) 표시용 좌측 인디케이터 */}
       <AnimatePresence>
         {isActive && (

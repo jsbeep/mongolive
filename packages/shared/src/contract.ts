@@ -140,6 +140,47 @@ export type ChangeResponse =
   | { type: 'invalidate'; database: string; collection: string; tracePath: string[] }
   | { type: 'system'; message: string; tracePath: string[] };
 
+// ── 실시간(서버 changeStream → socket.io) ─────────────────────────────────────
+// 소켓 이벤트: 클라이언트 → 서버 'view'(LiveView), 서버 → 클라이언트 'change'(LiveChange)·'status'(LiveStatus)
+
+export type LiveOperation =
+  | 'insert' | 'update' | 'replace' | 'delete'      // 문서
+  | 'create' | 'drop' | 'rename' | 'dropDatabase';  // 컬렉션/DB 구조
+
+// 지금 보고 있는 범위 — 서버는 이 컬렉션의 문서 변경은 자세히, 같은 DB의 다른 컬렉션 변경은 요약만 보낸다
+export interface LiveView {
+  database: string | null;
+  collection: string | null;
+}
+
+export interface LiveChange {
+  // resume token — 이벤트마다 고유. 로그/중복 제거용
+  id: string;
+  op: LiveOperation;
+  database: string;
+  collection?: string;
+  // 문서 이벤트: 대상 문서의 식별자 문자열(summary.getDocumentId 규칙)
+  documentId?: string;
+  // update 이벤트 + 지금 보고 있는 컬렉션일 때만: 바뀐 경로("a.b.0") → 새 값(Canonical)
+  updatedFields?: Record<string, EjsonValue>;
+  removedFields?: string[];
+  truncatedArrays?: { field: string; newSize: number }[];
+  // rename 이벤트: 바뀐 이름
+  to?: { database: string; collection: string };
+  // false = 요약본(updatedFields 등 생략) — 보고 있지 않은 컬렉션의 변경
+  detailed: boolean;
+  // MongoDB에 기록된 시각 / 서버가 받은 시각(ms) — 지연 측정(PerformanceMetrics)용
+  clusterTime: number;
+  serverTime: number;
+}
+
+export interface LiveStatus {
+  state: 'connecting' | 'running' | 'error';
+  error?: string;
+  // true면 이벤트를 놓쳤을 수 있다 — 화면을 전부 다시 받아야 한다
+  resync?: boolean;
+}
+
 // ── 변경 요청 ────────────────────────────────────────────────────────────────
 
 export interface MutateFieldSpec {

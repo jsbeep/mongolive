@@ -39,7 +39,10 @@ export const createMockDataSource = (): DataSource => {
       return true;
     },
 
-    subscribeToChanges: mock.subscribeToChanges,
+    // Mock 데이터는 이 앱 안에서만 바뀌고, 바꾼 쪽(훅)이 직접 다시 읽는다 — 바깥 변경 이벤트가 없다
+    setLiveView: () => undefined,
+    onLiveChange: () => () => undefined,
+    onLiveStatus: () => () => undefined,
 
     async listOwnedOids() {
       return getUniqueOids();

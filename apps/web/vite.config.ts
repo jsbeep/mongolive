@@ -17,6 +17,8 @@ export default defineConfig(({ mode }) => {
       // /api 요청을 서버(apps/server)로 넘긴다 — 브라우저 입장에선 같은 주소라 CORS 설정이 필요 없다
       proxy: {
         '/api': env.VITE_API_TARGET || 'http://127.0.0.1:4000',
+        // 실시간 변경(socket.io) — WebSocket 연결도 넘긴다
+        '/socket.io': { target: env.VITE_API_TARGET || 'http://127.0.0.1:4000', ws: true },
       },
     },
     resolve: {

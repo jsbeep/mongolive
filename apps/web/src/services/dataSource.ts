@@ -1,7 +1,6 @@
 // 앱이 데이터에 접근하는 유일한 표면. 컴포넌트/훅은 mock* 모듈을 직접 import하지 말고
 // services/api.ts의 `api`만 쓴다 — 그래야 Mock ↔ 실제 서버 구현을 갈아끼울 수 있다.
 import type {
-  ChangeResponse,
   CollectionExport,
   CollectionSummary,
   ConnectionConfig,
@@ -13,6 +12,9 @@ import type {
   FieldReferenceCandidate,
   FieldValueCandidate,
   JsonValue,
+  LiveChange,
+  LiveStatus,
+  LiveView,
   MutationRequest,
   MutationResult,
   ReferenceInfo,
@@ -45,7 +47,12 @@ export interface DataSource {
   undoLast(): Promise<boolean>;
 
   // ── 실시간 ──
-  subscribeToChanges(collectionId: string, callback: (change: ChangeResponse) => void): () => void;
+  // 지금 보는 범위를 알린다 — 그 컬렉션의 문서 변경은 자세히, 같은 DB의 다른 컬렉션은 요약으로 온다.
+  // Mock은 바깥에서 바뀔 일이 없으므로 아무 이벤트도 보내지 않는다.
+  setLiveView(view: LiveView): void;
+  // 반환값을 부르면 구독 해제
+  onLiveChange(listener: (change: LiveChange) => void): () => void;
+  onLiveStatus(listener: (status: LiveStatus) => void): () => void;
 
   // ── 메타데이터: 이 앱이 직접 만든 '고유 oid' (참조가 아닌 식별자 값) ──
   listOwnedOids(): Promise<string[]>;

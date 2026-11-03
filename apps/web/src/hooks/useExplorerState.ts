@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../services/api';
 import { useToast, type ToastMessage } from './useToast';
 import { useUniqueOidRegistry } from './useUniqueOidRegistry';
+import { CHANGE_FLASH_MS } from '../components/common/ChangeFlash';
 import {
   collectionKey,
   compareKey,
@@ -16,6 +17,8 @@ import {
   type DocumentSummary,
   type ExplorerPathSegment,
   type JsonValue,
+  type LiveChange,
+  type LiveStatus,
   type MutationRequest,
   type MutationResult,
   type FieldReferenceCandidate,
@@ -131,8 +134,20 @@ export interface UseExplorerStateResult {
   dismissToast: () => void;
   undo: () => Promise<void>;
   refresh: () => Promise<void>;
-  subscribe: (database: string, collection: string) => () => void;
 }
+
+// 실시간 이벤트를 이만큼 모았다가 한 번에 반영한다 — 연달아 오는 변경(일괄 수정 등)에 매번 다시 읽지 않도록
+const LIVE_BATCH_MS = 150;
+const STRUCTURE_OPS = new Set<LiveChange['op']>(['create', 'drop', 'rename', 'dropDatabase']);
+
+interface LivePending {
+  databases: boolean;
+  collections: boolean;
+  documents: boolean;
+  openDocument: boolean;
+  highlight: string[];
+}
+const emptyLivePending = (): LivePending => ({ databases: false, collections: false, documents: false, openDocument: false, highlight: [] });
 
 // ── 훅 ───────────────────────────────────────────────────────────────────────
 
@@ -663,6 +678,28 @@ export function useExplorerState(): UseExplorerStateResult {
 
   const dismissReferenceCandidates = useCallback(() => setReferenceCandidates(null), []);
 
+  // 변경된 경로를 강조(ChangeFlash)한다. 강조 중에 또 바뀌면 잠깐 껐다 다시 켜서 깜빡임을 새로 시작한다 —
+  // 항목은 '켜짐으로 바뀌는 순간'에 깜빡이므로, 켜진 채로 두면 연달아 온 변경이 보이지 않는다.
+  const changedPathsRef = useRef<string[]>([]);
+  const flashChangedPaths = useCallback((paths: string[]) => {
+    if (changedPathsTimerRef.current) clearTimeout(changedPathsTimerRef.current);
+    const apply = () => {
+      changedPathsRef.current = paths;
+      setChangedPaths(paths);
+      changedPathsTimerRef.current = setTimeout(() => {
+        changedPathsRef.current = [];
+        setChangedPaths([]);
+      }, CHANGE_FLASH_MS);
+    };
+    if (changedPathsRef.current.length > 0) {
+      changedPathsRef.current = [];
+      setChangedPaths([]);
+      requestAnimationFrame(apply);
+    } else {
+      apply();
+    }
+  }, []);
+
   // 지정한 DB로 포커스를 옮기고 탐색 상태를 컬렉션 목록까지만 남긴다 (null이면 빈 상태)
   const focusDatabase = useCallback(async (nextDb: string | null) => {
     activeDatabaseRef.current = nextDb;
@@ -693,11 +730,7 @@ export function useExplorerState(): UseExplorerStateResult {
     setIsLoading(true);
     try {
       const result = await api.mutate(op);
-      setChangedPaths(result.changedPaths);
-      // 하이라이트를 2초 후 자동으로 해제 — 그 전에 다른 mutate가 일어나면
-      // 타이머를 새로 잡아 다시 2초간 보여준다.
-      if (changedPathsTimerRef.current) clearTimeout(changedPathsTimerRef.current);
-      changedPathsTimerRef.current = setTimeout(() => setChangedPaths([]), 2000);
+      flashChangedPaths(result.changedPaths);
 
       // 관련 캐시 갱신
       if (op.type === 'deleteCollection' && activeCollectionRef.current === op.collection) {
@@ -753,10 +786,11 @@ export function useExplorerState(): UseExplorerStateResult {
     } finally {
       setIsLoading(false);
     }
-  }, [showToast, focusDatabase]);
+  }, [showToast, focusDatabase, flashChangedPaths]);
 
   const clearChangedPaths = useCallback(() => {
     if (changedPathsTimerRef.current) clearTimeout(changedPathsTimerRef.current);
+    changedPathsRef.current = [];
     setChangedPaths([]);
   }, []);
 
@@ -817,18 +851,137 @@ export function useExplorerState(): UseExplorerStateResult {
     }
   }, [showToast]);
 
-  // 실제 MongoDB ChangeStream을 붙일 자리의 mock — 아직 호출하는 컴포넌트는 없다.
-  // database/collection을 따로 받는다: 예전엔 컬렉션 이름 하나만 받아서 ① 이벤트 버스가
-  // 쓰는 `database.collection` 키와 형식이 어긋나 알림이 아예 안 오거나 ② 이름만
-  // 비교하는 바람에 다른 DB의 동명 컬렉션 변경에 반응하는 문제가 있었다.
-  const subscribe = useCallback((database: string, collection: string) => {
-    const key = collectionKey(database, collection);
-    return api.subscribeToChanges(key, () => {
-      if (activeDatabaseRef.current === database && activeCollectionRef.current === collection) {
-        void loadDocuments(database, collection, documentQueryRef.current);
+  // ── 실시간 반영 ────────────────────────────────────────────────────────────
+  // 서버(changeStream)가 보내는 변경을 받아 지금 화면에 걸린 부분만 다시 읽는다.
+  // 목록 순서·페이지는 서버가 정하므로 이벤트로 직접 고치지 않고 '현재 페이지 다시 받기'로 맞춘다.
+
+  // 지금 보는 DB/컬렉션을 서버에 알린다 — 그 컬렉션의 변경만 자세히 받는다
+  const activeCollectionName = useMemo(() => {
+    const docPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'documents');
+    return docPath?.kind === 'normal' ? docPath.collectionName ?? null : null;
+  }, [activePaths]);
+  useEffect(() => {
+    api.setLiveView({ database: activeDatabase, collection: activeCollectionName });
+  }, [activeDatabase, activeCollectionName]);
+
+  const livePendingRef = useRef<LivePending>(emptyLivePending());
+  const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushLive = useCallback(async () => {
+    liveTimerRef.current = null;
+    const pending = livePendingRef.current;
+    livePendingRef.current = emptyLivePending();
+    const db = activeDatabaseRef.current;
+    const col = activeCollectionRef.current;
+    const docId = activeDocumentOidRef.current;
+    try {
+      if (pending.databases) {
+        const dbs = await api.listDatabases();
+        setDatabases(dbs);
+        if (db && !dbs.some((d) => d.name === db)) {
+          showToast(`Database "${db}" was removed outside this app`, 'error');
+          await focusDatabase(dbs[0]?.name ?? null);
+          return;
+        }
       }
-    });
-  }, [loadDocuments]);
+      if (db && pending.collections) {
+        const cols = await api.getCollections(db);
+        setCollections(cols);
+        if (col && !cols.some((c) => c.name === col)) {
+          showToast(`Collection "${col}" was removed outside this app`, 'error');
+          activeCollectionRef.current = null;
+          activeDocumentOidRef.current = null;
+          clearDocuments();
+          setOpenDocument(null);
+          setActivePaths((prev) => prev.slice(0, 1));
+          setEditingId(null);
+          return;
+        }
+      }
+      if (db && col && pending.documents) {
+        await loadDocuments(db, col, documentQueryRef.current);
+      }
+      if (db && col && docId && pending.openDocument) {
+        const doc = await api.getFullDocumentByIdInCollection(db, col, docId).catch(() => null);
+        // 그 사이 다른 문서로 옮겼으면 버린다
+        if (activeDocumentOidRef.current === docId) {
+          if (doc) {
+            setOpenDocument(doc);
+          } else {
+            showToast('This document was deleted outside this app', 'error');
+            activeDocumentOidRef.current = null;
+            setOpenDocument(null);
+            setActivePaths((prev) => prev.slice(0, 2));
+            setEditingId(null);
+          }
+        }
+      }
+      if (pending.highlight.length) flashChangedPaths(pending.highlight);
+    } catch {
+      // 일시적인 실패 — 다음 변경이나 재연결(resync) 때 다시 맞춰진다
+    }
+  }, [showToast, focusDatabase, clearDocuments, loadDocuments, flashChangedPaths]);
+
+  const scheduleLive = useCallback(() => {
+    if (!liveTimerRef.current) liveTimerRef.current = setTimeout(() => void flushLive(), LIVE_BATCH_MS);
+  }, [flushLive]);
+
+  const handleLiveChange = useCallback((change: LiveChange) => {
+    const pending = livePendingRef.current;
+    const db = activeDatabaseRef.current;
+    const col = activeCollectionRef.current;
+
+    if (STRUCTURE_OPS.has(change.op)) {
+      // 컬렉션/DB 생성·삭제·이름변경 — 목록이 바뀐다
+      pending.databases = true;
+      if (change.database === db) pending.collections = true;
+    } else {
+      // 문서 추가/삭제는 DB·컬렉션 목록의 문서 수를 바꾼다(수정은 안 바뀌므로 목록은 그대로 둔다)
+      if (change.op === 'insert' || change.op === 'delete') {
+        pending.databases = true;
+        if (change.database === db) pending.collections = true;
+      }
+      if (change.database === db && change.collection === col) {
+        pending.documents = true;
+        if (change.documentId) {
+          const base = `databases.${db}.collections.${col}.documents.${change.documentId}`;
+          if (change.documentId === activeDocumentOidRef.current) {
+            pending.openDocument = true;
+            // 바뀐 필드 경로를 하이라이트(그 상위 필드·문서 행도 같이 켜진다 — isPathChanged)
+            const fields = change.op === 'update' ? Object.keys(change.updatedFields ?? {}) : [];
+            if (fields.length) pending.highlight.push(...fields.map((f) => `${base}.${f}`));
+            else pending.highlight.push(base);
+          } else if (change.op !== 'delete') {
+            pending.highlight.push(base);
+          }
+        }
+      }
+    }
+    scheduleLive();
+  }, [scheduleLive]);
+
+  const handleLiveStatus = useCallback((status: LiveStatus) => {
+    // 헤더의 연결 점 — 서버 연결이 끊기면 노랑/빨강
+    setConnectionStatus(status.state === 'running' ? 'connected' : status.state === 'connecting' ? 'connecting' : 'error');
+    if (status.resync) {
+      // 변경을 놓쳤을 수 있다 — 지금 화면에 걸린 걸 전부 다시 받는다
+      livePendingRef.current = { databases: true, collections: true, documents: true, openDocument: true, highlight: [] };
+      scheduleLive();
+    }
+  }, [scheduleLive]);
+
+  // 구독은 한 번만 — 핸들러는 ref로 최신 것을 부른다
+  const liveHandlersRef = useRef({ handleLiveChange, handleLiveStatus });
+  liveHandlersRef.current = { handleLiveChange, handleLiveStatus };
+  useEffect(() => {
+    const offChange = api.onLiveChange((change) => liveHandlersRef.current.handleLiveChange(change));
+    const offStatus = api.onLiveStatus((status) => liveHandlersRef.current.handleLiveStatus(status));
+    return () => {
+      offChange();
+      offStatus();
+      if (liveTimerRef.current) clearTimeout(liveTimerRef.current);
+    };
+  }, []);
 
   const setDocumentQuery = useCallback(async (patch: Partial<DocumentListQuery>) => {
     const prev = documentQueryRef.current;
@@ -889,6 +1042,5 @@ export function useExplorerState(): UseExplorerStateResult {
     dismissToast,
     undo,
     refresh,
-    subscribe,
   };
 }

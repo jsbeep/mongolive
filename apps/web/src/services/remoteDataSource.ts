@@ -1,8 +1,8 @@
 // 실제 서버(apps/server)에 붙는 DataSource 구현. 서버는 Canonical EJSON을 주고받으므로 변환 없이 그대로 쓴다.
 // 개발 중에는 Vite가 /api 요청을 서버로 넘겨준다(vite.config.ts의 proxy).
 import { projectDocument, summarizeDocument } from '@mongolive/shared';
+import { io, type Socket } from 'socket.io-client';
 import type {
-  ChangeResponse,
   CollectionExport,
   CollectionSummary,
   ConnectionConfig,
@@ -14,6 +14,9 @@ import type {
   FieldReferenceCandidate,
   FieldValueCandidate,
   JsonValue,
+  LiveChange,
+  LiveStatus,
+  LiveView,
   MutationRequest,
   MutationResult,
   ReferenceInfo,
@@ -83,6 +86,37 @@ export const createRemoteDataSource = (): DataSource => {
 
   const listDatabases = () => request<DatabaseSummary[]>('/databases');
 
+  // ── 실시간: socket.io 연결은 처음 필요할 때 연다 ──
+  let socket: Socket | null = null;
+  let view: LiveView = { database: null, collection: null };
+  let everConnected = false;
+  const changeListeners = new Set<(change: LiveChange) => void>();
+  const statusListeners = new Set<(status: LiveStatus) => void>();
+  const emitStatus = (status: LiveStatus) => statusListeners.forEach((listener) => listener(status));
+
+  const ensureSocket = (): Socket => {
+    if (socket) return socket;
+    // 같은 주소의 /socket.io — 개발 중엔 Vite 프록시가 서버로 넘긴다. 끊기면 socket.io가 알아서 다시 붙는다.
+    const next = io({ transports: ['websocket'] });
+    next.on('connect', () => {
+      // 서버는 소켓마다 채널을 기억하므로 다시 붙으면 지금 보는 범위를 다시 알려야 한다
+      next.emit('view', view);
+      // 끊겨 있던 동안의 변경은 받지 못했다 → 화면을 새로 받게 한다(첫 연결은 막 불러온 상태라 제외)
+      if (everConnected) emitStatus({ state: 'running', resync: true });
+      everConnected = true;
+    });
+    next.on('disconnect', () => emitStatus({ state: 'connecting' }));
+    next.on('connect_error', (e: Error) => emitStatus({ state: 'error', error: e.message }));
+    next.on('status', (status: LiveStatus) => emitStatus(status));
+    next.on('change', (change: LiveChange) => {
+      // 어딘가 바뀌었으니 oid 위치 캐시는 믿을 수 없다
+      oidCache.clear();
+      changeListeners.forEach((listener) => listener(change));
+    });
+    socket = next;
+    return next;
+  };
+
   return {
     async connect(config: ConnectionConfig): Promise<ConnectionResult> {
       const databases = await listDatabases();
@@ -145,9 +179,20 @@ export const createRemoteDataSource = (): DataSource => {
       return false;
     },
 
-    // 실시간 반영은 5단계(changeStream)에서 — 지금은 구독만 받고 아무것도 보내지 않는다
-    subscribeToChanges(_collectionId: string, _callback: (change: ChangeResponse) => void) {
-      return () => undefined;
+    setLiveView(next: LiveView) {
+      view = next;
+      const s = ensureSocket();
+      if (s.connected) s.emit('view', view);
+    },
+    onLiveChange(listener) {
+      ensureSocket();
+      changeListeners.add(listener);
+      return () => changeListeners.delete(listener);
+    },
+    onLiveStatus(listener) {
+      ensureSocket();
+      statusListeners.add(listener);
+      return () => statusListeners.delete(listener);
     },
 
     listOwnedOids: () => request<string[]>('/meta/owned-oids'),
