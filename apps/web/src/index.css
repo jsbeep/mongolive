@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+/* Custom scrollbar for column lists */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+/* 기능 설명 툴팁은 data-tt 속성 + TooltipLayer(body portal)로 처리한다.
+   ::after로 하면 컬럼의 z-index/overflow에 가리거나 잘려서 CSS만으로는 안 된다 —
+   이유는 src/components/common/TooltipLayer.tsx 주석 참고. */
