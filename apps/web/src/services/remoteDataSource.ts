@@ -15,13 +15,15 @@ import type {
   FieldValueCandidate,
   JsonValue,
   LiveChange,
+  LiveLogEntry,
   LiveStatus,
   LiveView,
   MutationRequest,
   MutationResult,
   ReferenceInfo,
+  ServerMetrics,
 } from '../types/explorer';
-import type { DataSource } from './dataSource';
+import type { ClientMetrics, DataSource } from './dataSource';
 
 const BASE = '/api';
 
@@ -93,6 +95,7 @@ export const createRemoteDataSource = (): DataSource => {
   const changeListeners = new Set<(change: LiveChange) => void>();
   const statusListeners = new Set<(status: LiveStatus) => void>();
   const emitStatus = (status: LiveStatus) => statusListeners.forEach((listener) => listener(status));
+  const logListeners = new Set<(entries: LiveLogEntry[], isBacklog: boolean) => void>();
 
   const ensureSocket = (): Socket => {
     if (socket) return socket;
@@ -101,6 +104,8 @@ export const createRemoteDataSource = (): DataSource => {
     next.on('connect', () => {
       // 서버는 소켓마다 채널을 기억하므로 다시 붙으면 지금 보는 범위를 다시 알려야 한다
       next.emit('view', view);
+      // 활동 패널이 열려 있었다면 기록 구독도 다시(최근 기록이 다시 오지만 패널이 id로 중복을 거른다)
+      if (logListeners.size > 0) next.emit('log:subscribe');
       // 끊겨 있던 동안의 변경은 받지 못했다 → 화면을 새로 받게 한다(첫 연결은 막 불러온 상태라 제외)
       if (everConnected) emitStatus({ state: 'running', resync: true });
       everConnected = true;
@@ -113,6 +118,8 @@ export const createRemoteDataSource = (): DataSource => {
       oidCache.clear();
       changeListeners.forEach((listener) => listener(change));
     });
+    next.on('log:backlog', (entries: LiveLogEntry[]) => logListeners.forEach((listener) => listener(entries, true)));
+    next.on('log', (entry: LiveLogEntry) => logListeners.forEach((listener) => listener([entry], false)));
     socket = next;
     return next;
   };
@@ -193,6 +200,27 @@ export const createRemoteDataSource = (): DataSource => {
       ensureSocket();
       statusListeners.add(listener);
       return () => statusListeners.delete(listener);
+    },
+
+    onActivityLog(listener) {
+      const s = ensureSocket();
+      logListeners.add(listener);
+      if (logListeners.size === 1 && s.connected) s.emit('log:subscribe');
+      return () => {
+        logListeners.delete(listener);
+        if (logListeners.size === 0 && s.connected) s.emit('log:unsubscribe');
+      };
+    },
+    async getMetrics(): Promise<ClientMetrics> {
+      const s = ensureSocket();
+      // 왕복 시간: 서버가 받자마자 응답하는 'rtt'를 보내고 응답까지 잰다(2초 안에 없으면 null)
+      const rtt = new Promise<number | null>((resolve) => {
+        if (!s.connected) return resolve(null);
+        const t0 = performance.now();
+        s.timeout(2000).emit('rtt', (err: Error | null) => resolve(err ? null : Math.round(performance.now() - t0)));
+      });
+      const [metrics, rttMs] = await Promise.all([request<ServerMetrics>('/metrics'), rtt]);
+      return { ...metrics, rttMs };
     },
 
     listOwnedOids: () => request<string[]>('/meta/owned-oids'),

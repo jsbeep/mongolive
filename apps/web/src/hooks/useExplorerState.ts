@@ -7,6 +7,8 @@ import {
   collectionKey,
   compareKey,
   idString,
+  isContainer,
+  summarizeDocument,
   type ActivePath,
   type CollectionSummary,
   type ConnectionStatus,
@@ -18,6 +20,7 @@ import {
   type ExplorerPathSegment,
   type JsonValue,
   type LiveChange,
+  type LiveLogEntry,
   type LiveStatus,
   type MutationRequest,
   type MutationResult,
@@ -122,6 +125,8 @@ export interface UseExplorerStateResult {
   pushFieldPath: (segments: string[]) => void;
   pushReference: (oid: string, fieldKey: string, popIndex?: number) => Promise<void>;
   navigateToReference: (oid: string) => Promise<void>;
+  // 활동 기록 한 줄이 가리키는 곳(DB/컬렉션/문서/바뀐 필드)으로 이동
+  navigateToChange: (entry: LiveLogEntry) => Promise<void>;
   pushReferenceByField: (database: string, collection: string, key: string, value: JsonValue, fieldKey: string, popIndex?: number) => Promise<void>;
   navigateToReferenceByField: (database: string, collection: string, key: string, value: JsonValue) => Promise<void>;
   resolveReferenceCandidate: (candidate: FieldReferenceCandidate) => Promise<void>;
@@ -983,6 +988,89 @@ export function useExplorerState(): UseExplorerStateResult {
     };
   }, []);
 
+  // ── 활동 기록에서 이동 ────────────────────────────────────────────────────
+  // 기록에는 값이 없고 경로만 있으므로 이동해서 보이는 건 '지금' 값이다.
+  //   문서 변경(insert/update/replace) → 그 문서가 있는 페이지 + 문서 열기, update면 바뀐 필드의 상위까지 펼쳐 강조
+  //   delete / 컬렉션 생성·이름변경 → 컬렉션까지만
+  //   그 사이 사라졌으면 열 수 있는 데까지 열고 알린다
+  const navigateToChange = useCallback(async (entry: LiveLogEntry) => {
+    if (entry.op === 'drop' || entry.op === 'dropDatabase') return;
+    const database = entry.op === 'rename' && entry.to ? entry.to.database : entry.database;
+    const collection = entry.op === 'rename' && entry.to ? entry.to.collection : entry.collection;
+    const isDocumentChange = entry.op === 'insert' || entry.op === 'update' || entry.op === 'replace';
+    const docBase = `databases.${database}.collections.${collection}.documents.${entry.documentId}`;
+
+    // 지금 보고 있는 위치가 이동할 위치와 '완전히 같으면' 경로는 건드리지 않고 강조만.
+    // (그 문서를 열었더라도 다른 필드를 펼쳐 두었거나, 컬렉션에서 문서를 열어 두었으면 이동한다)
+    const firstPath = entry.paths?.[0] ?? entry.removed?.[0];
+    const targetProjection = isDocumentChange && firstPath ? firstPath.split('.').slice(0, -1) : [];
+    const last = activePaths[activePaths.length - 1];
+    const sameCollection = activeDatabaseRef.current === database && activeCollectionRef.current === collection;
+    const exactlyHere = sameCollection && (
+      isDocumentChange && entry.documentId
+        ? last?.kind === 'normal' && last.columnKind === 'json' && last.documentOid === entry.documentId
+          && (last.projectionPath ?? []).join('.') === targetProjection.join('.')
+        : last?.columnKind === 'documents'
+    );
+    if (exactlyHere) {
+      if (entry.op === 'delete') showToast('This document was deleted', 'error');
+      else if (isDocumentChange) flashChangedPaths(entry.paths?.length ? entry.paths.map((p) => `${docBase}.${p}`) : [docBase]);
+      else flashChangedPaths([`databases.${database}.collections.${collection}`]);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const dbs = await api.listDatabases();
+      setDatabases(dbs);
+      if (!dbs.some((d) => d.name === database)) {
+        showToast(`Database "${database}" no longer exists`, 'error');
+        return;
+      }
+      const cols = await api.getCollections(database);
+      const colSummary = collection ? cols.find((c) => c.name === collection) : undefined;
+      if (!collection || !colSummary) {
+        await focusDatabase(database);
+        if (collection) showToast(`Collection "${collection}" no longer exists`, 'error');
+        return;
+      }
+
+      const doc = isDocumentChange && entry.documentId
+        ? await api.getFullDocumentByIdInCollection(database, collection, entry.documentId).catch(() => null)
+        : null;
+      if (!doc || !entry.documentId) {
+        // 문서까지 갈 수 없으면 컬렉션 목록까지
+        await focusDatabase(database);
+        await selectCollection(collection, colSummary.label || collection);
+        if (entry.op === 'delete') showToast('This document was deleted', 'error');
+        else if (isDocumentChange) showToast('This document no longer exists', 'error');
+        return;
+      }
+
+      const title = summarizeDocument(doc, 0, colSummary.titleKey, colSummary.primaryKey).title;
+      await finalizeNavigateFieldReference({ database, collection, documentId: entry.documentId, documentTitle: title });
+
+      // 바뀐 필드의 상위까지 펼친다 — 지금 문서에 실제로 있는 데까지만(그 사이 지워졌을 수 있다)
+      if (targetProjection.length) {
+        const reachable: string[] = [];
+        let node: JsonValue = doc;
+        for (const seg of targetProjection) {
+          if (!isContainer(node)) break;
+          const next: JsonValue | undefined = Array.isArray(node) ? node[Number(seg)] : node[seg];
+          if (next === undefined) break;
+          reachable.push(seg);
+          node = next;
+        }
+        if (reachable.length) pushFieldPath(reachable);
+      }
+      flashChangedPaths(entry.paths?.length ? entry.paths.map((p) => `${docBase}.${p}`) : [docBase]);
+    } catch {
+      showToast('Could not open this change', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activePaths, showToast, focusDatabase, selectCollection, finalizeNavigateFieldReference, pushFieldPath, flashChangedPaths]);
+
   const setDocumentQuery = useCallback(async (patch: Partial<DocumentListQuery>) => {
     const prev = documentQueryRef.current;
     const next = { ...prev, ...patch };
@@ -1030,6 +1118,7 @@ export function useExplorerState(): UseExplorerStateResult {
     pushFieldPath,
     pushReference,
     navigateToReference,
+    navigateToChange,
     pushReferenceByField,
     navigateToReferenceByField,
     resolveReferenceCandidate,

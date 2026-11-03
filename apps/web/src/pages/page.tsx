@@ -9,6 +9,8 @@ import { Breadcrumbs } from '../components/dashboard/Breadcrumbs';
 import { MillerColumns } from '../components/dashboard/MillerColumns';
 import { ReferenceCandidatesModal } from '../components/common/ReferenceCandidatesModal';
 import { TooltipLayer } from '../components/common/TooltipLayer';
+import { ActivityPanel } from '../components/activity/ActivityPanel';
+import { useActivityLog } from '../hooks/useActivityLog';
 import { SPRING_SOFT } from '../utils/motionPresets';
 
 // ── 스타일 ────────────────────────────────────────────────────────────────────
@@ -28,6 +30,8 @@ const styles = {
 export default function ExplorerPage() {
   const state = useExplorerState();
   const [showIntro, setShowIntro] = useState(true);
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
+  const activityLog = useActivityLog();
 
   // 초기 연결
   useEffect(() => {
@@ -76,6 +80,9 @@ export default function ExplorerPage() {
     undo,
     refresh,
   } = state;
+  // 활동 패널의 '이 컬렉션' 범위 — 문서 목록 컬럼이 열려 있으면 그 컬렉션 이름
+  const documentsPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'documents');
+  const activeCollectionName = documentsPath?.kind === 'normal' ? documentsPath.collectionName ?? null : null;
 
   return (
     <div className={styles.root}>
@@ -90,6 +97,21 @@ export default function ExplorerPage() {
           maxVisibleColumns={maxVisibleColumns}
           setMaxVisibleColumns={setMaxVisibleColumns}
           onRefresh={() => void refresh()}
+          isActivityOpen={isActivityOpen}
+          hasActivityUnread={activityLog.unread > 0}
+          onToggleActivity={() => setIsActivityOpen((v) => !v)}
+        />
+        <ActivityPanel
+          open={isActivityOpen}
+          onClose={() => setIsActivityOpen(false)}
+          activeDatabase={activeDatabase}
+          activeCollection={activeCollectionName}
+          log={activityLog}
+          onNavigate={(entry) => {
+            // 이동하면 패널을 닫아 열린 경로가 가려지지 않게
+            setIsActivityOpen(false);
+            void state.navigateToChange(entry);
+          }}
         />
 
         {/* Miller Columns */}

@@ -7,6 +7,7 @@ import { HttpError } from './names';
 import { startRealtime } from './realtime';
 import { mutateRouter } from './routes/mutate';
 import { readRouter } from './routes/read';
+import { metricsRouter } from './routes/metrics';
 import { refsRouter } from './routes/refs';
 
 const app = express();
@@ -21,6 +22,7 @@ app.get('/api/health', async (_req, res) => {
 app.use('/api', readRouter);
 app.use('/api', mutateRouter);
 app.use('/api', refsRouter);
+app.use('/api', metricsRouter);
 
 // 위에서 처리하지 못한 /api 요청
 app.use('/api', (_req, res) => {

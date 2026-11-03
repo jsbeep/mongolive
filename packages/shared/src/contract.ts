@@ -58,7 +58,7 @@ export interface DocumentSummary {
 // ── 문서 목록 페이지 ──────────────────────────────────────────────────────────
 
 // 한 페이지(문서 목록)·한 화면(필드 목록)에 보여 줄 개수. 둘이 같은 단위를 쓴다.
-export const PAGE_SIZE = 5;
+export const PAGE_SIZE = 7;
 
 export type DocumentSort =
   | 'none'
@@ -179,6 +179,56 @@ export interface LiveStatus {
   error?: string;
   // true면 이벤트를 놓쳤을 수 있다 — 화면을 전부 다시 받아야 한다
   resync?: boolean;
+}
+
+// ── 활동 패널(ChangeStreamLogs / PerformanceMetrics) ──────────────────────────
+// 소켓: 클라이언트 → 'log:subscribe' / 'log:unsubscribe', 'rtt'(ack로 응답)
+//       서버 → 'log:backlog'(LiveLogEntry[]), 'log'(LiveLogEntry)
+
+// 로그 한 줄 — 값은 빼고 '어디서 무엇이' 바뀌었는지만(패널이 클러스터 전체 변경을 받으므로 가볍게)
+export interface LiveLogEntry {
+  id: string;
+  op: LiveOperation;
+  database: string;
+  collection?: string;
+  documentId?: string;
+  // update: 바뀐 경로 / 지운 경로
+  paths?: string[];
+  removed?: string[];
+  to?: { database: string; collection: string };
+  clusterTime: number;
+  serverTime: number;
+}
+
+export interface LagStats {
+  p50: number;
+  p95: number;
+  max: number;
+  samples: number;
+}
+
+export interface ServerMetrics {
+  at: number;
+  realtime: {
+    status: LiveStatus;
+    // 서버가 시작된 뒤 받은 이벤트 수
+    eventsTotal: number;
+    // 최근 60초, 1초 단위 이벤트 수(오래된 것 → 최신)
+    eventsPerSecond: number[];
+    // DB 기록 시각(wallTime) → 서버 수신까지(ms), 최근 이벤트 기준
+    lag: LagStats | null;
+  };
+  // serverStatus — 계정에 권한(clusterMonitor)이 없으면 error만 온다
+  mongo: {
+    version?: string;
+    uptimeSec?: number;
+    connections?: { current: number; available: number };
+    memResidentMb?: number;
+    // 누적값 — 초당 값은 두 번 받아 차이로 계산한다
+    opcounters?: Record<string, number>;
+    network?: { bytesIn: number; bytesOut: number };
+    error?: string;
+  };
 }
 
 // ── 변경 요청 ────────────────────────────────────────────────────────────────

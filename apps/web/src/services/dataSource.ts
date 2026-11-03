@@ -13,12 +13,16 @@ import type {
   FieldValueCandidate,
   JsonValue,
   LiveChange,
+  LiveLogEntry,
   LiveStatus,
   LiveView,
   MutationRequest,
   MutationResult,
   ReferenceInfo,
+  ServerMetrics,
 } from '../types/explorer';
+
+export type ClientMetrics = ServerMetrics & { rttMs: number | null };
 
 export interface DataSource {
   // ── 연결 / 목록 ──
@@ -53,6 +57,13 @@ export interface DataSource {
   // 반환값을 부르면 구독 해제
   onLiveChange(listener: (change: LiveChange) => void): () => void;
   onLiveStatus(listener: (status: LiveStatus) => void): () => void;
+
+  // ── 활동 패널 ──
+  // 클러스터 전체 변경 기록(값 없이). 첫 호출엔 서버가 기억하는 최근 기록을 한 번에(isBacklog=true),
+  // 이후엔 한 건씩. 구독자가 없으면 서버도 보내지 않는다. Mock은 기록이 없다.
+  onActivityLog(listener: (entries: LiveLogEntry[], isBacklog: boolean) => void): () => void;
+  // 서버 지표 + 브라우저↔서버 왕복 시간. Mock은 null.
+  getMetrics(): Promise<ClientMetrics | null>;
 
   // ── 메타데이터: 이 앱이 직접 만든 '고유 oid' (참조가 아닌 식별자 값) ──
   listOwnedOids(): Promise<string[]>;

@@ -12,7 +12,17 @@
 // 클라이언트에 resync를 보내 화면을 다시 받게 한다.
 import type { ChangeStream, ChangeStreamDocument, Document as BsonDocument, ResumeToken } from 'mongodb';
 import type { Server, Socket } from 'socket.io';
-import { idString, type EjsonValue, type LiveChange, type LiveOperation, type LiveStatus, type LiveView } from '@mongolive/shared';
+import {
+  idString,
+  type EjsonValue,
+  type LagStats,
+  type LiveChange,
+  type LiveLogEntry,
+  type LiveOperation,
+  type LiveStatus,
+  type LiveView,
+  type ServerMetrics,
+} from '@mongolive/shared';
 import { getClient } from './db';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES } from './names';
 import { toWire } from './wire';
@@ -32,8 +42,10 @@ const tokenString = (token: ResumeToken): string => {
   return typeof data === 'string' ? data : JSON.stringify(token);
 };
 
-// Timestamp(초, 증가값) → ms
+// 이벤트가 DB에 기록된 시각(ms). wallTime(MongoDB 6+)은 ms 단위, 없으면 clusterTime(초 단위)으로.
 const clusterTimeMs = (change: ChangeStreamDocument): number => {
+  const wall = (change as { wallTime?: Date }).wallTime;
+  if (wall instanceof Date) return wall.getTime();
   const ts = (change as { clusterTime?: { getHighBits?: () => number } }).clusterTime;
   const seconds = ts?.getHighBits?.();
   return typeof seconds === 'number' ? seconds * 1000 : Date.now();
@@ -77,22 +89,76 @@ const summarize = (change: LiveChange): LiveChange => {
   return { ...rest, detailed: false };
 };
 
+// ── 활동 패널용 기록(메모리에만) ───────────────────────────────────────────────
+// 'log' 채널 = 활동 패널을 연 클라이언트. 클러스터 전체 변경을 값 없이 받는다.
+const LOG_ROOM = 'log';
+const LOG_BACKLOG = 200;
+const LAG_SAMPLES = 200;
+const RATE_WINDOW_SEC = 60;
+
+const logBacklog: LiveLogEntry[] = [];
+const lagSamples: number[] = [];
+// 초(epoch sec) → 그 1초 동안 받은 이벤트 수
+const perSecond = new Map<number, number>();
+let eventsTotal = 0;
+let currentStatus: LiveStatus = { state: 'connecting' };
+
+const toLogEntry = (change: LiveChange): LiveLogEntry => ({
+  id: change.id,
+  op: change.op,
+  database: change.database,
+  collection: change.collection,
+  documentId: change.documentId,
+  paths: change.updatedFields ? Object.keys(change.updatedFields) : undefined,
+  removed: change.removedFields?.length ? change.removedFields : undefined,
+  to: change.to,
+  clusterTime: change.clusterTime,
+  serverTime: change.serverTime,
+});
+
+const record = (change: LiveChange) => {
+  eventsTotal += 1;
+  const second = Math.floor(change.serverTime / 1000);
+  perSecond.set(second, (perSecond.get(second) ?? 0) + 1);
+  for (const key of perSecond.keys()) if (key < second - RATE_WINDOW_SEC) perSecond.delete(key);
+  lagSamples.push(Math.max(0, change.serverTime - change.clusterTime));
+  if (lagSamples.length > LAG_SAMPLES) lagSamples.shift();
+  const entry = toLogEntry(change);
+  logBacklog.push(entry);
+  if (logBacklog.length > LOG_BACKLOG) logBacklog.shift();
+  return entry;
+};
+
+const lagStats = (): LagStats | null => {
+  if (lagSamples.length === 0) return null;
+  const sorted = [...lagSamples].sort((a, b) => a - b);
+  const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+  return { p50: at(0.5), p95: at(0.95), max: sorted[sorted.length - 1], samples: sorted.length };
+};
+
+export const realtimeMetrics = (): ServerMetrics['realtime'] => {
+  const now = Math.floor(Date.now() / 1000);
+  const eventsPerSecond = Array.from({ length: RATE_WINDOW_SEC }, (_, i) => perSecond.get(now - RATE_WINDOW_SEC + 1 + i) ?? 0);
+  const { resync: _resync, ...status } = currentStatus;
+  return { status, eventsTotal, eventsPerSecond, lag: lagStats() };
+};
+
 // ── 스트림 관리 ───────────────────────────────────────────────────────────────
 
 export const startRealtime = (io: Server) => {
   let stream: ChangeStream | null = null;
-  let status: LiveStatus = { state: 'connecting' };
   let retryDelay = 1000;
   let stopped = false;
   // 마지막으로 받은 위치 — 스트림을 새로 열 때 이어 받기에 쓴다(메모리에만)
   let lastToken: ResumeToken | undefined;
 
   const setStatus = (next: LiveStatus) => {
-    status = next;
-    io.emit('status', status);
+    currentStatus = next;
+    io.emit('status', next);
   };
 
   const dispatch = (change: LiveChange) => {
+    io.to(LOG_ROOM).emit('log', record(change));
     if (STRUCTURE_OPS.has(change.op) || !change.collection) {
       io.emit('change', summarize(change));
       return;
@@ -168,13 +234,25 @@ export const startRealtime = (io: Server) => {
   io.on('connection', (socket: Socket) => {
     // 현재 상태만 알린다 — resync는 '그 순간' 놓친 게 있다는 신호라 지난 값을 새 연결에 다시 보내지 않는다
     // (끊겼다 다시 붙은 클라이언트는 스스로 resync한다)
-    const { resync: _resync, ...current } = status;
+    const { resync: _resync, ...current } = currentStatus;
     socket.emit('status', current);
+
+    // 활동 패널: 열면 최근 기록부터 받고 이후 변경을 계속 받는다
+    socket.on('log:subscribe', () => {
+      void socket.join(LOG_ROOM);
+      socket.emit('log:backlog', logBacklog);
+    });
+    socket.on('log:unsubscribe', () => void socket.leave(LOG_ROOM));
+    // 브라우저↔서버 왕복 시간 측정용 — 받자마자 응답만 한다
+    socket.on('rtt', (ack: unknown) => {
+      if (typeof ack === 'function') (ack as () => void)();
+    });
 
     // 클라이언트가 지금 보는 DB/컬렉션을 알려 오면 채널을 그에 맞게 바꾼다
     socket.on('view', (view: Partial<LiveView>) => {
+      // 보던 범위의 채널만 바꾼다(활동 패널 'log' 채널은 그대로)
       for (const room of socket.rooms) {
-        if (room !== socket.id) void socket.leave(room);
+        if (room.startsWith('db:') || room.startsWith('col:')) void socket.leave(room);
       }
       try {
         if (typeof view?.database !== 'string') return;
