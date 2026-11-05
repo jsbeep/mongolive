@@ -138,8 +138,9 @@ const slotOf = (document: Document, segments: string[]): ExpectedValue => {
 
 // 타입까지 똑같아야 같은 값 — Int32 30 → Double 30.0처럼 타입만 바뀐 것도 남의 변경이다.
 // (ejsonEquals는 FK 매칭용이라 숫자 타입을 일부러 무시하므로 여기선 쓰지 않는다)
-// 값은 양쪽 다 서버가 만든 Canonical(브라우저는 받은 값을 그대로 돌려보낸다)이라 글자로 비교하면 된다.
-const sameValue = (a: EjsonValue, b: EjsonValue): boolean => JSON.stringify(a) === JSON.stringify(b);
+// 드라이버로 한 번 왕복시켜 표기를 맞춘 뒤 비교한다(예: Double의 "30" / "30.0" 같은 표기 차이를 없앰)
+const normalized = (value: EjsonValue): string => JSON.stringify(toWire(fromWire(value)));
+const sameValue = (a: EjsonValue, b: EjsonValue): boolean => normalized(a) === normalized(b);
 
 const sameSlot = (a: ExpectedValue, b: ExpectedValue): boolean =>
   a.exists === b.exists && (!a.exists || (b.exists && sameValue(a.value, b.value)));
@@ -157,7 +158,7 @@ const tryMutateField = async (
   collection: Collection,
   documentId: string,
   field: MutateFieldSpec,
-): Promise<{ changedPaths: string[]; opTime?: string } | null> => {
+): Promise<{ changedPaths: string[]; opTime?: string; undo: MutateFieldSpec } | null> => {
   const { bson, wire } = await findByDocumentId(collection, documentId);
   const target = [...field.path, field.key];
   const containerPath = field.path.join('.');
@@ -226,7 +227,49 @@ const tryMutateField = async (
 
   const { value: { matchedCount }, opTime } = await withOpTime((session) => collection.updateOne(filter, update, { session }));
   if (matchedCount === 0) return null;
-  return { changedPaths: mutation.changedPaths, opTime };
+  return { changedPaths: mutation.changedPaths, opTime, undo: fieldInverse(spec, wire, next) };
+};
+
+// 필드 쓰기를 되돌리는 연산 — before(쓰기 전 문서)와 after(쓴 뒤 문서)로 만든다.
+// expected는 '쓴 직후 값'이다: 그 사이 누가 또 바꿨으면 되돌리기가 409로 거절된다.
+const fieldInverse = (spec: MutateFieldSpec, before: Document, after: Document): MutateFieldSpec => {
+  const { path, key, containerType } = spec;
+  const slot = (doc: Document, k: string) => slotOf(doc, [...path, k]);
+  const valueAt = (doc: Document, k: string): EjsonValue => {
+    const s = slot(doc, k);
+    return s.exists ? s.value : null;
+  };
+
+  if (containerType === 'array') {
+    const container = resolveMutableContainer(before, path);
+    const length = Array.isArray(container) ? container.length : 0;
+    const index = Number(key);
+    if (spec.action === 'edit' && index < length) {
+      // 칸 수정 → 원래 값으로
+      return { path, key, action: 'edit', containerType, value: valueAt(before, key), expected: slot(after, key) };
+    }
+    if (spec.action === 'delete') {
+      // 칸 삭제 → 그 자리에 다시 끼워넣기. 확인: 그 자리에 지금 있는 것(뒤에서 당겨진 칸, 끝이었으면 빈자리)
+      return { path, key, action: 'add', containerType, value: valueAt(before, key), expected: slot(after, key) };
+    }
+    // 끼워넣기/끝에 붙이기 → 그 칸 빼기
+    const at = String(Math.min(index, length));
+    return { path, key: at, action: 'delete', containerType, expected: slot(after, at) };
+  }
+
+  if (spec.action === 'delete') {
+    // 삭제 → 다시 추가(빈자리일 때만). 키는 맨 뒤로 간다
+    return { path, key, action: 'add', containerType, value: valueAt(before, key), expected: { exists: false } };
+  }
+  if (spec.action === 'edit' && spec.nextKey && spec.nextKey !== key) {
+    // 이름 바꾸기 → 새 이름에서 옛 이름으로, 원래 값으로
+    return { path, key: spec.nextKey, nextKey: key, action: 'edit', containerType, value: valueAt(before, key), expected: slot(after, spec.nextKey) };
+  }
+  const was = slot(before, key);
+  // 원래 있던 값을 바꿨으면 → 원래 값으로, 없던 걸 만들었으면 → 지우기
+  return was.exists
+    ? { path, key, action: 'edit', containerType, value: was.value, expected: slot(after, key) }
+    : { path, key, action: 'delete', containerType, expected: slot(after, key) };
 };
 
 const MUTATE_ATTEMPTS = 3;
@@ -247,14 +290,17 @@ const mutateField = async (op: Extract<DocumentOp, { type: 'mutateField' }>): Pr
     const done = await tryMutateField(collection, documentId, field);
     if (!done) continue;
     const base = docBase(database, collectionName, documentId);
-    return okResult(
-      database,
-      collectionName,
-      documentId,
-      done.changedPaths.map((p) => `${base}.${p}`),
-      done.opTime,
-      [database, collectionName, documentId, ...field.path, field.key],
-    );
+    return {
+      ...okResult(
+        database,
+        collectionName,
+        documentId,
+        done.changedPaths.map((p) => `${base}.${p}`),
+        done.opTime,
+        [database, collectionName, documentId, ...field.path, field.key],
+      ),
+      undo: { type: 'mutateField', database, collection: collectionName, documentId, field: done.undo },
+    };
   }
   throw new HttpError(409, '이 값이 계속 바뀌고 있어 저장하지 못했습니다. 잠시 뒤 다시 시도하세요');
 };
@@ -276,16 +322,32 @@ const upsertDocument = async (op: Extract<DocumentOp, { type: 'upsertDocument' }
 
   const canonical = toCanonical(op.document);
   if (!canonical || typeof canonical !== 'object' || Array.isArray(canonical)) throw new HttpError(400, '문서는 JSON 객체여야 합니다');
-  const document = canonical as Document;
-  // 식별할 수 없는 _id(없음/빈 문자열/객체 등)면 새 ObjectId — MongoDB 문서엔 _id가 꼭 있어야 한다
-  if (!hasUsableId(document._id)) document._id = makeOid(new ObjectId().toHexString());
+  // 식별할 수 없는 _id(없음/빈 문자열/객체 등)면 새 ObjectId — MongoDB 문서엔 _id가 꼭 있어야 한다.
+  // _id는 맨 앞에 둔다: MongoDB가 저장할 때 늘 맨 앞으로 옮기므로, 그래야 '쓴 직후 문서'가 저장된 모양과 같다
+  // (되돌리기가 그 모양으로 '그 사이 안 바뀌었나'를 비교한다)
+  const { _id: givenId, ...fields } = canonical as Document;
+  const id: EjsonValue = hasUsableId(givenId) ? (givenId as EjsonValue) : makeOid(new ObjectId().toHexString());
+  const document: Document = { _id: id, ...fields };
 
   const bson = fromWire(document) as BsonDocument;
+  const existing = await collection.findOne({ _id: bson._id }, READ_OPTIONS);
+  const was: ExpectedValue = existing ? { exists: true, value: toWire<Document>(existing) } : { exists: false };
+  // 확인(되돌리기가 보낸 경우): 지금 그 _id 문서가 기대한 그대로인가
+  const expected = parseExpected(op.expected);
+  if (expected && !sameSlot(expected, was)) throw conflictError([], was);
+
   // 같은 _id가 있으면 교체, 없으면 추가 (Mock과 같은 동작)
   const { opTime } = await withOpTime((session) => collection.replaceOne({ _id: bson._id }, bson, { upsert: true, session }));
 
   const documentId = getDocumentId(document) ?? '';
-  return okResult(database, collectionName, documentId, [docBase(database, collectionName, documentId)], opTime);
+  const now: ExpectedValue = { exists: true, value: document };
+  return {
+    ...okResult(database, collectionName, documentId, [docBase(database, collectionName, documentId)], opTime),
+    // 교체였으면 → 원래 문서로, 추가였으면 → 그 문서 삭제 (둘 다 지금 그대로일 때만)
+    undo: was.exists
+      ? { type: 'upsertDocument', database, collection: collectionName, document: was.value as Document, expected: now }
+      : { type: 'deleteDocument', database, collection: collectionName, documentId, expected: now },
+  };
 };
 
 // ── duplicateDocument ────────────────────────────────────────────────────────
@@ -330,7 +392,11 @@ const duplicateDocument = async (op: Extract<DocumentOp, { type: 'duplicateDocum
 
   const { opTime } = await withOpTime((session) => collection.insertOne(fromWire(copy) as BsonDocument, { session }));
   const documentId = getDocumentId(copy) ?? '';
-  return okResult(database, collectionName, documentId, [docBase(database, collectionName, documentId)], opTime);
+  return {
+    ...okResult(database, collectionName, documentId, [docBase(database, collectionName, documentId)], opTime),
+    // 복제본 삭제 (그 사이 고치지 않았을 때만)
+    undo: { type: 'deleteDocument', database, collection: collectionName, documentId, expected: { exists: true, value: copy } },
+  };
 };
 
 // ── deleteDocument ───────────────────────────────────────────────────────────
@@ -340,9 +406,16 @@ const deleteDocument = async (op: Extract<DocumentOp, { type: 'deleteDocument' }
   const collectionName = str(op.collection, 'collection');
   const documentId = str(op.documentId, 'documentId');
   const collection = await openCollection(database, collectionName);
-  const { bson } = await findByDocumentId(collection, documentId);
+  const { bson, wire } = await findByDocumentId(collection, documentId);
+  // 확인(되돌리기가 보낸 경우): 지울 문서가 기대한 그대로인가 — 그 사이 누가 고쳤으면 지우지 않는다
+  const expected = parseExpected(op.expected);
+  if (expected && !sameSlot(expected, { exists: true, value: wire })) throw conflictError([], { exists: true, value: wire });
   const { opTime } = await withOpTime((session) => collection.deleteOne({ _id: bson._id }, { session }));
-  return okResult(database, collectionName, documentId, [docBase(database, collectionName, documentId)], opTime);
+  return {
+    ...okResult(database, collectionName, documentId, [docBase(database, collectionName, documentId)], opTime),
+    // 다시 넣기 (그 _id가 비어 있을 때만)
+    undo: { type: 'upsertDocument', database, collection: collectionName, document: wire, expected: { exists: false } },
+  };
 };
 
 export const runDocumentOp = (op: DocumentOp): Promise<MutationResult> => {

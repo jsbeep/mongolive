@@ -38,6 +38,7 @@ export const createMockDataSource = (): DataSource => {
       undoPoint = null;
       return true;
     },
+    canUndo: () => undoPoint !== null,
 
     // Mock 데이터는 이 앱 안에서만 바뀌고, 바꾼 쪽(훅)이 직접 다시 읽는다 — 바깥 변경 이벤트가 없다
     setLiveView: () => undefined,

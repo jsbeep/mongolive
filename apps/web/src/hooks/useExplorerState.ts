@@ -857,7 +857,8 @@ export function useExplorerState(): UseExplorerStateResult {
         await focusDatabase(remaining[0]?.name ?? null);
       }
 
-      showToast('Saved', 'success', true);
+      // Undo 버튼은 되돌릴 수 있을 때만(서버: 문서/필드 쓰기만 되돌린다)
+      showToast('Saved', 'success', api.canUndo());
       return result;
     } catch (e) {
       if (e instanceof MutationCancelledError) throw e;

@@ -47,8 +47,10 @@ export interface DataSource {
   // ── 쓰기 ──
   mutate(op: MutationRequest): Promise<MutationResult>;
   // 직전 mutate 한 번을 되돌린다. 되돌릴 게 없으면 false.
-  // (Mock은 스냅샷 복원, 실제 서버는 서버가 돌려준 역연산을 보낸다)
+  // (Mock은 스냅샷 복원, 실제 서버는 서버가 돌려준 역연산을 보낸다 — 문서/필드 쓰기만)
   undoLast(): Promise<boolean>;
+  // 지금 되돌릴 수 있는가 — 저장 알림에 Undo 버튼을 띄울지
+  canUndo(): boolean;
 
   // ── 실시간 ──
   // 지금 보는 범위를 알린다 — 그 컬렉션의 문서 변경은 자세히, 같은 DB의 다른 컬렉션은 요약으로 온다.

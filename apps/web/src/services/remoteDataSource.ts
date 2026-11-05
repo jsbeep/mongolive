@@ -119,6 +119,25 @@ export const createRemoteDataSource = (): DataSource => {
     if (opTime) ownOpTimes.set(opTime, now);
   };
 
+  // 되돌리기: 직전 쓰기 한 번의 반대 연산(서버가 응답에 실어 준다). 컬렉션/DB 연산이면 없음.
+  // 반대 연산엔 '쓴 직후 값' 확인이 들어 있어서, 그 사이 누가 또 바꿨으면 서버가 409로 거절한다.
+  let lastUndo: MutationRequest | null = null;
+
+  const sendMutation = async (op: MutationRequest): Promise<MutationResult> => {
+    writesInFlight += 1;
+    try {
+      const result = await request<MutationResult>('/mutate', { method: 'POST', body: JSON.stringify(op) });
+      rememberOwn(result.opTime);
+      // 쓰기 후엔 oid 위치/내용이 바뀌었을 수 있다
+      oidCache.clear();
+      return result;
+    } finally {
+      writesInFlight -= 1;
+      // 모아 둔 알림을 이제 판단해서 넘긴다(실패했으면 전부 남의 변경)
+      if (writesInFlight === 0) held.splice(0).forEach((run) => run());
+    }
+  };
+
   const ensureSocket = (): Socket => {
     if (socket) return socket;
     // 같은 주소의 /socket.io — 개발 중엔 Vite 프록시가 서버로 넘긴다. 끊기면 socket.io가 알아서 다시 붙는다.
@@ -209,23 +228,27 @@ export const createRemoteDataSource = (): DataSource => {
       request<FieldValueCandidate[]>(`${collectionPath(database, collection)}/field-values?key=${enc(key)}`),
 
     async mutate(op: MutationRequest): Promise<MutationResult> {
-      writesInFlight += 1;
-      try {
-        const result = await request<MutationResult>('/mutate', { method: 'POST', body: JSON.stringify(op) });
-        rememberOwn(result.opTime);
-        // 쓰기 후엔 oid 위치/내용이 바뀌었을 수 있다
-        oidCache.clear();
-        return result;
-      } finally {
-        writesInFlight -= 1;
-        // 모아 둔 알림을 이제 판단해서 넘긴다(실패했으면 전부 남의 변경)
-        if (writesInFlight === 0) held.splice(0).forEach((run) => run());
-      }
+      // 실패해도 직전 되돌리기는 버린다 — 무엇이 반쯤 바뀌었을지 모르므로(Mock도 매 mutate마다 새로 잡는다)
+      lastUndo = null;
+      const result = await sendMutation(op);
+      lastUndo = result.undo ?? null;
+      return result;
     },
-    // 서버 쪽 되돌리기는 6단계(쓰기)에서 — 지금은 되돌릴 것이 없다고 답한다
     async undoLast() {
-      return false;
+      const undo = lastUndo;
+      if (!undo) return false;
+      // 한 번만(다시 실행하기는 없다)
+      lastUndo = null;
+      try {
+        await sendMutation(undo);
+      } catch (e) {
+        const status = (e as { status?: number }).status;
+        if (status === 409 || status === 404) throw new Error("Changed elsewhere since — can't undo");
+        throw e;
+      }
+      return true;
     },
+    canUndo: () => lastUndo !== null,
 
     setLiveView(next: LiveView) {
       view = next;

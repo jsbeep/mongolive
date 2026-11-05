@@ -285,9 +285,10 @@ export type MutationRequest =
   | { type: 'setCollectionPrimaryKey'; database: string; collection: string; primaryKey: string }
   | { type: 'setCollectionReferenceField'; database: string; collection: string; field: string; targetCollection?: string; targetKey?: string }
   // document는 _id 없이 들어와도 됨 — 데이터 소스가 채운다
-  | { type: 'upsertDocument'; database: string; collection: string; document: Record<string, unknown> }
+  // expected(문서 전체): 지금 그 _id 문서가 이것일 때만(없어야 하면 exists: false). 되돌리기가 쓴다
+  | { type: 'upsertDocument'; database: string; collection: string; document: Record<string, unknown>; expected?: ExpectedValue }
   | { type: 'duplicateDocument'; database: string; collection: string; documentId: string }
-  | { type: 'deleteDocument'; database: string; collection: string; documentId: string }
+  | { type: 'deleteDocument'; database: string; collection: string; documentId: string; expected?: ExpectedValue }
   | { type: 'mutateField'; database: string; collection: string; documentId: string; field: MutateFieldSpec };
 
 export interface MutationResult {
@@ -298,6 +299,9 @@ export interface MutationResult {
   // 문서 쓰기의 시각 도장 — 곧 올 changeStream 알림(LiveChange.opTime)과 맞춰 '내 변경'을 알아본다.
   // 컬렉션/DB 연산은 알림이 여러 개라 없다(목록만 다시 받으므로 메아리가 와도 해가 없다)
   opTime?: string;
+  // 되돌리기: 이 쓰기를 되돌리는 연산. expected가 '쓴 직후 값'이라 그 사이 누가 또 바꿨으면 409로 거절된다.
+  // 문서/필드 쓰기만 있다(컬렉션/DB 연산은 되돌리지 않는다)
+  undo?: MutationRequest;
 }
 
 // 컬렉션 식별 키 — 구독 키, getDocuments 인자, changedPaths 접두에 공통으로 쓴다
