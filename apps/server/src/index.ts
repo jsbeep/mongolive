@@ -1,6 +1,7 @@
 // 서버 진입점: express 앱을 만들고, MongoDB에 연결한 뒤, 포트를 연다.
 import express, { type ErrorRequestHandler } from 'express';
 import { Server as SocketServer } from 'socket.io';
+import { allowSocket, guard } from './auth';
 import { config } from './config';
 import { checkMongo, closeClient } from './db';
 import { HttpError } from './names';
@@ -11,6 +12,8 @@ import { metricsRouter } from './routes/metrics';
 import { refsRouter } from './routes/refs';
 
 const app = express();
+// 문지기가 맨 앞 — 거절할 요청은 본문(최대 10MB)을 읽기도 전에 돌려보낸다
+app.use(guard);
 app.use(express.json({ limit: '10mb' }));
 
 // 상태 확인용 — 서버가 살아 있는지, Mongo에 닿는지, replica set인지
@@ -51,12 +54,12 @@ const start = async () => {
   }
 
   const server = app.listen(config.port, config.host, () => {
-    console.log(`[server] http://${config.host}:${config.port}`);
+    console.log(`[server] http://${config.host}:${config.port} (AUTH_MODE=${config.authMode})`);
   });
 
-  // 실시간 변경 전달 — 같은 포트의 /socket.io 경로. CORS를 열지 않으므로 다른 사이트의 페이지는 붙을 수 없다
-  // (개발 중엔 Vite 프록시를 거쳐 같은 주소로 들어온다)
-  const io = new SocketServer(server, { serveClient: false });
+  // 실시간 변경 전달 — 같은 포트의 /socket.io 경로(개발 중엔 Vite 프록시를 거쳐 같은 주소로 들어온다).
+  // WebSocket은 CORS를 따르지 않아서 express 쪽과 같은 문지기를 allowRequest로 따로 세운다.
+  const io = new SocketServer(server, { serveClient: false, allowRequest: allowSocket });
   const realtime = startRealtime(io);
 
   // Ctrl+C / 재시작 시 Mongo 연결을 정리하고 종료
