@@ -9,28 +9,14 @@ import {
   type JsonObject,
   type JsonValue,
 } from '../types/explorer';
+import { cloneValue } from '@mongolive/shared';
 import { generateObjectId } from '../utils/objectId';
 
 // 펼칠 수 있는 진짜 객체만 true — {$oid}, {$numberInt} 같은 EJSON 래퍼는 제외
 export const isJsonObject = (value: unknown): value is JsonObject => isEjsonObject(value);
 
-// 컨테이너(객체/배열)만 새로 만들고 래퍼 리프는 참조를 그대로 둔다 — 래퍼는 절대
-// 제자리 수정하지 않으므로(항상 통째로 교체) 공유해도 안전하다.
-export const cloneValue = (value: JsonValue): JsonValue => {
-  if (Array.isArray(value)) {
-    return value.map((item) => cloneValue(item));
-  }
-
-  if (isJsonObject(value)) {
-    const next: JsonObject = {};
-    for (const [key, child] of Object.entries(value)) {
-      next[key] = cloneValue(child);
-    }
-    return next;
-  }
-
-  return value;
-};
+// 컨테이너만 새로 만들고 래퍼 리프는 공유하는 복제 — 규칙은 shared(fieldMutation.ts)와 같다
+export { cloneValue };
 
 export const cloneDocument = (document: Document): Document => cloneValue(document) as Document;
 

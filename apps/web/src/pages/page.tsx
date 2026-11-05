@@ -7,6 +7,7 @@ import { LandingIntro } from '../components/layout/LandingIntro';
 import { Footer } from '../components/layout/Footer';
 import { Breadcrumbs } from '../components/dashboard/Breadcrumbs';
 import { MillerColumns } from '../components/dashboard/MillerColumns';
+import { ChangeToneContext } from '../components/common/ChangeFlash';
 import { ReferenceCandidatesModal } from '../components/common/ReferenceCandidatesModal';
 import { TooltipLayer } from '../components/common/TooltipLayer';
 import { ActivityPanel } from '../components/activity/ActivityPanel';
@@ -51,6 +52,7 @@ export default function ExplorerPage() {
     openDocument,
     isLoading,
     changedPaths,
+    changeTone,
     editingId,
     toast,
     uniqueOids,
@@ -123,34 +125,37 @@ export default function ExplorerPage() {
             openDocument={openDocument}
             onCommitFieldPath={pushFieldPath}
           />
-          <MillerColumns
-            visibleColumns={visibleColumns}
-            maxVisibleColumns={maxVisibleColumns}
-            collections={collections}
-            documents={documents}
-            documentPage={documentPage}
-            documentQuery={documentQuery}
-            setDocumentQuery={setDocumentQuery}
-            openDocument={openDocument}
-            isLoading={isLoading}
-            changedPaths={changedPaths}
-            editingId={editingId}
-            activePaths={activePaths}
-            selectCollection={selectCollection}
-            selectDocument={selectDocument}
-            pushJsonPath={pushJsonPath}
-            pushReference={pushReference}
-            navigateToReference={navigateToReference}
-            pushReferenceByField={pushReferenceByField}
-            navigateToReferenceByField={navigateToReferenceByField}
-            popToIndex={popToIndex}
-            mutate={mutate}
-            uniqueOids={uniqueOids}
-            registerUniqueOid={registerUniqueOid}
-            unregisterUniqueOid={unregisterUniqueOid}
-            setEditingId={setEditingId}
-            clearChangedPaths={clearChangedPaths}
-          />
+          {/* 강조 색: 내 저장 = 연초록, 밖에서 온 변경 = 하늘색 (ChangeFlash가 꺼내 쓴다) */}
+          <ChangeToneContext.Provider value={changeTone}>
+            <MillerColumns
+              visibleColumns={visibleColumns}
+              maxVisibleColumns={maxVisibleColumns}
+              collections={collections}
+              documents={documents}
+              documentPage={documentPage}
+              documentQuery={documentQuery}
+              setDocumentQuery={setDocumentQuery}
+              openDocument={openDocument}
+              isLoading={isLoading}
+              changedPaths={changedPaths}
+              editingId={editingId}
+              activePaths={activePaths}
+              selectCollection={selectCollection}
+              selectDocument={selectDocument}
+              pushJsonPath={pushJsonPath}
+              pushReference={pushReference}
+              navigateToReference={navigateToReference}
+              pushReferenceByField={pushReferenceByField}
+              navigateToReferenceByField={navigateToReferenceByField}
+              popToIndex={popToIndex}
+              mutate={mutate}
+              uniqueOids={uniqueOids}
+              registerUniqueOid={registerUniqueOid}
+              unregisterUniqueOid={unregisterUniqueOid}
+              setEditingId={setEditingId}
+              clearChangedPaths={clearChangedPaths}
+            />
+          </ChangeToneContext.Provider>
         </div>
       </div>
 

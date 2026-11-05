@@ -3,13 +3,15 @@
 //   GET    /api/meta/owned-oids
 //   PUT    /api/meta/owned-oids/:oid    (내가 만든 oid로 표시)
 //   DELETE /api/meta/owned-oids/:oid
-// 4-3에서는 메타데이터 연산만 처리한다(meta.json에만 쓰고 MongoDB는 건드리지 않음).
-// 문서/컬렉션 쓰기는 6단계에서 추가.
+// 메타데이터 연산(titleKey/PK/FK)은 meta.json에만 쓰고 MongoDB는 건드리지 않는다.
+// 문서 쓰기는 writes/documents.ts(6-1), 컬렉션/DB 쓰기는 writes/structure.ts(6-2).
 import { Router } from 'express';
 import { collectionKey, type MutationRequest, type MutationResult } from '@mongolive/shared';
 import { getClient } from '../db';
 import { listOwnedOids, setOwnedOid, updateCollectionMeta } from '../meta';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
+import { DOCUMENT_OPS, runDocumentOp } from '../writes/documents';
+import { runStructureOp, STRUCTURE_OPS } from '../writes/structure';
 
 export const mutateRouter = Router();
 
@@ -38,6 +40,15 @@ const collectionResult = (database: string, collection: string): MutationResult 
 mutateRouter.post('/mutate', async (req, res) => {
   const op = req.body as Partial<MutationRequest> & Record<string, unknown>;
   if (!op || typeof op !== 'object') throw new HttpError(400, '요청 본문이 없습니다');
+
+  if (typeof op.type === 'string' && DOCUMENT_OPS.has(op.type)) {
+    res.json(await runDocumentOp(op as Parameters<typeof runDocumentOp>[0]));
+    return;
+  }
+  if (typeof op.type === 'string' && STRUCTURE_OPS.has(op.type)) {
+    res.json(await runStructureOp(op as Parameters<typeof runStructureOp>[0]));
+    return;
+  }
 
   switch (op.type) {
     case 'setCollectionTitleKey': {

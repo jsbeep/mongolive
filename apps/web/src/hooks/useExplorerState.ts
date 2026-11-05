@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../services/api';
 import { useToast, type ToastMessage } from './useToast';
 import { useUniqueOidRegistry } from './useUniqueOidRegistry';
-import { CHANGE_FLASH_MS } from '../components/common/ChangeFlash';
+import { CHANGE_FLASH_MS, type ChangeTone } from '../components/common/ChangeFlash';
 import {
   collectionKey,
   compareKey,
@@ -103,6 +103,8 @@ export interface UseExplorerStateResult {
   editingId: string | null;
   isLoading: boolean;
   changedPaths: string[];
+  // 지금 강조가 내 저장(연초록)인지 밖에서 온 변경(하늘색)인지
+  changeTone: ChangeTone;
   toast: ToastMessage | null;
   uniqueOids: Set<string>;
   referenceCandidates: PendingFieldReference | null;
@@ -206,6 +208,7 @@ export function useExplorerState(): UseExplorerStateResult {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
+  const [changeTone, setChangeTone] = useState<ChangeTone>('external');
   const [referenceCandidates, setReferenceCandidates] = useState<PendingFieldReference | null>(null);
   const [maxVisibleColumns, setMaxVisibleColumnsState] = useState(MIN_VISIBLE_COLUMNS + 1);
 
@@ -686,10 +689,11 @@ export function useExplorerState(): UseExplorerStateResult {
   // 변경된 경로를 강조(ChangeFlash)한다. 강조 중에 또 바뀌면 잠깐 껐다 다시 켜서 깜빡임을 새로 시작한다 —
   // 항목은 '켜짐으로 바뀌는 순간'에 깜빡이므로, 켜진 채로 두면 연달아 온 변경이 보이지 않는다.
   const changedPathsRef = useRef<string[]>([]);
-  const flashChangedPaths = useCallback((paths: string[]) => {
+  const flashChangedPaths = useCallback((paths: string[], tone: ChangeTone = 'external') => {
     if (changedPathsTimerRef.current) clearTimeout(changedPathsTimerRef.current);
     const apply = () => {
       changedPathsRef.current = paths;
+      setChangeTone(tone);
       setChangedPaths(paths);
       changedPathsTimerRef.current = setTimeout(() => {
         changedPathsRef.current = [];
@@ -735,7 +739,7 @@ export function useExplorerState(): UseExplorerStateResult {
     setIsLoading(true);
     try {
       const result = await api.mutate(op);
-      flashChangedPaths(result.changedPaths);
+      flashChangedPaths(result.changedPaths, 'own');
 
       // 관련 캐시 갱신
       if (op.type === 'deleteCollection' && activeCollectionRef.current === op.collection) {
@@ -936,6 +940,16 @@ export function useExplorerState(): UseExplorerStateResult {
     const db = activeDatabaseRef.current;
     const col = activeCollectionRef.current;
 
+    if (change.own) {
+      // 이 탭이 한 저장의 메아리 — mutate()가 이미 문서·컬렉션을 다시 받고 초록으로 강조했다.
+      // 다시 받거나 하늘색으로 덮지 않는다. 문서 추가/삭제만 헤더 DB 목록의 문서 수를 맞춘다.
+      if (change.op === 'insert' || change.op === 'delete') {
+        pending.databases = true;
+        scheduleLive();
+      }
+      return;
+    }
+
     if (STRUCTURE_OPS.has(change.op)) {
       // 컬렉션/DB 생성·삭제·이름변경 — 목록이 바뀐다
       pending.databases = true;
@@ -1014,8 +1028,8 @@ export function useExplorerState(): UseExplorerStateResult {
     );
     if (exactlyHere) {
       if (entry.op === 'delete') showToast('This document was deleted', 'error');
-      else if (isDocumentChange) flashChangedPaths(entry.paths?.length ? entry.paths.map((p) => `${docBase}.${p}`) : [docBase]);
-      else flashChangedPaths([`databases.${database}.collections.${collection}`]);
+      else if (isDocumentChange) flashChangedPaths(entry.paths?.length ? entry.paths.map((p) => `${docBase}.${p}`) : [docBase], entry.own ? 'own' : 'external');
+      else flashChangedPaths([`databases.${database}.collections.${collection}`], entry.own ? 'own' : 'external');
       return;
     }
 
@@ -1063,7 +1077,7 @@ export function useExplorerState(): UseExplorerStateResult {
         }
         if (reachable.length) pushFieldPath(reachable);
       }
-      flashChangedPaths(entry.paths?.length ? entry.paths.map((p) => `${docBase}.${p}`) : [docBase]);
+      flashChangedPaths(entry.paths?.length ? entry.paths.map((p) => `${docBase}.${p}`) : [docBase], entry.own ? 'own' : 'external');
     } catch {
       showToast('Could not open this change', 'error');
     } finally {
@@ -1101,6 +1115,7 @@ export function useExplorerState(): UseExplorerStateResult {
     editingId,
     isLoading,
     changedPaths,
+    changeTone,
     toast,
     uniqueOids,
     referenceCandidates,

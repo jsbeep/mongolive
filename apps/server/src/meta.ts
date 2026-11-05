@@ -88,3 +88,35 @@ export const setOwnedOid = async (oid: string, owned: boolean): Promise<void> =>
   data.ownedOids = [...set];
   await persist(data);
 };
+
+// ── 컬렉션/DB 구조가 바뀔 때 메타도 따라가게 (6-2) ──
+
+// 이름 변경: 옛 키의 메타를 새 키로 옮긴다
+export const moveCollectionMeta = async (database: string, from: string, to: string): Promise<void> => {
+  const data = await load();
+  const fromKey = collectionKey(database, from);
+  const meta = data.collections[fromKey];
+  if (!meta) return;
+  delete data.collections[fromKey];
+  data.collections[collectionKey(database, to)] = meta;
+  await persist(data);
+};
+
+// 복제: 같은 선언을 새 컬렉션에도
+export const copyCollectionMeta = async (database: string, from: string, to: string): Promise<void> => {
+  const data = await load();
+  const meta = data.collections[collectionKey(database, from)];
+  if (!meta) return;
+  data.collections[collectionKey(database, to)] = structuredClone(meta);
+  await persist(data);
+};
+
+// 삭제: collection을 빼면 그 DB의 모든 컬렉션 메타를 지운다(DB 삭제)
+export const deleteCollectionMeta = async (database: string, collection?: string): Promise<void> => {
+  const data = await load();
+  const prefix = collectionKey(database, '');
+  for (const key of Object.keys(data.collections)) {
+    if (collection === undefined ? key.startsWith(prefix) : key === collectionKey(database, collection)) delete data.collections[key];
+  }
+  await persist(data);
+};

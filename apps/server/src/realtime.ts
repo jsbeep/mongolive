@@ -51,6 +51,10 @@ const clusterTimeMs = (change: ChangeStreamDocument): number => {
   return typeof seconds === 'number' ? seconds * 1000 : Date.now();
 };
 
+// 쓰기 시각 도장(Timestamp) → 문자열. 쓴 쪽 세션의 operationTime과 같은 값이다
+const opTimeString = (change: ChangeStreamDocument): string =>
+  (change as { clusterTime?: { toString(): string } }).clusterTime?.toString() ?? '';
+
 const toLiveChange = (change: ChangeStreamDocument): LiveChange | null => {
   const op = change.operationType as LiveOperation;
   if (!DOCUMENT_OPS.has(op) && !STRUCTURE_OPS.has(op)) return null; // createIndexes, modify 등은 화면과 무관
@@ -65,6 +69,7 @@ const toLiveChange = (change: ChangeStreamDocument): LiveChange | null => {
     detailed: true,
     clusterTime: clusterTimeMs(change),
     serverTime: Date.now(),
+    opTime: opTimeString(change),
   };
 
   if ('documentKey' in change && change.documentKey) {
@@ -114,6 +119,7 @@ const toLogEntry = (change: LiveChange): LiveLogEntry => ({
   to: change.to,
   clusterTime: change.clusterTime,
   serverTime: change.serverTime,
+  opTime: change.opTime,
 });
 
 const record = (change: LiveChange) => {

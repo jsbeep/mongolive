@@ -18,6 +18,7 @@ import {
 } from '@mongolive/shared';
 import type { Db } from 'mongodb';
 import { getClient } from '../db';
+import { emptyDatabases } from '../emptyDatabases';
 import { getCollectionMeta } from '../meta';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES, HttpError, isHiddenCollection } from '../names';
 import { fromWire, READ_OPTIONS, toWire } from '../wire';
@@ -55,6 +56,11 @@ readRouter.get('/databases', async (_req, res) => {
       documentCount: counts.reduce((a, b) => a + b, 0),
       updatedAt: 0,
     });
+  }
+  // 컬렉션 없이 만든 DB(서버 메모리) — 그 사이 진짜 DB가 됐으면 잊는다
+  for (const { name } of databases) emptyDatabases.delete(name);
+  for (const name of emptyDatabases) {
+    result.push({ name, label: name, description: '', collectionCount: 0, documentCount: 0, updatedAt: 0 });
   }
   res.json(result);
 });

@@ -172,6 +172,10 @@ export interface LiveChange {
   // MongoDB에 기록된 시각 / 서버가 받은 시각(ms) — 지연 측정(PerformanceMetrics)용
   clusterTime: number;
   serverTime: number;
+  // 이 쓰기의 시각 도장(MongoDB clusterTime, 쓰기마다 고유) — 내 저장 응답의 opTime과 같으면 '내 변경'
+  opTime: string;
+  // 브라우저가 붙인다(서버는 안 보냄): 이 탭이 한 저장의 메아리인가
+  own?: boolean;
 }
 
 export interface LiveStatus {
@@ -198,6 +202,9 @@ export interface LiveLogEntry {
   to?: { database: string; collection: string };
   clusterTime: number;
   serverTime: number;
+  opTime: string;
+  // 브라우저가 붙인다: 이 탭이 한 저장인가(안 읽음으로 세지 않는다)
+  own?: boolean;
 }
 
 export interface LagStats {
@@ -274,6 +281,9 @@ export interface MutationResult {
   changedPaths: string[];
   tracePath: string[];
   collectionKey?: string;
+  // 문서 쓰기의 시각 도장 — 곧 올 changeStream 알림(LiveChange.opTime)과 맞춰 '내 변경'을 알아본다.
+  // 컬렉션/DB 연산은 알림이 여러 개라 없다(목록만 다시 받으므로 메아리가 와도 해가 없다)
+  opTime?: string;
 }
 
 // 컬렉션 식별 키 — 구독 키, getDocuments 인자, changedPaths 접두에 공통으로 쓴다

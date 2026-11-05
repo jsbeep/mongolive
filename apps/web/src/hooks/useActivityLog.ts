@@ -64,7 +64,11 @@ export function useActivityLog(): ActivityLog {
   }, []);
 
   const entries = useMemo(() => all.filter((e) => e.serverTime > clearedAt), [all, clearedAt]);
-  const unread = useMemo(() => (seenAt === null ? 0 : entries.filter((e) => e.serverTime > seenAt).length), [entries, seenAt]);
+  // 이 탭이 한 저장(own)은 안 읽음으로 세지 않는다 — 방금 내가 한 일이므로
+  const unread = useMemo(
+    () => (seenAt === null ? 0 : entries.filter((e) => e.serverTime > seenAt && !e.own).length),
+    [entries, seenAt],
+  );
 
   const newestTime = entries[0]?.serverTime;
 

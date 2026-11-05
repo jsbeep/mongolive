@@ -55,6 +55,8 @@ const styles = {
   // 고정 너비 — 배지 길이가 달라도 위치(db.collection) 글자가 같은 세로줄에서 시작한다
   badge: 'shrink-0 w-[60px] py-[3px] rounded-lg text-center text-[10px] font-semibold tracking-wide',
   ns: 'min-w-0 flex-1 truncate text-xs font-mono text-slate-700',
+  // 이 탭에서 한 저장 표시
+  youTag: 'shrink-0 px-1.5 py-[1px] rounded-md bg-emerald-50 text-[10px] font-semibold text-emerald-600',
   time: 'shrink-0 text-[11px] font-mono tabular-nums text-slate-400',
   // 배지 너비(60px) + 간격(10px)만큼 들여 위치 글자 아래에 맞춘다
   detail: 'pl-[70px] text-[11px] font-mono text-slate-500 truncate',
@@ -153,7 +155,7 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
             return (
               <div
                 key={e.id}
-                className={cn(styles.row, round, canOpen ? styles.rowClickable : styles.rowStatic, seenAt !== null && e.serverTime > seenAt ? styles.rowUnread : styles.rowRead)}
+                className={cn(styles.row, round, canOpen ? styles.rowClickable : styles.rowStatic, seenAt !== null && e.serverTime > seenAt && !e.own ? styles.rowUnread : styles.rowRead)}
                 {...(canOpen
                   ? {
                       role: 'button',
@@ -174,6 +176,7 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
                     {ns}
                     {e.documentId && <span className="text-slate-400"> · {e.documentId.length > 12 ? `…${e.documentId.slice(-8)}` : e.documentId}</span>}
                   </span>
+                  {e.own && <span className={styles.youTag} data-tt="Saved from this tab">you</span>}
                   <span className={styles.time} data-tt={`DB → server ${lag} ms`}>{clock(e.serverTime)}</span>
                 </div>
                 {detail && <div className={styles.detail} title={detail}>{detail}</div>}

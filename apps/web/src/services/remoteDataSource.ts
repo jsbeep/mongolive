@@ -97,6 +97,26 @@ export const createRemoteDataSource = (): DataSource => {
   const emitStatus = (status: LiveStatus) => statusListeners.forEach((listener) => listener(status));
   const logListeners = new Set<(entries: LiveLogEntry[], isBacklog: boolean) => void>();
 
+  // ── 내 저장의 메아리 알아보기 ──
+  // 내가 저장하면 서버 changeStream이 같은 변경을 알림으로 다시 보낸다(메아리). 저장 응답의 opTime과
+  // 알림의 opTime(둘 다 MongoDB가 그 쓰기에 찍은 시각 도장)이 같으면 내 변경이다 → own: true.
+  // 알림이 응답보다 먼저 올 수도 있으므로, 저장 요청이 진행 중인 동안 온 알림은 잠깐 모아 두었다가
+  // 응답을 받은 뒤에 판단해서 넘긴다(보통 수십 ms).
+  const OWN_TTL_MS = 60_000;
+  const ownOpTimes = new Map<string, number>();
+  let writesInFlight = 0;
+  const held: (() => void)[] = [];
+  const isOwn = (opTime: string) => opTime !== '' && ownOpTimes.has(opTime);
+  const deliver = (run: () => void) => {
+    if (writesInFlight > 0) held.push(run);
+    else run();
+  };
+  const rememberOwn = (opTime: string | undefined) => {
+    const now = Date.now();
+    for (const [key, at] of ownOpTimes) if (now - at > OWN_TTL_MS) ownOpTimes.delete(key);
+    if (opTime) ownOpTimes.set(opTime, now);
+  };
+
   const ensureSocket = (): Socket => {
     if (socket) return socket;
     // 같은 주소의 /socket.io — 개발 중엔 Vite 프록시가 서버로 넘긴다. 끊기면 socket.io가 알아서 다시 붙는다.
@@ -116,10 +136,21 @@ export const createRemoteDataSource = (): DataSource => {
     next.on('change', (change: LiveChange) => {
       // 어딘가 바뀌었으니 oid 위치 캐시는 믿을 수 없다
       oidCache.clear();
-      changeListeners.forEach((listener) => listener(change));
+      deliver(() => {
+        const marked = { ...change, own: isOwn(change.opTime) };
+        changeListeners.forEach((listener) => listener(marked));
+      });
     });
-    next.on('log:backlog', (entries: LiveLogEntry[]) => logListeners.forEach((listener) => listener(entries, true)));
-    next.on('log', (entry: LiveLogEntry) => logListeners.forEach((listener) => listener([entry], false)));
+    next.on('log:backlog', (entries: LiveLogEntry[]) => {
+      const marked = entries.map((e) => ({ ...e, own: isOwn(e.opTime) }));
+      logListeners.forEach((listener) => listener(marked, true));
+    });
+    next.on('log', (entry: LiveLogEntry) =>
+      deliver(() => {
+        const marked = { ...entry, own: isOwn(entry.opTime) };
+        logListeners.forEach((listener) => listener([marked], false));
+      }),
+    );
     socket = next;
     return next;
   };
@@ -176,10 +207,18 @@ export const createRemoteDataSource = (): DataSource => {
       request<FieldValueCandidate[]>(`${collectionPath(database, collection)}/field-values?key=${enc(key)}`),
 
     async mutate(op: MutationRequest): Promise<MutationResult> {
-      const result = await request<MutationResult>('/mutate', { method: 'POST', body: JSON.stringify(op) });
-      // 쓰기 후엔 oid 위치/내용이 바뀌었을 수 있다
-      oidCache.clear();
-      return result;
+      writesInFlight += 1;
+      try {
+        const result = await request<MutationResult>('/mutate', { method: 'POST', body: JSON.stringify(op) });
+        rememberOwn(result.opTime);
+        // 쓰기 후엔 oid 위치/내용이 바뀌었을 수 있다
+        oidCache.clear();
+        return result;
+      } finally {
+        writesInFlight -= 1;
+        // 모아 둔 알림을 이제 판단해서 넘긴다(실패했으면 전부 남의 변경)
+        if (writesInFlight === 0) held.splice(0).forEach((run) => run());
+      }
     },
     // 서버 쪽 되돌리기는 6단계(쓰기)에서 — 지금은 되돌릴 것이 없다고 답한다
     async undoLast() {
