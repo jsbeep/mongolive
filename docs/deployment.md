@@ -39,7 +39,7 @@ corepack pnpm start
 
 `.env`의 `HOST=127.0.0.1`(기본값) 그대로 두면 이 기기 밖에서는 접속할 수 없다. 요청이 기기 밖으로 나가지 않으므로 HTTPS도 필요 없다.
 
-`http://127.0.0.1:31501`
+`http://127.0.0.1:4000`
 
 ## B. 앞단 프록시가 HTTPS를 맡음
 
@@ -63,7 +63,7 @@ TRUST_PROXY=true      # 프록시가 붙여 주는 X-Forwarded-* 헤더를 믿�
 
 ```caddy
 mongo.example.com {
-    reverse_proxy 127.0.0.1:31501
+    reverse_proxy 127.0.0.1:4000
 }
 ```
 
@@ -76,7 +76,7 @@ server {
     # ssl_certificate / ssl_certificate_key ...
 
     location / {
-        proxy_pass http://127.0.0.1:31501;
+        proxy_pass http://127.0.0.1:4000;
         # 실시간 반영(WebSocket)
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -97,7 +97,7 @@ server {
 
 ## C. 서버가 직접 HTTPS
 
-프록시 없이 `https://<IP>:31501`로 바로 접속할 때.
+프록시 없이 `https://<IP>:4000`로 바로 접속할 때.
 
 ```bash
 # apps/server/.env

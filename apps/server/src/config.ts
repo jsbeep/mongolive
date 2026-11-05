@@ -73,7 +73,7 @@ export const config = {
   // 기본은 이 기기에서만 접속 가능
   host,
   loopbackOnly,
-  port: port('PORT', 31501),
+  port: port('PORT', 4000),
   // 있으면 HTTPS로 연다. 파일이 바뀌면(인증서 갱신) 서버를 다시 켜지 않아도 새 인증서를 쓴다
   tls: tlsFiles,
   allowInsecureHttp,
