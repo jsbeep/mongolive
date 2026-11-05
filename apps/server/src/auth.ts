@@ -15,10 +15,10 @@
 //   HttpOnly(페이지 JS가 못 읽음), SameSite=Strict(다른 사이트에서 시작된 요청엔 안 붙음).
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { TLSSocket } from 'node:tls';
 import express, { Router, type RequestHandler } from 'express';
 import { loadAuthData, MAX_PASSWORD_LENGTH, verifyPassword, type AuthData } from './authFile';
 import { config } from './config';
+import { clientIp, isHttps, requestHost } from './proxy';
 
 const COOKIE_NAME = 'mongolive_session';
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000; // 30일
@@ -58,8 +58,7 @@ export const hasValidSession = (req: IncomingMessage): boolean => {
   return given.length === expected.length && timingSafeEqual(given, expected);
 };
 
-// HTTPS로 들어온 요청이면 Secure(HTTPS에서만 보냄)도 붙인다 — 7-3 전까지는 HTTP라 안 붙는다
-const isHttps = (req: IncomingMessage): boolean => (req.socket as TLSSocket).encrypted === true;
+// HTTPS로 들어온 요청이면(직접이든 프록시를 거쳐서든) Secure(HTTPS에서만 보냄)도 붙인다
 
 const cookieAttributes = (req: IncomingMessage, maxAgeSeconds: number): string =>
   ['Path=/', 'HttpOnly', 'SameSite=Strict', `Max-Age=${maxAgeSeconds}`, ...(isHttps(req) ? ['Secure'] : [])].join('; ');
@@ -93,7 +92,7 @@ export const checkRequest = (req: IncomingMessage): Rejection | null => {
     } catch {
       // Origin: null(파일에서 연 페이지 등) — 우리 페이지가 아니다
     }
-    if (originHost !== req.headers.host) return { status: 403, error: 'cross-origin request' };
+    if (originHost !== requestHost(req)) return { status: 403, error: 'cross-origin request' };
   }
 
   // 2. 출입증
@@ -102,7 +101,13 @@ export const checkRequest = (req: IncomingMessage): Rejection | null => {
   return null;
 };
 
+// /api만 지킨다. 그 밖(빌드된 화면 파일 HTML/JS/CSS)은 어차피 공개된 코드라 로그인 전에도 내준다
+// — 로그인 화면 자체도 그 파일들로 그려지므로.
 export const guard: RequestHandler = (req, res, next) => {
+  if (req.path !== '/api' && !req.path.startsWith('/api/')) {
+    next();
+    return;
+  }
   const rejection = checkRequest(req);
   if (rejection) {
     res.status(rejection.status).json({ error: rejection.error });
@@ -120,8 +125,7 @@ export const allowSocket = (req: IncomingMessage, callback: (err: string | null 
 // ── 로그인 시도 제한 ─────────────────────────────────────────────────────────
 // IP마다 5번까지는 그냥 틀려도 되고, 그다음부터는 틀릴 때마다 잠금 시간이 두 배(1분 → 2분 → … 최대 1시간).
 // 기록은 메모리에만 — 서버를 재시작하면 풀린다.
-// IP는 연결의 실제 주소(remoteAddress)만 쓴다. X-Forwarded-For 헤더는 누구나 지어낼 수 있어서 믿지 않는다.
-// (앞단 프록시를 쓰면 모두 같은 IP로 보여 잠금을 같이 쓰게 된다 — 혼자 쓰는 앱이라 받아들인다)
+// IP는 연결의 실제 주소. X-Forwarded-For 헤더는 누구나 지어낼 수 있어서 TRUST_PROXY일 때 프록시가 붙인 값만 믿는다(proxy.ts).
 
 const FREE_FAILURES = 5;
 const BASE_LOCK_MS = 60 * 1000;
@@ -185,7 +189,7 @@ authRouter.get('/auth/me', (req, res) => {
 });
 
 authRouter.post('/auth/login', async (req, res) => {
-  const ip = req.socket.remoteAddress ?? 'unknown';
+  const ip = clientIp(req);
   const locked = lockRemainingMs(ip);
   if (locked > 0) {
     const seconds = Math.ceil(locked / 1000);

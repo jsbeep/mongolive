@@ -8,6 +8,9 @@
     "dev:web:remote": "VITE_DATA_SOURCE=remote VITE_PORT=31500 pnpm --filter @mongolive/web dev",
     "dev:server": "pnpm --filter @mongolive/server dev",
     "build": "pnpm -r build",
+    "build:web:remote": "VITE_DATA_SOURCE=remote pnpm --filter @mongolive/web build",
+    "start": "pnpm --filter @mongolive/server start",
+    "set-password": "pnpm --filter @mongolive/server set-password",
     "typecheck": "pnpm -r typecheck"
   }
 }

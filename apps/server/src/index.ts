@@ -1,4 +1,6 @@
 // 서버 진입점: express 앱을 만들고, MongoDB에 연결한 뒤, 포트를 연다.
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import express, { type ErrorRequestHandler } from 'express';
 import { Server as SocketServer } from 'socket.io';
 import { allowSocket, authRouter, guard, hasValidSession } from './auth';
@@ -7,6 +9,7 @@ import { config } from './config';
 import { checkMongo, closeClient } from './db';
 import { HttpError } from './names';
 import { startRealtime } from './realtime';
+import { createAppServer } from './tls';
 import { mutateRouter } from './routes/mutate';
 import { readRouter } from './routes/read';
 import { metricsRouter } from './routes/metrics';
@@ -34,6 +37,15 @@ app.use('/api', metricsRouter);
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'not found' });
 });
+
+// 빌드된 웹 화면 — 개발 중엔 Vite가 맡으므로 dist가 없으면 건너뛴다.
+// 모르는 주소(GET)는 index.html로 — 화면 안의 이동은 React가 처리한다.
+const webIndex = join(config.webDist, 'index.html');
+const servesWeb = existsSync(webIndex);
+if (servesWeb) {
+  app.use(express.static(config.webDist, { index: false }));
+  app.get('/{*path}', (_req, res) => res.sendFile(webIndex));
+}
 
 // 라우트에서 던진 에러 → JSON 응답. express 5는 async 핸들러의 에러도 여기로 넘겨 준다.
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
@@ -71,11 +83,13 @@ const start = async () => {
     console.error('[mongo] 연결 실패:', mongo.error);
   }
 
-  const server = app.listen(config.port, config.host, () => {
-    console.log(`[server] http://${config.host}:${config.port} (AUTH_MODE=${config.authMode})`);
-    if (!config.loopbackOnly) {
-      // 7-3(HTTPS) 전까지: 바깥에 HTTP로 열면 비밀번호와 쿠키가 암호화되지 않은 채 오간다
-      console.warn('[auth] 경고: HTTPS 없이 외부에 열려 있습니다. 같은 네트워크의 누구든 비밀번호와 쿠키를 엿볼 수 있습니다.');
+  const { server, scheme, stop: stopTls } = createAppServer(app, config.tls);
+  server.listen(config.port, config.host, () => {
+    console.log(`[server] ${scheme}://${config.host}:${config.port} (AUTH_MODE=${config.authMode})`);
+    if (servesWeb) console.log(`[server] 웹 화면도 내줍니다 — ${config.webDist}`);
+    if (!config.loopbackOnly && scheme === 'http') {
+      // ALLOW_INSECURE_HTTP=true로 일부러 허용한 경우에만 여기 온다(config.ts)
+      console.warn('[auth] 경고: HTTPS 없이 외부에 열려 있습니다(ALLOW_INSECURE_HTTP). 같은 네트워크의 누구든 비밀번호와 쿠키를 엿볼 수 있습니다.');
     }
   });
 
@@ -92,6 +106,7 @@ const start = async () => {
   // Ctrl+C / 재시작 시 Mongo 연결을 정리하고 종료
   const shutdown = async () => {
     clearInterval(recheck);
+    stopTls();
     await realtime.stop();
     io.close();
     server.close();
