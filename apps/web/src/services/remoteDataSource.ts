@@ -23,6 +23,7 @@ import type {
   ReferenceInfo,
   ServerMetrics,
 } from '../types/explorer';
+import { fetchAuthStatus, notifySessionExpired } from './auth';
 import type { ClientMetrics, DataSource } from './dataSource';
 
 const BASE = '/api';
@@ -34,6 +35,8 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
     headers: init?.body ? { 'Content-Type': 'application/json', ...init.headers } : init?.headers,
   });
   if (!response.ok) {
+    // 출입증이 무효(만료, 다른 곳에서 비밀번호 변경) — 로그인 화면으로
+    if (response.status === 401) notifySessionExpired();
     let message = `${response.status} ${response.statusText}`;
     let body: Record<string, unknown> | undefined;
     try {
@@ -151,7 +154,15 @@ export const createRemoteDataSource = (): DataSource => {
       if (everConnected) emitStatus({ state: 'running', resync: true });
       everConnected = true;
     });
-    next.on('disconnect', () => emitStatus({ state: 'connecting' }));
+    next.on('disconnect', (reason) => {
+      emitStatus({ state: 'connecting' });
+      // 서버가 끊은 경우 socket.io는 다시 붙지 않는다. 서버는 출입증이 무효가 된 연결을 끊으므로 확인해 본다.
+      if (reason === 'io server disconnect') {
+        void fetchAuthStatus()
+          .then((status) => (status.authenticated ? next.connect() : notifySessionExpired()))
+          .catch(() => undefined);
+      }
+    });
     next.on('connect_error', (e: Error) => emitStatus({ state: 'error', error: e.message }));
     next.on('status', (status: LiveStatus) => emitStatus(status));
     next.on('change', (change: LiveChange) => {

@@ -1,38 +1,90 @@
 // 문지기 — 모든 요청(/api와 /socket.io)이 여기를 지나간다.
 //
 // AUTH_MODE
-//   none    인증 없음. 이 기기에서만 쓸 때. HOST가 loopback이 아니면 서버를 켜지 않는다(config.ts).
-//   google  내장 Google 로그인 (7-2 예정)
-//   proxy   앞단(Cloudflare Access 등)이 로그인을 맡고 이메일을 넘겨준다 (7-3 예정)
+//   password  (기본) 내장 비밀번호 로그인. 이 기기(localhost)에서 접속해도 로그인해야 한다.
+//   proxy     앞단(Tailscale, Cloudflare Access 등)이 로그인을 맡는다 (준비 중)
 //
-// none 모드에서 막는 두 가지 공격
-//   DNS rebinding  악성 사이트가 자기 도메인이 127.0.0.1을 가리키게 바꿔 '같은 사이트'인 척 → Host 검사로 막는다
-//                  (덤: 터널을 붙여 놓고 인증을 깜빡해도 Host가 진짜 도메인이라 거절된다)
-//   교차 사이트 WebSocket  WebSocket은 CORS를 안 따른다. 다른 사이트 페이지가 붙어 실시간 변경을 엿볼 수 있다
-//                  → 브라우저가 붙여 보내는 Origin이 우리 주소(Host)와 같은지 본다
-import type { IncomingMessage } from 'node:http';
-import type { RequestHandler } from 'express';
+// 검사 순서
+//   1. Origin   브라우저가 붙여 보내는 '요청을 보낸 페이지의 주소'. 우리 주소(Host)와 달라야 할 이유가 없다.
+//               WebSocket은 CORS를 안 따라서 이걸 안 보면 다른 사이트 페이지가 실시간 변경을 엿볼 수 있다.
+//   2. 출입증   로그인 때 받은 쿠키. 공개 경로(로그인/로그아웃/상태)만 없이 통과.
+//
+// 출입증 쿠키: mongolive_session = <만료시각(ms)>.<서명>
+//   서명 = HMAC-SHA256(서버 비밀키, 만료시각). 만료시각을 고치면 서명이 안 맞아 거절된다.
+//   서버는 따로 저장하지 않는다(MongoDB에도, 파일에도) — 서명만 검증하면 된다.
+//   HttpOnly(페이지 JS가 못 읽음), SameSite=Strict(다른 사이트에서 시작된 요청엔 안 붙음).
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { TLSSocket } from 'node:tls';
+import express, { Router, type RequestHandler } from 'express';
+import { loadAuthData, MAX_PASSWORD_LENGTH, verifyPassword, type AuthData } from './authFile';
 import { config } from './config';
 
-const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+const COOKIE_NAME = 'mongolive_session';
+const SESSION_MS = 30 * 24 * 60 * 60 * 1000; // 30일
 
-// "localhost:5173" → "localhost". 이상한 값이면 null
-const hostnameOf = (host: string): string | null => {
-  try {
-    return new URL(`http://${host}`).hostname;
-  } catch {
-    return null;
-  }
+// 출입증 없이 들어올 수 있는 곳
+const PUBLIC_PATHS = new Set(['/api/auth/login', '/api/auth/logout', '/api/auth/me']);
+
+const authData = (): AuthData => {
+  const data = loadAuthData(config.authFile);
+  // 서버를 켤 때 확인하지만, 켜진 뒤 파일이 지워졌을 수도 있다
+  if (!data) throw new Error('비밀번호가 정해져 있지 않습니다 (set-password)');
+  return data;
 };
 
-export const isLoopbackHost = (host: string): boolean => LOOPBACK_NAMES.has(hostnameOf(host) ?? '');
+// ── 출입증 ───────────────────────────────────────────────────────────────────
 
-// 거절 사유를 돌려준다. 통과면 null
-export const checkRequest = (req: IncomingMessage): string | null => {
-  const host = req.headers.host ?? '';
+const sign = (expires: number, secret: string): string =>
+  createHmac('sha256', Buffer.from(secret, 'base64')).update(`v1.${expires}`).digest('base64url');
 
-  // Origin은 브라우저가 붙이는 '요청을 보낸 페이지의 주소'. 페이지 JS가 바꿀 수 없다.
-  // 없으면 브라우저 밖(curl, 스크립트) 요청이라 교차 사이트 공격이 아니다.
+const readCookie = (req: IncomingMessage, name: string): string | null => {
+  for (const part of (req.headers.cookie ?? '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq !== -1 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return null;
+};
+
+export const hasValidSession = (req: IncomingMessage): boolean => {
+  const value = readCookie(req, COOKIE_NAME);
+  if (!value) return false;
+  const dot = value.indexOf('.');
+  if (dot === -1) return false;
+  const expires = Number(value.slice(0, dot));
+  if (!Number.isSafeInteger(expires) || expires <= Date.now()) return false;
+  const given = Buffer.from(value.slice(dot + 1));
+  const expected = Buffer.from(sign(expires, authData().sessionSecret));
+  return given.length === expected.length && timingSafeEqual(given, expected);
+};
+
+// HTTPS로 들어온 요청이면 Secure(HTTPS에서만 보냄)도 붙인다 — 7-3 전까지는 HTTP라 안 붙는다
+const isHttps = (req: IncomingMessage): boolean => (req.socket as TLSSocket).encrypted === true;
+
+const cookieAttributes = (req: IncomingMessage, maxAgeSeconds: number): string =>
+  ['Path=/', 'HttpOnly', 'SameSite=Strict', `Max-Age=${maxAgeSeconds}`, ...(isHttps(req) ? ['Secure'] : [])].join('; ');
+
+const issueSession = (req: IncomingMessage, res: ServerResponse): void => {
+  const expires = Date.now() + SESSION_MS;
+  const value = `${expires}.${sign(expires, authData().sessionSecret)}`;
+  res.setHeader('Set-Cookie', `${COOKIE_NAME}=${value}; ${cookieAttributes(req, SESSION_MS / 1000)}`);
+};
+
+const clearSession = (req: IncomingMessage, res: ServerResponse): void => {
+  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; ${cookieAttributes(req, 0)}`);
+};
+
+// ── 문지기 ───────────────────────────────────────────────────────────────────
+
+interface Rejection {
+  status: 401 | 403;
+  error: string;
+}
+
+const pathOf = (req: IncomingMessage): string => new URL(req.url ?? '/', 'http://x').pathname;
+
+export const checkRequest = (req: IncomingMessage): Rejection | null => {
+  // 1. Origin — 없으면 브라우저 밖(curl, 스크립트) 요청이라 교차 사이트 공격이 아니다
   const origin = req.headers.origin;
   if (origin !== undefined) {
     let originHost: string | null = null;
@@ -41,17 +93,19 @@ export const checkRequest = (req: IncomingMessage): string | null => {
     } catch {
       // Origin: null(파일에서 연 페이지 등) — 우리 페이지가 아니다
     }
-    if (originHost !== host) return 'cross-origin request';
+    if (originHost !== req.headers.host) return { status: 403, error: 'cross-origin request' };
   }
 
-  if (config.authMode === 'none' && !isLoopbackHost(host)) return 'AUTH_MODE=none accepts only localhost';
+  // 2. 출입증
+  if (PUBLIC_PATHS.has(pathOf(req))) return null;
+  if (!hasValidSession(req)) return { status: 401, error: 'login required' };
   return null;
 };
 
 export const guard: RequestHandler = (req, res, next) => {
-  const reason = checkRequest(req);
-  if (reason) {
-    res.status(403).json({ error: reason });
+  const rejection = checkRequest(req);
+  if (rejection) {
+    res.status(rejection.status).json({ error: rejection.error });
     return;
   }
   next();
@@ -59,6 +113,112 @@ export const guard: RequestHandler = (req, res, next) => {
 
 // socket.io의 allowRequest 모양
 export const allowSocket = (req: IncomingMessage, callback: (err: string | null | undefined, ok: boolean) => void): void => {
-  const reason = checkRequest(req);
-  callback(reason, reason === null);
+  const rejection = checkRequest(req);
+  callback(rejection?.error, rejection === null);
 };
+
+// ── 로그인 시도 제한 ─────────────────────────────────────────────────────────
+// IP마다 5번까지는 그냥 틀려도 되고, 그다음부터는 틀릴 때마다 잠금 시간이 두 배(1분 → 2분 → … 최대 1시간).
+// 기록은 메모리에만 — 서버를 재시작하면 풀린다.
+// IP는 연결의 실제 주소(remoteAddress)만 쓴다. X-Forwarded-For 헤더는 누구나 지어낼 수 있어서 믿지 않는다.
+// (앞단 프록시를 쓰면 모두 같은 IP로 보여 잠금을 같이 쓰게 된다 — 혼자 쓰는 앱이라 받아들인다)
+
+const FREE_FAILURES = 5;
+const BASE_LOCK_MS = 60 * 1000;
+const MAX_LOCK_MS = 60 * 60 * 1000;
+const FORGET_AFTER_MS = 24 * 60 * 60 * 1000;
+
+interface Failures {
+  count: number;
+  lockedUntil: number;
+  last: number;
+}
+
+const failures = new Map<string, Failures>();
+
+const lockRemainingMs = (ip: string): number => {
+  const entry = failures.get(ip);
+  if (!entry) return 0;
+  if (Date.now() - entry.last > FORGET_AFTER_MS) {
+    failures.delete(ip);
+    return 0;
+  }
+  return Math.max(0, entry.lockedUntil - Date.now());
+};
+
+const recordFailure = (ip: string): void => {
+  const now = Date.now();
+  // 오래된 기록 정리 — 여러 IP로 두드려도 메모리가 끝없이 늘지 않게
+  for (const [key, entry] of failures) if (now - entry.last > FORGET_AFTER_MS) failures.delete(key);
+  const entry = failures.get(ip) ?? { count: 0, lockedUntil: 0, last: now };
+  entry.count += 1;
+  entry.last = now;
+  if (entry.count >= FREE_FAILURES) {
+    entry.lockedUntil = now + Math.min(MAX_LOCK_MS, BASE_LOCK_MS * 2 ** (entry.count - FREE_FAILURES));
+  }
+  failures.set(ip, entry);
+};
+
+// scrypt는 한 번에 128MB를 쓴다. 동시에 몰려도 하나씩만 돌리고, 줄이 너무 길면 바로 거절한다.
+const MAX_WAITING = 8;
+let waiting = 0;
+let hashQueue: Promise<unknown> = Promise.resolve();
+
+const oneAtATime = <T>(task: () => Promise<T>): Promise<T> | null => {
+  if (waiting >= MAX_WAITING) return null;
+  waiting += 1;
+  const run = hashQueue.then(task).finally(() => {
+    waiting -= 1;
+  });
+  hashQueue = run.catch(() => undefined);
+  return run;
+};
+
+// ── 로그인 API ───────────────────────────────────────────────────────────────
+
+export const authRouter = Router();
+// 로그인은 출입증 없이 받는 요청이라 본문을 작게 제한한다(다른 API는 10MB)
+authRouter.use(express.json({ limit: '4kb' }));
+
+authRouter.get('/auth/me', (req, res) => {
+  res.json({ mode: config.authMode, authenticated: hasValidSession(req) });
+});
+
+authRouter.post('/auth/login', async (req, res) => {
+  const ip = req.socket.remoteAddress ?? 'unknown';
+  const locked = lockRemainingMs(ip);
+  if (locked > 0) {
+    const seconds = Math.ceil(locked / 1000);
+    res.setHeader('Retry-After', String(seconds));
+    res.status(429).json({ error: 'too many attempts', retryAfter: seconds });
+    return;
+  }
+
+  const password: unknown = req.body?.password;
+  if (typeof password !== 'string' || password.length === 0 || password.length > MAX_PASSWORD_LENGTH) {
+    res.status(400).json({ error: 'password required' });
+    return;
+  }
+
+  const check = oneAtATime(() => verifyPassword(password, authData().password));
+  if (!check) {
+    res.setHeader('Retry-After', '5');
+    res.status(429).json({ error: 'busy, try again', retryAfter: 5 });
+    return;
+  }
+  if (!(await check)) {
+    recordFailure(ip);
+    res.status(401).json({ error: 'wrong password' });
+    return;
+  }
+
+  failures.delete(ip);
+  issueSession(req, res);
+  res.json({ mode: config.authMode, authenticated: true });
+});
+
+// 이 브라우저의 출입증만 지운다. 모든 기기에서 로그아웃하려면 set-password로 비밀번호를 바꾼다.
+authRouter.post('/auth/logout', (req, res) => {
+  clearSession(req, res);
+  res.json({ mode: config.authMode, authenticated: false });
+});

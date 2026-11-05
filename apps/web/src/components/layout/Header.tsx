@@ -1,9 +1,10 @@
 // path: src/components/layout/Header.tsx
 import { useState } from 'react';
-import { Activity, Circle, Columns3, ListTree, Minus, Plus, RefreshCw } from 'lucide-react';
+import { Activity, Circle, Columns3, ListTree, LogOut, Minus, Plus, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { MIN_VISIBLE_COLUMNS, MAX_VISIBLE_COLUMNS, type UseExplorerStateResult } from '../../hooks/useExplorerState';
 import { cn } from '../../utils/cn';
+import { useAuth } from '../auth/AuthGate';
 import { DatabaseDropdown } from './DatabaseDropdown';
 
 type HeaderProps = Pick<
@@ -88,6 +89,7 @@ export function Header({
   onToggleActivity,
 }: HeaderProps) {
   const status = STATUS_STYLES[connectionStatus];
+  const auth = useAuth();
   const [rotation, setRotation] = useState(0);
   // 생색용 토글 — 트리모드(컬럼 2개)/컬럼모드(컬럼 3개) 둘만 오가며, 다른 상태는 추가하지 않음
   const isTreeMode = maxVisibleColumns === MIN_VISIBLE_COLUMNS;
@@ -205,6 +207,18 @@ export function Header({
             selectDatabase={selectDatabase}
             onMutate={mutate}
           />
+
+          {auth.canLogout && (
+            <button
+              type="button"
+              className={styles.refreshButton}
+              onClick={() => void auth.logout()}
+              aria-label="Sign out"
+              data-tt="Sign out of this browser"
+            >
+              <LogOut size={16} aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
     </motion.header>

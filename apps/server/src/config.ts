@@ -1,5 +1,4 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { authFilePath, metaFilePath } from './paths';
 
 // 환경변수 → 설정 객체. 서버 전체에서 process.env를 직접 읽지 말고 이 모듈만 쓴다.
 // 값은 apps/server/.env(커밋 안 됨)에서 Node의 --env-file로 들어온다. 예시는 .env.example.
@@ -20,34 +19,32 @@ const port = (name: string, fallback: number): number => {
   return n;
 };
 
-const AUTH_MODES = ['none', 'google', 'proxy'] as const;
+const AUTH_MODES = ['password', 'proxy'] as const;
 export type AuthMode = (typeof AUTH_MODES)[number];
 
 const authMode = (): AuthMode => {
-  const raw = process.env.AUTH_MODE || 'none';
+  const raw = process.env.AUTH_MODE || 'password';
+  if (raw === 'none') throw new Error('AUTH_MODE=none은 없어졌습니다 — 이 기기에서 접속해도 비밀번호 로그인을 합니다. AUTH_MODE를 지우세요.');
   if (!(AUTH_MODES as readonly string[]).includes(raw)) {
     throw new Error(`AUTH_MODE=${raw}는 없는 모드입니다. ${AUTH_MODES.join(' / ')} 중 하나를 쓰세요.`);
   }
-  if (raw !== 'none') throw new Error(`AUTH_MODE=${raw}는 아직 준비 중입니다(7단계 진행 중).`);
+  if (raw === 'proxy') throw new Error('AUTH_MODE=proxy는 아직 준비 중입니다(7단계 진행 중).');
   return raw as AuthMode;
 };
 
-// 이 기기 안에서만 닿는 주소
+// 이 기기 안에서만 닿는 주소 — 바깥에 HTTP로 열면 경고하는 데 쓴다
 const LOOPBACK_BIND = new Set(['127.0.0.1', '::1', 'localhost']);
-
 const host = process.env.HOST || '127.0.0.1';
-const mode = authMode();
-// 인증 없이 바깥에 문을 열면 주소를 아는 누구나 DB를 고칠 수 있다 — 아예 켜지 않는다
-if (mode === 'none' && !LOOPBACK_BIND.has(host)) {
-  throw new Error(`AUTH_MODE=none인데 HOST=${host}입니다. 인증 없이 외부에 열 수 없습니다 — HOST=127.0.0.1로 두거나 AUTH_MODE를 정하세요.`);
-}
 
 export const config = {
   mongoUri: required('MONGODB_URI'),
   // 기본은 이 기기에서만 접속 가능
   host,
-  authMode: mode,
+  loopbackOnly: LOOPBACK_BIND.has(host),
   port: port('PORT', 31501),
+  authMode: authMode(),
+  // 비밀번호 해시 + 쿠키 서명 키 (set-password가 만든다)
+  authFile: authFilePath(),
   // 앱 메타데이터(PK/FK 선언 등) 파일 — MongoDB가 아니라 이 컴퓨터에 저장한다
-  metaFile: process.env.META_FILE || join(homedir(), '.mongolive', 'meta.json'),
+  metaFile: metaFilePath(),
 } as const;

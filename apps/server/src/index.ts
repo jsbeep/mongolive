@@ -1,7 +1,8 @@
 // 서버 진입점: express 앱을 만들고, MongoDB에 연결한 뒤, 포트를 연다.
 import express, { type ErrorRequestHandler } from 'express';
 import { Server as SocketServer } from 'socket.io';
-import { allowSocket, guard } from './auth';
+import { allowSocket, authRouter, guard, hasValidSession } from './auth';
+import { loadAuthData } from './authFile';
 import { config } from './config';
 import { checkMongo, closeClient } from './db';
 import { HttpError } from './names';
@@ -14,6 +15,8 @@ import { refsRouter } from './routes/refs';
 const app = express();
 // 문지기가 맨 앞 — 거절할 요청은 본문(최대 10MB)을 읽기도 전에 돌려보낸다
 app.use(guard);
+// 로그인/로그아웃/상태 — 본문 제한이 작은 자기 파서를 쓰므로 10MB 파서보다 앞에 둔다
+app.use('/api', authRouter);
 app.use(express.json({ limit: '10mb' }));
 
 // 상태 확인용 — 서버가 살아 있는지, Mongo에 닿는지, replica set인지
@@ -38,13 +41,28 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     res.status(err.status).json({ ...err.body, error: err.message });
     return;
   }
+  // express.json이 던지는 요청 쪽 잘못(본문이 너무 큼 413, 깨진 JSON 400) — expose는 '밖에 보여도 되는 메시지'라는 표시
+  if (err?.expose === true && Number.isInteger(err.status) && err.status >= 400 && err.status < 500) {
+    res.status(err.status).json({ error: err.message });
+    return;
+  }
   console.error('[server]', err);
   // 내부 에러 내용(접속 주소 등)이 밖으로 새지 않게 일반 메시지만 보낸다
   res.status(500).json({ error: 'internal error' });
 };
 app.use(errorHandler);
 
+// 출입증이 만료됐거나 비밀번호가 바뀌어(서명 키 교체) 무효가 된 실시간 연결을 끊는다.
+// WebSocket은 처음 붙을 때만 문지기를 지나므로, 붙어 있는 동안은 따로 다시 확인해야 한다.
+const SOCKET_RECHECK_MS = 60 * 1000;
+
 const start = async () => {
+  // 비밀번호가 없으면 아무도 들어올 수 없는 서버가 된다 — 켜지 말고 방법을 알려 준다
+  if (config.authMode === 'password' && !loadAuthData(config.authFile)) {
+    console.error('[auth] 비밀번호가 아직 없습니다. 먼저 정하세요:\n  corepack pnpm --filter @mongolive/server set-password');
+    process.exit(1);
+  }
+
   // 연결이 안 돼도 서버는 띄운다 — /api/health에서 원인을 볼 수 있고, 요청마다 다시 연결을 시도한다.
   const mongo = await checkMongo();
   if (mongo.ok) {
@@ -55,15 +73,25 @@ const start = async () => {
 
   const server = app.listen(config.port, config.host, () => {
     console.log(`[server] http://${config.host}:${config.port} (AUTH_MODE=${config.authMode})`);
+    if (!config.loopbackOnly) {
+      // 7-3(HTTPS) 전까지: 바깥에 HTTP로 열면 비밀번호와 쿠키가 암호화되지 않은 채 오간다
+      console.warn('[auth] 경고: HTTPS 없이 외부에 열려 있습니다. 같은 네트워크의 누구든 비밀번호와 쿠키를 엿볼 수 있습니다.');
+    }
   });
 
   // 실시간 변경 전달 — 같은 포트의 /socket.io 경로(개발 중엔 Vite 프록시를 거쳐 같은 주소로 들어온다).
   // WebSocket은 CORS를 따르지 않아서 express 쪽과 같은 문지기를 allowRequest로 따로 세운다.
   const io = new SocketServer(server, { serveClient: false, allowRequest: allowSocket });
   const realtime = startRealtime(io);
+  const recheck = setInterval(() => {
+    for (const socket of io.sockets.sockets.values()) {
+      if (!hasValidSession(socket.request)) socket.disconnect(true);
+    }
+  }, SOCKET_RECHECK_MS);
 
   // Ctrl+C / 재시작 시 Mongo 연결을 정리하고 종료
   const shutdown = async () => {
+    clearInterval(recheck);
     await realtime.stop();
     io.close();
     server.close();
