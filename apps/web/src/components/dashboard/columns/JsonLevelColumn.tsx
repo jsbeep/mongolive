@@ -312,6 +312,12 @@ export function JsonLevelColumn({
   }, [activePaths, slotIndex, isInlineChain, path, refOid, refField, chainColor, chainIndex, projectionPath, onPopToIndex, onPushJsonPath]);
 
   const [deleteTarget, setDeleteTarget] = useState<{ fieldKey: string; value: JsonValue } | null>(null);
+  // 충돌 확인용: 편집기를 '연 순간' 본 값. 열려 있는 동안 실시간 반영으로 값이 바뀌어도 기준은 그대로다 —
+  // 저장할 때 서버가 지금 값과 비교해서 다르면 충돌 창을 띄운다. 편집기가 닫히면 잊는다.
+  const editBaselineRef = useRef<{ id: string; value: JsonValue } | null>(null);
+  useEffect(() => {
+    if (editBaselineRef.current && editBaselineRef.current.id !== editingId) editBaselineRef.current = null;
+  }, [editingId]);
 
   // 문서를 열 때 이미 알고 있던 id를 그대로 재사용한다(문서 내용에서 다시 derive하지
   // 않음) — _id/PK가 둘 다 없는 plain 문서는 컬렉션 안 배열 인덱스로만 식별되는데,
@@ -449,6 +455,9 @@ export function JsonLevelColumn({
         )
       : false;
 
+    if (isEditing && editBaselineRef.current?.id !== editorId) editBaselineRef.current = { id: editorId, value };
+    const seenValue = editBaselineRef.current?.id === editorId ? editBaselineRef.current.value : value;
+
     if (isEditing) {
       return (
         <InlineSegmentEditor
@@ -500,6 +509,7 @@ export function JsonLevelColumn({
                 // 보내면 array 항목을 수정할 때 mockMutate가 "Invalid mutate
                 // path"를 던진다(add 액션은 이미 isArrayNode로 분기하고 있었음).
                 containerType: isArrayNode ? 'array' : 'object',
+                expected: { exists: true, value: seenValue },
               },
             });
             // oid 값 자체가 실제로 바뀐 경우에만 고유 oid 레지스트리 갱신
@@ -891,6 +901,8 @@ export function JsonLevelColumn({
                     action: 'add',
                     value: data.value ?? null,
                     containerType: isArrayNode ? 'array' : 'object',
+                    // 객체: 그 이름이 비어 있었다(누가 먼저 만들었으면 충돌) / 배열: 맨 끝에 붙이기
+                    expected: { exists: false },
                   },
                 });
                 // 새로 생성된 고유 oid는 레지스트리에 등록 (DBRef로 오인되지 않도록)
@@ -935,20 +947,31 @@ export function JsonLevelColumn({
           targetLabel={deleteTarget.fieldKey}
           onConfirm={async () => {
             if (!mutateCollectionName || !mutateDatabaseName) return;
-            await onMutate({
-              type: 'mutateField',
-              database: mutateDatabaseName,
-              collection: mutateCollectionName,
-              documentId: docOidForMutate,
-              field: { path: projectionPath, key: deleteTarget.fieldKey, action: 'delete', containerType: isArrayNode ? 'array' : 'object' },
-            });
-            // 삭제되는 필드가 이 앱이 만든 고유 oid였다면 레지스트리에서 함께 제거
-            if (isBsonOid(deleteTarget.value) && uniqueOids.has(deleteTarget.value.$oid)) {
-              onUnregisterUniqueOid(deleteTarget.value.$oid);
+            try {
+              await onMutate({
+                type: 'mutateField',
+                database: mutateDatabaseName,
+                collection: mutateCollectionName,
+                documentId: docOidForMutate,
+                field: {
+                  path: projectionPath,
+                  key: deleteTarget.fieldKey,
+                  action: 'delete',
+                  containerType: isArrayNode ? 'array' : 'object',
+                  // 삭제 확인창을 연 순간 본 값 — 그 사이 바뀌었으면 충돌 창
+                  expected: { exists: true, value: deleteTarget.value },
+                },
+              });
+              // 삭제되는 필드가 이 앱이 만든 고유 oid였다면 레지스트리에서 함께 제거
+              if (isBsonOid(deleteTarget.value) && uniqueOids.has(deleteTarget.value.$oid)) {
+                onUnregisterUniqueOid(deleteTarget.value.$oid);
+              }
+              refreshRefDocument();
+              refreshRefFieldDocument();
+            } finally {
+              // 실패·충돌 후 '최신 값 유지'를 골라도 확인창은 닫는다
+              setDeleteTarget(null);
             }
-            refreshRefDocument();
-            refreshRefFieldDocument();
-            setDeleteTarget(null);
           }}
           onCancel={() => setDeleteTarget(null)}
         />,

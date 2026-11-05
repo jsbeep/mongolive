@@ -21,8 +21,10 @@ import {
   resolveMutableContainer,
   toCanonical,
   valueKind,
+  type ConflictInfo,
   type Document,
   type EjsonValue,
+  type ExpectedValue,
   type MutateFieldSpec,
   type MutationRequest,
   type MutationResult,
@@ -68,6 +70,15 @@ const str = (value: unknown, field: string): string => {
   return value;
 };
 
+// { exists: false } | { exists: true, value } — 없거나 모양이 다르면 '확인 안 함'
+const parseExpected = (raw: unknown): ExpectedValue | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const e = raw as Record<string, unknown>;
+  if (e.exists === false) return { exists: false };
+  if (e.exists === true && 'value' in e) return { exists: true, value: toCanonical(e.value) };
+  return undefined;
+};
+
 const parseFieldSpec = (raw: unknown): MutateFieldSpec => {
   if (!raw || typeof raw !== 'object') throw new HttpError(400, 'field가 없습니다');
   const f = raw as Record<string, unknown>;
@@ -82,6 +93,7 @@ const parseFieldSpec = (raw: unknown): MutateFieldSpec => {
     value: f.value === undefined ? undefined : toCanonical(f.value),
     nextKey: f.nextKey === undefined || f.nextKey === null ? undefined : checkSegment(str(f.nextKey, 'field.nextKey')),
     containerType,
+    expected: parseExpected(f.expected),
   };
 };
 
@@ -118,67 +130,133 @@ const withOpTime = async <T>(run: (session: ClientSession) => Promise<T>): Promi
 
 // ── mutateField ──────────────────────────────────────────────────────────────
 
+// 그 자리의 지금 값 → ExpectedValue 모양
+const slotOf = (document: Document, segments: string[]): ExpectedValue => {
+  const value = resolveMutableContainer(document, segments);
+  return value === undefined ? { exists: false } : { exists: true, value };
+};
+
+// 타입까지 똑같아야 같은 값 — Int32 30 → Double 30.0처럼 타입만 바뀐 것도 남의 변경이다.
+// (ejsonEquals는 FK 매칭용이라 숫자 타입을 일부러 무시하므로 여기선 쓰지 않는다)
+// 값은 양쪽 다 서버가 만든 Canonical(브라우저는 받은 값을 그대로 돌려보낸다)이라 글자로 비교하면 된다.
+const sameValue = (a: EjsonValue, b: EjsonValue): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+const sameSlot = (a: ExpectedValue, b: ExpectedValue): boolean =>
+  a.exists === b.exists && (!a.exists || (b.exists && sameValue(a.value, b.value)));
+
+const conflictError = (path: string[], current: ExpectedValue): HttpError =>
+  new HttpError(409, '편집하는 동안 다른 곳에서 바뀌었습니다', {
+    conflict: { path: path.join('.'), current } satisfies ConflictInfo,
+  });
+
+// 읽은 그대로일 때만 쓰도록 거는 조건(읽기 ~ 쓰기 사이 수 ms 동안 끼어든 변경을 막는다)
+const slotFilter = (slot: ExpectedValue): unknown => (slot.exists ? fromWire(slot.value) : { $exists: false });
+
+// 읽고 → 확인하고 → 조건 걸어 쓰기를 한 번. 읽은 뒤 그 사이 바뀌어 조건이 안 맞으면 null(다시 시도)
+const tryMutateField = async (
+  collection: Collection,
+  documentId: string,
+  field: MutateFieldSpec,
+): Promise<{ changedPaths: string[]; opTime?: string } | null> => {
+  const { bson, wire } = await findByDocumentId(collection, documentId);
+  const target = [...field.path, field.key];
+  const containerPath = field.path.join('.');
+  const join = (key: string) => (containerPath ? `${containerPath}.${key}` : key);
+  const before = resolveMutableContainer(wire, field.path);
+  const isArray = field.containerType === 'array';
+
+  // 배열 항목 추가는 '맨 끝에 붙이기' — 그 사이 누가 먼저 붙였어도 지금 끝에 붙인다
+  let spec = field;
+  const appending = isArray && field.action === 'add' && field.expected?.exists === false;
+  if (appending && Array.isArray(before)) spec = { ...field, key: String(before.length) };
+
+  // 충돌 확인: 내가 본 값 vs 지금 값 (확인할 값이 없으면 = 그래도 덮어쓰기)
+  if (field.expected && !appending) {
+    const current = slotOf(wire, target);
+    if (!sameSlot(field.expected, current)) throw conflictError(target, current);
+    // 이름 바꾸기: 새 이름 자리를 그 사이 누가 먼저 차지했으면 덮지 않는다
+    if (field.action === 'edit' && field.nextKey && field.nextKey !== field.key) {
+      const renamed = [...field.path, field.nextKey];
+      const occupant = slotOf(wire, renamed);
+      if (occupant.exists) throw conflictError(renamed, occupant);
+    }
+  }
+
+  // 공유 규칙으로 '바뀐 뒤'를 계산한다 — 경로가 없거나 타입이 안 맞으면 여기서 걸러진다
+  const next = cloneValue(wire) as Document;
+  let mutation;
+  try {
+    mutation = mutateDocumentField(next, spec);
+  } catch (e) {
+    throw new HttpError(400, e instanceof Error ? e.message : String(e));
+  }
+
+  const filter: BsonDocument = { _id: bson._id };
+  const update: BsonDocument = {};
+  const index = Number(spec.key);
+  const length = Array.isArray(before) ? before.length : 0;
+
+  if (isArray && spec.action === 'edit' && index < length) {
+    // 배열 칸 제자리 수정 — 그 칸만
+    filter[join(spec.key)] = slotFilter(slotOf(wire, [...spec.path, spec.key]));
+    update.$set = { [join(spec.key)]: fromWire(spec.value ?? null) };
+  } else if (isArray) {
+    // 끼워넣기/빼기/끝에 붙이기: MongoDB엔 '몇 번째 칸 빼기'가 없으므로 새 배열을 통째로 쓴다.
+    // 방금 읽은 배열 그대로일 때만(아니면 칸 번호가 어긋나므로 다시 읽어서 처음부터)
+    filter[containerPath] = fromWire(before as EjsonValue);
+    update.$set = { [containerPath]: fromWire(resolveMutableContainer(next, spec.path) as EjsonValue) };
+  } else {
+    filter[join(spec.key)] = slotFilter(slotOf(wire, [...spec.path, spec.key]));
+    if (spec.action === 'delete') {
+      update.$unset = { [join(spec.key)]: '' };
+    } else if (spec.action === 'edit' && spec.nextKey && spec.nextKey !== spec.key) {
+      // 이름 바꾸기 = 옛 키 지우고 새 키에 쓰기(새 키는 맨 뒤로 간다 — Mock과 같음)
+      filter[join(spec.nextKey)] = { $exists: false };
+      update.$unset = { [join(spec.key)]: '' };
+      update.$set = { [join(spec.nextKey)]: fromWire(spec.value ?? null) };
+    } else {
+      update.$set = { [join(spec.key)]: fromWire(spec.value ?? null) };
+    }
+  }
+
+  // 그래도 덮어쓰기(확인할 값 없음)면 끼어든 변경도 덮는다 — _id 조건만 남긴다(배열 통째 쓰기는 칸이 어긋나지 않게 유지)
+  if (!field.expected && !(isArray && !(spec.action === 'edit' && index < length))) {
+    for (const key of Object.keys(filter)) if (key !== '_id') delete filter[key];
+  }
+
+  const { value: { matchedCount }, opTime } = await withOpTime((session) => collection.updateOne(filter, update, { session }));
+  if (matchedCount === 0) return null;
+  return { changedPaths: mutation.changedPaths, opTime };
+};
+
+const MUTATE_ATTEMPTS = 3;
+
 const mutateField = async (op: Extract<DocumentOp, { type: 'mutateField' }>): Promise<MutationResult> => {
   const database = str(op.database, 'database');
   const collectionName = str(op.collection, 'collection');
   const documentId = str(op.documentId, 'documentId');
   const field = parseFieldSpec(op.field);
-  const collection = await openCollection(database, collectionName);
-  const { bson, wire } = await findByDocumentId(collection, documentId);
-
   if (field.path.length === 0 && (field.key === '_id' || field.nextKey === '_id')) {
     throw new HttpError(400, '_id는 바꿀 수 없습니다 (MongoDB 규칙)');
   }
+  const collection = await openCollection(database, collectionName);
 
-  // 공유 규칙으로 '바뀐 뒤'를 계산한다 — 경로가 없거나 타입이 안 맞으면 여기서 걸러진다
-  const before = resolveMutableContainer(wire, field.path);
-  const next = cloneValue(wire) as Document;
-  let mutation;
-  try {
-    mutation = mutateDocumentField(next, field);
-  } catch (e) {
-    throw new HttpError(400, e instanceof Error ? e.message : String(e));
+  // 읽기와 쓰기 사이에 끼어든 변경 때문에 쓰지 못했으면 다시 읽어서 처음부터.
+  // 다시 할 땐 충돌 확인이 '내가 본 값'으로 진짜 충돌인지 걸러 준다.
+  for (let attempt = 0; attempt < MUTATE_ATTEMPTS; attempt += 1) {
+    const done = await tryMutateField(collection, documentId, field);
+    if (!done) continue;
+    const base = docBase(database, collectionName, documentId);
+    return okResult(
+      database,
+      collectionName,
+      documentId,
+      done.changedPaths.map((p) => `${base}.${p}`),
+      done.opTime,
+      [database, collectionName, documentId, ...field.path, field.key],
+    );
   }
-
-  const containerPath = field.path.join('.');
-  const join = (key: string) => (containerPath ? `${containerPath}.${key}` : key);
-  const filter: BsonDocument = { _id: bson._id };
-  const update: BsonDocument = {};
-
-  if (field.containerType === 'array') {
-    const length = Array.isArray(before) ? before.length : 0;
-    const index = Number(field.key);
-    if (field.action === 'edit' && index < length) {
-      // 제자리 수정 — 그 칸만
-      update.$set = { [join(String(index))]: fromWire(field.value ?? null) };
-    } else {
-      // 끼워넣기/빼기/끝에 붙이기: MongoDB엔 '몇 번째 칸 빼기'가 없으므로 새 배열을 통째로 쓴다.
-      // 내가 읽은 배열과 같을 때만 쓴다(그 사이 누가 바꿨으면 칸 번호가 어긋나므로 거절)
-      filter[containerPath] = fromWire(before as EjsonValue);
-      update.$set = { [containerPath]: fromWire(resolveMutableContainer(next, field.path) as EjsonValue) };
-    }
-  } else if (field.action === 'delete') {
-    update.$unset = { [join(field.key)]: '' };
-  } else if (field.action === 'edit' && field.nextKey && field.nextKey !== field.key) {
-    // 이름 바꾸기 = 옛 키 지우고 새 키에 쓰기(새 키는 맨 뒤로 간다 — Mock과 같음)
-    update.$unset = { [join(field.key)]: '' };
-    update.$set = { [join(field.nextKey)]: fromWire(field.value ?? null) };
-  } else {
-    update.$set = { [join(field.key)]: fromWire(field.value ?? null) };
-  }
-
-  const { value: { matchedCount }, opTime } = await withOpTime((session) => collection.updateOne(filter, update, { session }));
-  if (matchedCount === 0) throw new HttpError(409, '그 사이 다른 곳에서 바뀌었습니다. 새로 불러온 뒤 다시 시도하세요');
-
-  const base = docBase(database, collectionName, documentId);
-  return okResult(
-    database,
-    collectionName,
-    documentId,
-    mutation.changedPaths.map((p) => `${base}.${p}`),
-    opTime,
-    [database, collectionName, documentId, ...field.path, field.key],
-  );
+  throw new HttpError(409, '이 값이 계속 바뀌고 있어 저장하지 못했습니다. 잠시 뒤 다시 시도하세요');
 };
 
 // ── upsertDocument ───────────────────────────────────────────────────────────

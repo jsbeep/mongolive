@@ -1,7 +1,8 @@
 // URL로 들어온 DB/컬렉션 이름 검사. 시스템 DB·컬렉션은 이 앱에서 보이지도, 건드리지도 못하게 한다.
 
 export class HttpError extends Error {
-  constructor(public status: number, message: string) {
+  // body: 에러 응답에 같이 실어 보낼 값(예: 409 충돌의 conflict)
+  constructor(public status: number, message: string, public body?: Record<string, unknown>) {
     super(message);
   }
 }

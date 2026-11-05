@@ -3,6 +3,29 @@ import { api } from '../services/api';
 import { useToast, type ToastMessage } from './useToast';
 import { useUniqueOidRegistry } from './useUniqueOidRegistry';
 import { CHANGE_FLASH_MS, type ChangeTone } from '../components/common/ChangeFlash';
+import type { ConflictInfo, ExpectedValue } from '../types/explorer';
+
+// 저장하려던 값이 편집하는 동안 다른 곳에서 바뀌었다(서버 409) — 충돌 창에 보여 줄 것
+export interface PendingConflict {
+  // 문서 안 경로("tags.5")
+  path: string;
+  // 내가 편집을 시작할 때 본 값 / 지금 값 / 내가 저장하려던 것
+  seen: ExpectedValue;
+  current: ExpectedValue;
+  mine: { action: 'add' | 'edit' | 'delete'; value?: JsonValue };
+}
+
+// 충돌 창에서 '최신 값 유지'를 골랐다 — 실패가 아니므로 에러 토스트를 띄우지 않는다
+export class MutationCancelledError extends Error {
+  constructor() {
+    super('Kept the newer value');
+  }
+}
+
+const conflictInfoOf = (e: unknown): ConflictInfo | null => {
+  const err = e as { status?: number; body?: { conflict?: ConflictInfo } };
+  return err?.status === 409 && err.body?.conflict ? err.body.conflict : null;
+};
 import {
   collectionKey,
   compareKey,
@@ -105,6 +128,8 @@ export interface UseExplorerStateResult {
   changedPaths: string[];
   // 지금 강조가 내 저장(연초록)인지 밖에서 온 변경(하늘색)인지
   changeTone: ChangeTone;
+  // 열려 있는 충돌 창(없으면 null)
+  conflict: PendingConflict | null;
   toast: ToastMessage | null;
   uniqueOids: Set<string>;
   referenceCandidates: PendingFieldReference | null;
@@ -134,6 +159,8 @@ export interface UseExplorerStateResult {
   resolveReferenceCandidate: (candidate: FieldReferenceCandidate) => Promise<void>;
   dismissReferenceCandidates: () => void;
   mutate: (op: MutationRequest) => Promise<MutationResult>;
+  // 충돌 창의 답: true = 그래도 덮어쓰기, false = 최신 값 유지
+  resolveConflict: (overwrite: boolean) => void;
   registerUniqueOid: (oid: string) => void;
   unregisterUniqueOid: (oid: string) => void;
   setEditingId: (id: string | null) => void;
@@ -209,6 +236,9 @@ export function useExplorerState(): UseExplorerStateResult {
   const [isLoading, setIsLoading] = useState(false);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const [changeTone, setChangeTone] = useState<ChangeTone>('external');
+  const [conflict, setConflict] = useState<PendingConflict | null>(null);
+  // 충돌 창이 답을 기다리는 mutate()를 깨운다
+  const conflictResolverRef = useRef<((overwrite: boolean) => void) | null>(null);
   const [referenceCandidates, setReferenceCandidates] = useState<PendingFieldReference | null>(null);
   const [maxVisibleColumns, setMaxVisibleColumnsState] = useState(MIN_VISIBLE_COLUMNS + 1);
 
@@ -735,10 +765,51 @@ export function useExplorerState(): UseExplorerStateResult {
     ]);
   }, []);
 
+  // 충돌 창을 띄우고 사용자가 고를 때까지 기다린다
+  const askConflict = useCallback(
+    (pending: PendingConflict) =>
+      new Promise<boolean>((resolve) => {
+        conflictResolverRef.current = resolve;
+        setConflict(pending);
+      }),
+    [],
+  );
+  const resolveConflict = useCallback((overwrite: boolean) => {
+    const resolve = conflictResolverRef.current;
+    conflictResolverRef.current = null;
+    setConflict(null);
+    resolve?.(overwrite);
+  }, []);
+
   const mutate = useCallback(async (op: MutationRequest): Promise<MutationResult> => {
     setIsLoading(true);
     try {
-      const result = await api.mutate(op);
+      let result: MutationResult;
+      try {
+        result = await api.mutate(op);
+      } catch (e) {
+        // 편집하는 동안 다른 곳에서 바뀌었다 → 사용자에게 묻는다(호출한 쪽은 그동안 기다린다)
+        const info = conflictInfoOf(e);
+        if (!info || op.type !== 'mutateField' || !op.field.expected) throw e;
+        setIsLoading(false);
+        const targetPath = [...op.field.path, op.field.key].join('.');
+        const overwrite = await askConflict({
+          path: info.path,
+          // 이름 바꾸기에서 새 이름 자리가 차 있던 경우엔 '본 값'은 빈자리였다
+          seen: info.path === targetPath ? op.field.expected : { exists: false },
+          current: info.current,
+          mine: { action: op.field.action, value: op.field.value },
+        });
+        if (!overwrite) {
+          // 최신 값 유지 — 화면은 실시간 반영으로 이미 지금 값을 보여 주고 있다. 편집기만 닫는다
+          setEditingId(null);
+          showToast('Kept the newer value', 'success', true);
+          throw new MutationCancelledError();
+        }
+        setIsLoading(true);
+        // 그래도 덮어쓰기 = 비교 없이 다시 보낸다
+        result = await api.mutate({ ...op, field: { ...op.field, expected: undefined } });
+      }
       flashChangedPaths(result.changedPaths, 'own');
 
       // 관련 캐시 갱신
@@ -789,13 +860,14 @@ export function useExplorerState(): UseExplorerStateResult {
       showToast('Saved', 'success', true);
       return result;
     } catch (e) {
+      if (e instanceof MutationCancelledError) throw e;
       const msg = typeof e === 'string' ? e : e instanceof Error ? e.message : 'Failed to save.';
       showToast(msg, 'error');
       throw e;
     } finally {
       setIsLoading(false);
     }
-  }, [showToast, focusDatabase, flashChangedPaths]);
+  }, [showToast, focusDatabase, flashChangedPaths, askConflict]);
 
   const clearChangedPaths = useCallback(() => {
     if (changedPathsTimerRef.current) clearTimeout(changedPathsTimerRef.current);
@@ -1116,6 +1188,7 @@ export function useExplorerState(): UseExplorerStateResult {
     isLoading,
     changedPaths,
     changeTone,
+    conflict,
     toast,
     uniqueOids,
     referenceCandidates,
@@ -1139,6 +1212,7 @@ export function useExplorerState(): UseExplorerStateResult {
     resolveReferenceCandidate,
     dismissReferenceCandidates,
     mutate,
+    resolveConflict,
     registerUniqueOid,
     unregisterUniqueOid,
     setEditingId,

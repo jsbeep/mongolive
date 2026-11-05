@@ -35,13 +35,15 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   });
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let body: Record<string, unknown> | undefined;
     try {
-      const body = (await response.json()) as { error?: string };
-      if (body.error) message = body.error;
+      body = (await response.json()) as Record<string, unknown>;
+      if (typeof body.error === 'string') message = body.error;
     } catch {
       // 본문이 JSON이 아니면 상태 코드만
     }
-    throw Object.assign(new Error(message), { status: response.status });
+    // body: 409 충돌이면 { conflict: ConflictInfo } — useExplorerState가 충돌 창을 띄운다
+    throw Object.assign(new Error(message), { status: response.status, body });
   }
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 };

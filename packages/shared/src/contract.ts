@@ -247,6 +247,20 @@ export interface MutateFieldSpec {
   value?: EjsonValue;
   nextKey?: string;
   containerType?: 'object' | 'array';
+  // 충돌 확인: 사용자가 편집을 시작할 때 본 '그 자리'(path + key)의 값.
+  // 서버는 지금 값이 이것과 같을 때만 쓰고, 다르면 409 + ConflictInfo를 돌려준다. 없으면 확인 없이 쓴다(= 그래도 덮어쓰기).
+  //   배열 항목 추가 + { exists: false } = '맨 끝에 붙이기' — 그 사이 누가 먼저 붙였어도 충돌이 아니다
+  expected?: ExpectedValue;
+}
+
+// 그 자리에 무엇이 있었나(있었다면 무슨 값이었나)
+export type ExpectedValue = { exists: false } | { exists: true; value: EjsonValue };
+
+// 409 응답 본문의 conflict — 어디가 지금 무슨 값인지
+export interface ConflictInfo {
+  // 문서 안 경로("tags.5")
+  path: string;
+  current: ExpectedValue;
 }
 
 type CollectionSeed = {

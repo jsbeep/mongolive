@@ -32,7 +32,7 @@ app.use('/api', (_req, res) => {
 // 라우트에서 던진 에러 → JSON 응답. express 5는 async 핸들러의 에러도 여기로 넘겨 준다.
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (err instanceof HttpError) {
-    res.status(err.status).json({ error: err.message });
+    res.status(err.status).json({ ...err.body, error: err.message });
     return;
   }
   console.error('[server]', err);

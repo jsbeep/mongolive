@@ -8,6 +8,7 @@ import { Footer } from '../components/layout/Footer';
 import { Breadcrumbs } from '../components/dashboard/Breadcrumbs';
 import { MillerColumns } from '../components/dashboard/MillerColumns';
 import { ChangeToneContext } from '../components/common/ChangeFlash';
+import { ConflictModal } from '../components/common/ConflictModal';
 import { ReferenceCandidatesModal } from '../components/common/ReferenceCandidatesModal';
 import { TooltipLayer } from '../components/common/TooltipLayer';
 import { ActivityPanel } from '../components/activity/ActivityPanel';
@@ -53,6 +54,8 @@ export default function ExplorerPage() {
     isLoading,
     changedPaths,
     changeTone,
+    conflict,
+    resolveConflict,
     editingId,
     toast,
     uniqueOids,
@@ -161,6 +164,9 @@ export default function ExplorerPage() {
 
       {/* data-tt 속성이 달린 컨트롤의 툴팁 — 컬럼 밖으로 나가야 해서 body portal */}
       <TooltipLayer />
+
+      {/* 편집하는 동안 다른 곳에서 바뀌었을 때 — 최신 값 유지 / 그래도 덮어쓰기 */}
+      <ConflictModal pending={conflict} onOverwrite={() => resolveConflict(true)} onKeepTheirs={() => resolveConflict(false)} />
 
       {/* 필드 기반 참조(FK) 매칭이 여러 개일 때 고르는 모달 */}
       <ReferenceCandidatesModal
