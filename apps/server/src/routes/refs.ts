@@ -110,8 +110,14 @@ refsRouter.post('/databases/:db/collections/:col/find-by-field', async (req, res
   if (key === '_id' && typeof value === 'string' && /^[0-9a-fA-F]{24}$/.test(value)) {
     candidates.push(fromWire(makeOid(value)));
   }
+  // 후보마다 $eq로 감싼다 — 클라이언트가 보낸 값이 연산자로 해석되지 않게.
+  // $in에 넣으면 정규식은 '패턴'으로 검색되고, $로 시작하는 키를 가진 객체는 MongoDB 에러가 난다.
+  // $eq 안의 값은 무엇이든 글자 그대로 비교된다(같은 값 비교라 인덱스도 그대로 탄다).
   const raw = await collection
-    .find({ [key]: { $in: candidates } } as never, { ...READ_OPTIONS, limit: DOCUMENT_LIST_LIMIT })
+    .find({ $or: candidates.map((candidate) => ({ [key]: { $eq: candidate } })) } as never, {
+      ...READ_OPTIONS,
+      limit: DOCUMENT_LIST_LIMIT,
+    })
     .toArray();
 
   // 2차: Mock의 compareKey 규칙으로 다시 거른다. MongoDB 쿼리는 배열 필드면 '원소 중 하나'만 같아도,

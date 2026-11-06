@@ -151,7 +151,9 @@ const conflictError = (path: string[], current: ExpectedValue): HttpError =>
   });
 
 // 읽은 그대로일 때만 쓰도록 거는 조건(읽기 ~ 쓰기 사이 수 ms 동안 끼어든 변경을 막는다)
-const slotFilter = (slot: ExpectedValue): unknown => (slot.exists ? fromWire(slot.value) : { $exists: false });
+// 조건의 값 자리에 그냥 넣으면 $로 시작하는 키를 가진 객체는 연산자로, 정규식은 패턴으로 해석된다
+// (MongoDB 5.0부터 그런 필드 이름도 저장할 수 있다). $eq로 감싸 '이 값과 같을 때'로 못 박는다.
+const slotFilter = (slot: ExpectedValue): unknown => (slot.exists ? { $eq: fromWire(slot.value) } : { $exists: false });
 
 // 읽고 → 확인하고 → 조건 걸어 쓰기를 한 번. 읽은 뒤 그 사이 바뀌어 조건이 안 맞으면 null(다시 시도)
 const tryMutateField = async (
@@ -192,7 +194,7 @@ const tryMutateField = async (
     throw new HttpError(400, e instanceof Error ? e.message : String(e));
   }
 
-  const filter: BsonDocument = { _id: bson._id };
+  const filter: BsonDocument = { _id: { $eq: bson._id } };
   const update: BsonDocument = {};
   const index = Number(spec.key);
   const length = Array.isArray(before) ? before.length : 0;
@@ -204,7 +206,7 @@ const tryMutateField = async (
   } else if (isArray) {
     // 끼워넣기/빼기/끝에 붙이기: MongoDB엔 '몇 번째 칸 빼기'가 없으므로 새 배열을 통째로 쓴다.
     // 방금 읽은 배열 그대로일 때만(아니면 칸 번호가 어긋나므로 다시 읽어서 처음부터)
-    filter[containerPath] = fromWire(before as EjsonValue);
+    filter[containerPath] = { $eq: fromWire(before as EjsonValue) };
     update.$set = { [containerPath]: fromWire(resolveMutableContainer(next, spec.path) as EjsonValue) };
   } else {
     filter[join(spec.key)] = slotFilter(slotOf(wire, [...spec.path, spec.key]));
@@ -330,14 +332,14 @@ const upsertDocument = async (op: Extract<DocumentOp, { type: 'upsertDocument' }
   const document: Document = { _id: id, ...fields };
 
   const bson = fromWire(document) as BsonDocument;
-  const existing = await collection.findOne({ _id: bson._id }, READ_OPTIONS);
+  const existing = await collection.findOne({ _id: { $eq: bson._id } }, READ_OPTIONS);
   const was: ExpectedValue = existing ? { exists: true, value: toWire<Document>(existing) } : { exists: false };
   // 확인(되돌리기가 보낸 경우): 지금 그 _id 문서가 기대한 그대로인가
   const expected = parseExpected(op.expected);
   if (expected && !sameSlot(expected, was)) throw conflictError([], was);
 
   // 같은 _id가 있으면 교체, 없으면 추가 (Mock과 같은 동작)
-  const { opTime } = await withOpTime((session) => collection.replaceOne({ _id: bson._id }, bson, { upsert: true, session }));
+  const { opTime } = await withOpTime((session) => collection.replaceOne({ _id: { $eq: bson._id } }, bson, { upsert: true, session }));
 
   const documentId = getDocumentId(document) ?? '';
   const now: ExpectedValue = { exists: true, value: document };
@@ -410,7 +412,7 @@ const deleteDocument = async (op: Extract<DocumentOp, { type: 'deleteDocument' }
   // 확인(되돌리기가 보낸 경우): 지울 문서가 기대한 그대로인가 — 그 사이 누가 고쳤으면 지우지 않는다
   const expected = parseExpected(op.expected);
   if (expected && !sameSlot(expected, { exists: true, value: wire })) throw conflictError([], { exists: true, value: wire });
-  const { opTime } = await withOpTime((session) => collection.deleteOne({ _id: bson._id }, { session }));
+  const { opTime } = await withOpTime((session) => collection.deleteOne({ _id: { $eq: bson._id } }, { session }));
   return {
     ...okResult(database, collectionName, documentId, [docBase(database, collectionName, documentId)], opTime),
     // 다시 넣기 (그 _id가 비어 있을 때만)
