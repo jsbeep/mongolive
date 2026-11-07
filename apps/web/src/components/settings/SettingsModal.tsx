@@ -9,12 +9,12 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, m } from 'framer-motion';
-import { ArrowRight, CircleAlert, CircleCheck, Database, Link, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { ArrowRight, ChevronRight, CircleAlert, CircleCheck, Database, Link, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, Diagnostics, MutationRequest } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
 import { setPreference, usePreferences, UNDO_DEPTHS, type DateDisplay, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type UndoDepth } from '../../services/preferences';
 import { saveServerSettings, useServerSettings } from '../../services/serverSettings';
-import { buildForumEjsonSample, buildForumJsonSample } from '../../data/sampleData';
+import { buildForumEjsonSample, buildForumJsonSample, FORUM_EJSON_DATABASE_NAME, FORUM_JSON_DATABASE_NAME } from '../../data/sampleData';
 import { formatDate, formatOid, offsetLabel } from '../../utils/formatValue';
 import { cn } from '../../utils/cn';
 
@@ -40,6 +40,8 @@ interface SettingsModalProps {
   onMutate: (op: MutationRequest) => Promise<unknown>;
   // References 칸에서 컬렉션 이름을 누르면 거기로 이동(창은 닫힌다)
   onOpenCollection: (database: string, collection: string, label: string) => void;
+  // Data 칸에서 이미 있는 샘플 DB 열기(창은 닫힌다)
+  onOpenDatabase: (database: string) => void;
 }
 
 const styles = {
@@ -345,12 +347,17 @@ type DeclaredRow = { database: string; collection: CollectionSummary };
 function ReferencesSection({ databases, onMutate, onOpenCollection }: Pick<SettingsModalProps, 'databases' | 'onMutate' | 'onOpenCollection'>) {
   const [rows, setRows] = useState<DeclaredRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 접어 둔 DB — 기본은 다 펼침
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+
+  // _id는 기본 키라 보여 줄 필요가 없다 — 직접 다른 키로 정한 경우만
+  const customPk = (c: CollectionSummary) => (c.primaryKey && c.primaryKey !== '_id' ? c.primaryKey : undefined);
 
   const load = useCallback(async () => {
     setError(null);
     try {
       const all = await Promise.all(databases.map((d) => api.getCollections(d.name).then((cols) => cols.map((c) => ({ database: d.name, collection: c })))));
-      setRows(all.flat().filter(({ collection: c }) => c.titleKey || c.primaryKey || Object.keys(c.referenceFields ?? {}).length > 0));
+      setRows(all.flat().filter(({ collection: c }) => c.titleKey || customPk(c) || Object.keys(c.referenceFields ?? {}).length > 0));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load collections');
     }
@@ -367,6 +374,17 @@ function ReferencesSection({ databases, onMutate, onOpenCollection }: Pick<Setti
     }
   };
 
+  const toggle = (db: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(db)) next.delete(db);
+      else next.add(db);
+      return next;
+    });
+
+  // DB별로 — 순서는 사이드바 트리와 같게
+  const byDb = (rows ?? []).reduce<Map<string, CollectionSummary[]>>((map, r) => map.set(r.database, [...(map.get(r.database) ?? []), r.collection]), new Map());
+
   const chip = 'inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-700';
   const removeBtn = 'rounded p-0.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700';
 
@@ -381,44 +399,68 @@ function ReferencesSection({ databases, onMutate, onOpenCollection }: Pick<Setti
       ) : rows.length === 0 ? (
         <p className={cn(styles.callout, 'mt-0 bg-slate-50 text-slate-500')}>Nothing declared yet.</p>
       ) : (
-        <div className="flex flex-col gap-3">
-          {rows.map(({ database, collection: c }) => {
-            const fks = Object.entries(c.referenceFields ?? {});
-            const base = { database, collection: c.name };
+        <div className="flex flex-col gap-1">
+          {[...byDb.entries()].map(([database, cols]) => {
+            const isOpen = !collapsed.has(database);
             return (
-              <div key={`${database}.${c.name}`} className="rounded-xl border border-slate-100 px-4 py-3">
-                <button type="button" className="font-mono text-xs font-semibold text-slate-800 hover:text-emerald-700 hover:underline" onClick={() => onOpenCollection(database, c.name, c.label || c.name)} data-tt="Open this collection">
-                  {database}.{c.name}
+              <section key={database}>
+                {/* 스크롤해도 DB 이름이 위에 붙어 있다(-mx-6 px-6: 내용 영역 좌우 여백까지 덮어 아래 카드가 비치지 않게) */}
+                <button
+                  type="button"
+                  className="sticky top-0 z-10 -mx-6 flex w-[calc(100%+3rem)] items-center gap-2 bg-white/95 px-6 py-2 text-left backdrop-blur"
+                  onClick={() => toggle(database)}
+                  aria-expanded={isOpen}
+                >
+                  <ChevronRight size={14} className={cn('shrink-0 text-slate-400 transition-transform', isOpen && 'rotate-90')} />
+                  <Database size={14} className="shrink-0 text-slate-400" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-slate-800">{database}</span>
+                  <span className="shrink-0 text-[11px] text-slate-400">{cols.length} collection{cols.length > 1 ? 's' : ''}</span>
                 </button>
-                {(c.titleKey || c.primaryKey) && (
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  {c.titleKey && (
-                    <span className={chip}>
-                      title: {c.titleKey}
-                      <button type="button" className={removeBtn} aria-label="Remove title key" onClick={() => void run({ type: 'setCollectionTitleKey', ...base, titleKey: '' })}><X size={11} /></button>
-                    </span>
-                  )}
-                  {c.primaryKey && (
-                    <span className={chip}>
-                      key: {c.primaryKey}
-                      <button type="button" className={removeBtn} aria-label="Remove primary key" onClick={() => void run({ type: 'setCollectionPrimaryKey', ...base, primaryKey: '' })}><X size={11} /></button>
-                    </span>
-                  )}
-                </div>
+                {isOpen && (
+                  <div className="flex flex-col gap-2 pb-3 pl-5">
+                    {cols.map((c) => {
+                      const fks = Object.entries(c.referenceFields ?? {});
+                      const pk = customPk(c);
+                      const base = { database, collection: c.name };
+                      return (
+                        <div key={c.name} className="rounded-xl border border-slate-100 px-4 py-3">
+                          <button type="button" className="font-mono text-xs font-semibold text-slate-700 hover:text-emerald-700 hover:underline" onClick={() => onOpenCollection(database, c.name, c.label || c.name)} data-tt="Open this collection">
+                            {c.name}
+                          </button>
+                          {(c.titleKey || pk) && (
+                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                              {c.titleKey && (
+                                <span className={chip}>
+                                  title: {c.titleKey}
+                                  <button type="button" className={removeBtn} aria-label="Remove title key" onClick={() => void run({ type: 'setCollectionTitleKey', ...base, titleKey: '' })}><X size={11} /></button>
+                                </span>
+                              )}
+                              {pk && (
+                                <span className={chip}>
+                                  key: {pk}
+                                  <button type="button" className={removeBtn} aria-label="Remove primary key" onClick={() => void run({ type: 'setCollectionPrimaryKey', ...base, primaryKey: '' })}><X size={11} /></button>
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {fks.length > 0 && (
+                            <ul className="mt-2 flex flex-col gap-1">
+                              {fks.map(([field, ref]) => (
+                                <li key={field} className="flex items-center gap-2 font-mono text-[11px] text-slate-700">
+                                  <span>{field}</span>
+                                  <ArrowRight size={11} className="text-slate-400" />
+                                  <span className="text-cyan-700">{ref.targetCollection}.{ref.targetKey}</span>
+                                  <button type="button" className={removeBtn} aria-label={`Remove reference ${field}`} data-tt="Remove this reference" onClick={() => void run({ type: 'setCollectionReferenceField', ...base, field })}><X size={11} /></button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
-                {fks.length > 0 && (
-                  <ul className="mt-2 flex flex-col gap-1">
-                    {fks.map(([field, ref]) => (
-                      <li key={field} className="flex items-center gap-2 font-mono text-[11px] text-slate-700">
-                        <span>{field}</span>
-                        <ArrowRight size={11} className="text-slate-400" />
-                        <span className="text-cyan-700">{ref.targetCollection}.{ref.targetKey}</span>
-                        <button type="button" className={removeBtn} aria-label={`Remove reference ${field}`} data-tt="Remove this reference" onClick={() => void run({ type: 'setCollectionReferenceField', ...base, field })}><X size={11} /></button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              </section>
             );
           })}
         </div>
@@ -430,18 +472,23 @@ function ReferencesSection({ databases, onMutate, onOpenCollection }: Pick<Setti
 // ── Data ─────────────────────────────────────────────────────────────────────
 
 const SAMPLES = [
-  { kind: 'ejson' as const, label: 'EJSON sample', hint: 'MongoDB style — embedded comment trees, ObjectId references' },
-  { kind: 'json' as const, label: 'JSON sample', hint: 'Firebase / HN API style — plain ids, references declared as links' },
+  { kind: 'ejson' as const, name: FORUM_EJSON_DATABASE_NAME, label: 'EJSON sample', hint: 'MongoDB style — embedded comment trees, ObjectId references', build: buildForumEjsonSample },
+  { kind: 'json' as const, name: FORUM_JSON_DATABASE_NAME, label: 'JSON sample', hint: 'Firebase / HN API style — plain ids, references declared as links', build: buildForumJsonSample },
 ];
 
-function DataSection({ databases, onMutate }: Pick<SettingsModalProps, 'databases' | 'onMutate'>) {
+// 샘플 DB 이름이 시그니처 — 이미 있으면 다시 넣지 않고 '열기'로(복사본이 쌓이지 않게)
+function DataSection({ databases, onMutate, onOpenDatabase }: Pick<SettingsModalProps, 'databases' | 'onMutate' | 'onOpenDatabase'>) {
   const [loading, setLoading] = useState<'ejson' | 'json' | null>(null);
-  const load = async (kind: 'ejson' | 'json') => {
-    setLoading(kind);
+  const load = async (sample: (typeof SAMPLES)[number]) => {
+    setLoading(sample.kind);
     try {
-      const existing = databases.map((d) => d.name);
-      const database = kind === 'ejson' ? buildForumEjsonSample(existing) : buildForumJsonSample(existing);
-      await onMutate({ type: 'createDatabase', database });
+      // 화면의 목록이 오래됐을 수 있다(다른 탭에서 넣었거나) — 넣기 직전에 한 번 더 확인해 있으면 그냥 연다
+      const latest = await api.listDatabases();
+      if (latest.some((d) => d.name === sample.name)) {
+        onOpenDatabase(sample.name);
+        return;
+      }
+      await onMutate({ type: 'createDatabase', database: sample.build() });
     } finally {
       setLoading(null);
     }
@@ -449,22 +496,37 @@ function DataSection({ databases, onMutate }: Pick<SettingsModalProps, 'database
   return (
     <div className={styles.group}>
       <p className={styles.groupTitle}>Sample data</p>
-      <p className={styles.groupHint}>The same forum in two NoSQL models — comment threads embedded in each post, or split across collections and linked by id. Each click adds a new database.</p>
+      <p className={styles.groupHint}>
+        The same forum in two NoSQL models — comment threads embedded in each post, or split across collections and linked by id. Each sample goes into its own database with a fixed name, so it's added only once; delete that database to start over.
+      </p>
       {dataSourceKind === 'remote' && (
         <p className={cn(styles.callout, 'mb-3 mt-0 bg-amber-50 text-amber-800')}>
           This creates a real database on your MongoDB server. Delete it from the sidebar when you're done.
         </p>
       )}
-      <div className="flex flex-col gap-2">
-        {SAMPLES.map((s) => (
-          <div key={s.kind} className="flex items-center gap-3">
-            <button type="button" className={styles.btnPrimary} disabled={loading !== null} onClick={() => void load(s.kind)}>
-              {loading === s.kind ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              {s.label}
-            </button>
-            <span className="text-xs text-slate-500">{s.hint}</span>
-          </div>
-        ))}
+      <div className="flex flex-col gap-2.5">
+        {SAMPLES.map((sample) => {
+          const exists = databases.some((d) => d.name === sample.name);
+          return (
+            <div key={sample.kind} className="flex items-center gap-3">
+              {exists ? (
+                <button type="button" className={cn(styles.btn, 'w-36 justify-center')} onClick={() => onOpenDatabase(sample.name)} data-tt={`Already added as "${sample.name}" — open it`}>
+                  <CircleCheck size={14} className="text-emerald-500" />
+                  Open
+                </button>
+              ) : (
+                <button type="button" className={cn(styles.btnPrimary, 'w-36 justify-center')} disabled={loading !== null} onClick={() => void load(sample)}>
+                  {loading === sample.kind ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  {sample.label}
+                </button>
+              )}
+              <div className="min-w-0">
+                <p className="text-xs text-slate-600">{sample.hint}</p>
+                <p className="font-mono text-[11px] text-slate-400">{sample.name}</p>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -620,7 +682,7 @@ function SecuritySection({ diag }: { diag: ReturnType<typeof useDiagnostics> }) 
 
 // ── 창 ───────────────────────────────────────────────────────────────────────
 
-export function SettingsModal({ open, initialSection, onClose, databases, onMutate, onOpenCollection }: SettingsModalProps) {
+export function SettingsModal({ open, initialSection, onClose, databases, onMutate, onOpenCollection, onOpenDatabase }: SettingsModalProps) {
   const [section, setSection] = useState<Section>('display');
   // 열 때마다 요청받은 칸으로(없으면 마지막에 보던 칸)
   useEffect(() => {
@@ -693,7 +755,16 @@ export function SettingsModal({ open, initialSection, onClose, databases, onMuta
                     }}
                   />
                 )}
-                {section === 'data' && <DataSection databases={databases} onMutate={onMutate} />}
+                {section === 'data' && (
+                  <DataSection
+                    databases={databases}
+                    onMutate={onMutate}
+                    onOpenDatabase={(name) => {
+                      onClose();
+                      onOpenDatabase(name);
+                    }}
+                  />
+                )}
                 {section === 'diagnostics' && <DiagnosticsSection diag={diag} />}
                 {section === 'security' && <SecuritySection diag={diag} />}
               </div>

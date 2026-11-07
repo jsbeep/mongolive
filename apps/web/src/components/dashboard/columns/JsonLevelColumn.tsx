@@ -35,7 +35,7 @@ import { FieldItem } from './FieldItem';
 import { HeaderIcon } from './HeaderIcon';
 import { DropOverlay } from './DropOverlay';
 import { PageRail, PageTransition } from './PageRail';
-import { getFieldType, resolveAtPath, getEntries, hasExtendedTypes } from '../../../utils/jsonTree';
+import { getFieldType, resolveAtPath, getEntries } from '../../../utils/jsonTree';
 import { isPathChanged } from '../../../utils/changedPaths';
 import { useFileDrop } from '../../../hooks/useFileDrop';
 import { FilterSortToolbar, type SortOption } from './FilterSortToolbar';
@@ -199,12 +199,6 @@ export function JsonLevelColumn({
 
   const currentNode: JsonValue = displayDoc ? resolveAtPath(displayDoc, projectionPath) : null;
   const entries = getEntries(currentNode);
-
-  // EJSON 모드(Date/Decimal128/Long 필드 추가 가능 여부) — 이 컬럼이 마운트될 때 현재
-  // 노드 하위에 그런 필드나 ObjectId가 이미 있으면 자동으로 켜진 상태로 시작하고, 이후엔
-  // 헤더의 토글로 수동 전환한다. mutation으로 currentNode 참조가 바뀌어도 다시 계산하지
-  // 않는다 — 그러면 막 켠 토글이 첫 필드를 추가하기도 전에 꺼져버린다.
-  const [ejsonMode, setEjsonMode] = useState(() => hasExtendedTypes(currentNode));
 
   // 필드가 PAGE_SIZE개를 넘으면 페이지로 나눠 그린다(문서 목록과 같은 단위). 문서는 이미 통째로
   // 받아와 있으므로 서버에 묻지 않고 화면에서만 자른다.
@@ -494,7 +488,6 @@ export function JsonLevelColumn({
           activeDatabaseName={mutateDatabaseName}
           currentRefInfo={editingRefInfo}
           referenceFieldConfig={fieldRefConfig}
-          ejsonMode={ejsonMode}
           onSubmit={async (data) => {
             if (!mutateCollectionName || !mutateDatabaseName) return;
             await onMutate({
@@ -829,17 +822,6 @@ export function JsonLevelColumn({
         <button
           type="button"
           className={cn(
-            'text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 tracking-wide transition-colors',
-            ejsonMode ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400',
-          )}
-          data-tt="EJSON mode — offer Date / Decimal128 / Long as field types when adding or editing"
-          onClick={() => setEjsonMode((v) => !v)}
-        >
-          EJSON
-        </button>
-        <button
-          type="button"
-          className={cn(
             'relative p-1.5 rounded-lg transition-colors shrink-0',
             isFieldToolbarOpen || isFieldFilterActive ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600',
           )}
@@ -908,8 +890,7 @@ export function JsonLevelColumn({
               initialKey={isArrayNode ? String(entries.length) : undefined}
               lockKey={isArrayNode}
               activeDatabaseName={mutateDatabaseName}
-              ejsonMode={ejsonMode}
-              onSubmit={async (data) => {
+                  onSubmit={async (data) => {
                 if (!mutateCollectionName || !mutateDatabaseName) return;
                 // array는 key를 현재 length로 고정 (next index)
                 const addKey = isArrayNode ? String(entries.length) : data.key;

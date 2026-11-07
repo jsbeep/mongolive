@@ -100,8 +100,6 @@ interface InlineSegmentEditorProps {
   // 이 필드가 컬렉션 설정(referenceFields)에 FK로 선언돼 있으면 — 선언 자체는 여기서
   // 바꾸지 않고(ReferenceFieldsManager 전용), 값 입력만 타겟의 후보값으로 보조한다
   referenceFieldConfig?: { targetCollection: string; targetKey: string } | null;
-  // true면 Date/Decimal128/Long 같은 BSON 확장 타입도 Add 시 타입 선택지에 노출 (edit 시엔 항상 노출)
-  ejsonMode?: boolean;
   // edit 모드(collection/document)에서 Export 시 내보낼 전체 JSON을 비동기로 가져옴
   onExportRequest?: () => Promise<JsonValue>;
   // 부모 컬럼 전체에 파일을 드래그&드롭했을 때 전달되는 파일 — 마운트된 이 에디터의
@@ -171,7 +169,6 @@ export function InlineSegmentEditor({
   activeDatabaseName,
   currentRefInfo,
   referenceFieldConfig,
-  ejsonMode = false,
   onExportRequest,
   pendingImportFile,
   onPendingImportFileConsumed,
@@ -324,9 +321,9 @@ export function InlineSegmentEditor({
   // collection/document 레벨은 key+label만 있음
   const isSimpleLevel = level === 'collection' || level === 'document';
 
-  // add 모드 + EJSON 모드가 꺼져 있으면 BSON 확장 타입을 숨김 — edit 모드는 이미 그
-  // 타입으로 저장된 필드를 만났을 수 있으므로 항상 전체 목록을 보여준다
-  const availableTypes: FieldType[] = mode === 'add' && !ejsonMode ? JSON_TYPES : [...JSON_TYPES, ...EJSON_EXTRA_TYPES];
+  // BSON 확장 타입(Date/Decimal128/Long)도 늘 고를 수 있다 — MongoDB 도구라 기본이다
+  // (예전 json-explorer 시절엔 'EJSON 모드' 토글을 켜야 보였다)
+  const availableTypes: FieldType[] = [...JSON_TYPES, ...EJSON_EXTRA_TYPES];
 
   // 파일 붙여넣기/업로드(import) UI를 보여줄지 — collection/document는 항상,
   // field는 추가(add) 모드에서만 (드롭한 파일을 새 필드 값으로 쓸 수 있게)

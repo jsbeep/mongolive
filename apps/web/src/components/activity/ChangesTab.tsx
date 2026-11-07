@@ -1,8 +1,10 @@
 // 변경 기록 (레거시 ChangeStreamLogs) — 서버 changeStream이 받은 클러스터 전체 변경, 최신이 위.
 // 값은 오지 않고 '어디서 무엇이' 바뀌었는지만 온다. 범위(전체/이 DB/이 컬렉션)로 거르고, 일시정지·비우기.
 // 비우기는 이 브라우저에서만 숨긴다(useActivityLog의 clearedAt) — 서버의 최근 기록은 그대로다.
-// 같은 문서에 연속으로 생긴 변경은 한 줄로 묶는다(내 저장 / 남의 변경은 따로). 묶음을 누르면 그 문서로,
-// ×n을 누르면 펼쳐서 하나씩 본다.
+// 연속으로 생긴 변경은 한 줄로 묶는다(내 저장 / 남의 변경은 따로):
+//   INSERT·DELETE — 같은 컬렉션이면(일괄 추가·삭제가 문서마다 한 줄씩 쌓이지 않게)
+//   UPDATE·REPLACE — 같은 문서면
+// 묶음을 누르면 가장 최근 것으로 이동, ×n을 누르면 펼쳐서 하나씩 본다.
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { CheckCheck, ChevronDown, Pause, Play, Trash2 } from 'lucide-react';
 import type { LiveLogEntry, LiveOperation } from '../../types/explorer';
@@ -77,6 +79,16 @@ const styles = {
 
 const shortId = (id: string) => (id.length > 12 ? `…${id.slice(-8)}` : id);
 
+// 묶음 기준 — 같은 값이면 연달아 온 기록을 한 줄로. null = 묶지 않음(구조 변경 등)
+const groupMatch = (e: LiveLogEntry): string | null => {
+  const who = e.own ? 'own' : 'ext';
+  if (e.op === 'insert' || e.op === 'delete') return e.collection ? `${e.op}\u0000${e.database}\u0000${e.collection}\u0000${who}` : null;
+  if (e.documentId) return `doc\u0000${e.database}\u0000${e.collection}\u0000${e.documentId}\u0000${who}`;
+  return null;
+};
+// 문서 여러 개를 묶은 줄(INSERT·DELETE)인가 — 문서 id 대신 개수를 보여 준다
+const isMultiDocument = (entries: LiveLogEntry[]) => entries.length > 1 && (entries[0].op === 'insert' || entries[0].op === 'delete');
+
 // 바뀐 경로 한 줄 — rename이면 새 이름
 const entryDetail = (e: LiveLogEntry) =>
   e.to
@@ -101,14 +113,16 @@ interface LogRowProps {
   onNavigate: (entry: LiveLogEntry) => void;
   // 묶음 줄의 ×n 버튼
   extra?: ReactNode;
-  // 펼친 묶음 안의 항목 — 위치·문서 id는 묶음 줄과 같으니 뺀다
+  // 펼친 묶음 안의 항목 — 위치·문서 id는 묶음 줄과 같으니 뺀다(문서 여러 개 묶음이면 id는 보인다)
   compact?: boolean;
+  // 이 줄에 문서 id를 보일지
+  showDocId?: boolean;
   // 목록 맨 처음/맨 마지막 행이면 그쪽 모서리만 둥글게
   first?: boolean;
   last?: boolean;
 }
 
-function LogRow({ entry: e, unread, detail, onNavigate, extra, compact = false, first = false, last = false }: LogRowProps) {
+function LogRow({ entry: e, unread, detail, onNavigate, extra, compact = false, showDocId = !compact, first = false, last = false }: LogRowProps) {
   const canOpen = e.op !== 'drop' && e.op !== 'dropDatabase';
   const ns = e.collection ? `${e.database}.${e.collection}` : e.database;
   const lag = e.serverTime - e.clusterTime;
@@ -152,7 +166,7 @@ function LogRow({ entry: e, unread, detail, onNavigate, extra, compact = false, 
       </div>
       <div className={styles.side}>
         <span className={styles.time} data-tt={`DB → server ${lag} ms`}>{clock(e.serverTime)}</span>
-        {!compact && e.documentId && <span className={styles.docId} title={e.documentId}>{shortId(e.documentId)}</span>}
+        {showDocId && e.documentId && <span className={styles.docId} title={e.documentId}>{shortId(e.documentId)}</span>}
       </div>
     </div>
   );
@@ -228,12 +242,12 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
   // 배지로 끈 연산 종류는 목록에서 뺀다
   const visible = useMemo(() => (hiddenOps.size ? inScope.filter((e) => !hiddenOps.has(opGroup(e.op))) : inScope), [inScope, hiddenOps]);
 
-  // 같은 문서(+ 같은 출처: 내 저장/남의 변경)에 연속으로 생긴 기록을 묶는다. 최신이 앞.
+  // 연속으로 생긴 기록을 묶는다(groupMatch). 최신이 앞.
   // key = 묶음의 가장 오래된 기록 id — 새 기록은 위(최신 쪽)에 붙으므로 펼침 상태가 유지된다.
   const groups = useMemo(() => {
     const out: { key: string; match: string | null; entries: LiveLogEntry[] }[] = [];
     for (const e of visible) {
-      const match = e.documentId ? `${e.database}\u0000${e.collection}\u0000${e.documentId}\u0000${e.own ? 1 : 0}` : null;
+      const match = groupMatch(e);
       const last = out[out.length - 1];
       if (match && last && last.match === match) {
         last.entries.push(e);
@@ -315,6 +329,7 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
             const latest = group.entries[0];
             const isLastGroup = gi === groups.length - 1;
             const isGroup = group.entries.length > 1;
+            const multiDoc = isMultiDocument(group.entries);
             const isOpen = isGroup && expanded.has(group.key);
             const isUnread = (e: LiveLogEntry) => seenAt !== null && e.serverTime > seenAt && !e.own;
             return (
@@ -322,7 +337,8 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
                 <LogRow
                   entry={latest}
                   unread={group.entries.some(isUnread)}
-                  detail={isGroup ? mergedDetail(group.entries) : entryDetail(latest)}
+                  detail={multiDoc ? `${group.entries.length} documents` : isGroup ? mergedDetail(group.entries) : entryDetail(latest)}
+                  showDocId={!multiDoc}
                   onNavigate={onNavigate}
                   first={gi === 0}
                   // 펼친 묶음이면 마지막 행은 그 안의 마지막 항목
@@ -336,7 +352,7 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
                         toggleGroup(group.key);
                       }}
                       aria-expanded={isOpen}
-                      data-tt={isOpen ? 'Collapse' : `${group.entries.length} changes to this document in a row — click to list them`}
+                      data-tt={isOpen ? 'Collapse' : multiDoc ? `${group.entries.length} documents in a row — click to list them` : `${group.entries.length} changes to this document in a row — click to list them`}
                     >
                       ×{group.entries.length}
                       <ChevronDown size={10} className={cn('transition-transform', isOpen && 'rotate-180')} />
@@ -353,6 +369,7 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
                         detail={entryDetail(e)}
                         onNavigate={onNavigate}
                         compact
+                        showDocId={multiDoc}
                         last={isLastGroup && ci === group.entries.length - 1}
                       />
                     ))}

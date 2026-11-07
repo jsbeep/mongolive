@@ -250,6 +250,7 @@ export default function ExplorerPage() {
         databases={databases}
         onMutate={mutate}
         onOpenCollection={(database, collection, label) => void openCollection(database, collection, label)}
+        onOpenDatabase={(database) => void selectDatabase(database)}
       />
 
       {/* 토스트 — 오른쪽 아래(알림 센터가 열려 있으면 그 위) */}

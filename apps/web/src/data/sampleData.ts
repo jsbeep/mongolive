@@ -21,8 +21,10 @@ type RawObject = Record<string, unknown>;
 
 const SNAPSHOT_VERSION = 1;
 
-export const FORUM_EJSON_DATABASE_NAME = 'review-forum';
-export const FORUM_JSON_DATABASE_NAME = 'review-forum-json';
+// 샘플 DB 이름 = 시그니처. 이미 있으면 다시 넣지 않는다(설정 › Data는 '열기'로 바뀐다) — 복사본이 계속 쌓이지 않게.
+// MongoDB DB 이름엔 $ . 공백 등을 못 쓰므로 접두사 'sample-'로 앱 샘플임을 드러낸다.
+export const FORUM_EJSON_DATABASE_NAME = 'sample-forum-ejson';
+export const FORUM_JSON_DATABASE_NAME = 'sample-forum-json';
 
 export const makeOid = (seed: string): BsonObjectId => {
   let hash = 0x811c9dc5;
@@ -43,11 +45,6 @@ export const makeOid = (seed: string): BsonObjectId => {
 const formatDate = (timestamp: number): string => new Date(timestamp).toISOString();
 const toUnixSeconds = (timestamp: number): number => Math.floor(timestamp / 1000);
 
-// 같은 샘플을 두 번 추가한 경우 '-copy'를 붙여 이름 충돌을 피한다.
-const uniqueName = (base: string, existingNames: string[]): { name: string; isCopy: boolean } => {
-  const isCopy = existingNames.includes(base);
-  return { name: isCopy ? `${base}-copy` : base, isCopy };
-};
 
 // ── 시드 ──────────────────────────────────────────────────────────────────────
 
@@ -455,8 +452,8 @@ const countComments = (seeds: CommentSeed[]): number => {
 
 // ── EJSON 샘플 (embed 모델) ───────────────────────────────────────────────────
 
-export const buildForumEjsonSample = (existingNames: string[] = []) => {
-  const { name, isCopy } = uniqueName(FORUM_EJSON_DATABASE_NAME, existingNames);
+export const buildForumEjsonSample = () => {
+  const name = FORUM_EJSON_DATABASE_NAME;
   const now = Date.now();
 
   const userOid = (username: string) => makeOid(`user-${username}`);
@@ -533,7 +530,7 @@ export const buildForumEjsonSample = (existingNames: string[] = []) => {
 
   return {
     name,
-    label: isCopy ? 'Review Forum · EJSON (Copy)' : 'Review Forum · EJSON',
+    label: 'Sample · Review Forum (EJSON)',
     description:
       'A product-review forum modeled the MongoDB way — comment threads embedded inside each post, references as bare ObjectIds, and canonical EJSON types ($oid, $date, $numberDecimal, $numberLong)',
     collections: {
@@ -567,8 +564,8 @@ export const buildForumEjsonSample = (existingNames: string[] = []) => {
 
 // ── JSON 샘플 (reference 모델) ────────────────────────────────────────────────
 
-export const buildForumJsonSample = (existingNames: string[] = []) => {
-  const { name, isCopy } = uniqueName(FORUM_JSON_DATABASE_NAME, existingNames);
+export const buildForumJsonSample = () => {
+  const name = FORUM_JSON_DATABASE_NAME;
   const now = Date.now();
 
   // HN Firebase API처럼 모든 아이템이 하나의 정수 ID 공간을 공유한다.
@@ -647,7 +644,7 @@ export const buildForumJsonSample = (existingNames: string[] = []) => {
 
   return {
     name,
-    label: isCopy ? 'Review Forum · JSON (Copy)' : 'Review Forum · JSON',
+    label: 'Sample · Review Forum (JSON)',
     description:
       'The same forum modeled the Firebase/HN API way — plain JSON with no type wrappers, split across three collections that only know each other by id. Reference fields are pre-declared, so kids/submitted/by are all clickable.',
     collections: {
@@ -658,7 +655,6 @@ export const buildForumJsonSample = (existingNames: string[] = []) => {
         documents: stories,
         updatedAt: now - 600_000,
         titleKey: 'title',
-        primaryKey: 'id',
         referenceFields: {
           by: { targetCollection: 'users', targetKey: 'id' },
           kids: { targetCollection: 'comments', targetKey: 'id' },
@@ -671,7 +667,6 @@ export const buildForumJsonSample = (existingNames: string[] = []) => {
         documents: comments,
         updatedAt: now - 900_000,
         titleKey: 'text',
-        primaryKey: 'id',
         referenceFields: {
           by: { targetCollection: 'users', targetKey: 'id' },
           story: { targetCollection: 'stories', targetKey: 'id' },
@@ -685,7 +680,6 @@ export const buildForumJsonSample = (existingNames: string[] = []) => {
         documents: users,
         updatedAt: now - 3_600_000,
         titleKey: 'id',
-        primaryKey: 'id',
         referenceFields: {
           submitted: { targetCollection: 'stories', targetKey: 'id' },
         },
