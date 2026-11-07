@@ -181,8 +181,10 @@ const oneAtATime = <T>(task: () => Promise<T>): Promise<T> | null => {
 // ── 로그인 API ───────────────────────────────────────────────────────────────
 
 export const authRouter = Router();
-// 로그인은 출입증 없이 받는 요청이라 본문을 작게 제한한다(다른 API는 10MB)
-authRouter.use(express.json({ limit: '4kb' }));
+// 로그인은 출입증 없이 받는 요청이라 본문을 작게 제한한다(다른 API는 10MB).
+// 경로를 꼭 '/auth'로 좁힌다 — 그냥 authRouter.use(parser)로 두면 /api에 걸린 이 라우터를 지나는
+// 모든 요청(/api/mutate 등)이 4KB 제한을 받는다(express는 본문을 한 번만 읽어 뒤의 10MB 파서는 쓰이지 않는다)
+authRouter.use('/auth', express.json({ limit: '4kb' }));
 
 authRouter.get('/auth/me', (req, res) => {
   res.json({ mode: config.authMode, authenticated: hasValidSession(req) });
