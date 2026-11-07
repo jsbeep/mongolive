@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Layers } from 'lucide-react';
+import { Folder } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { ActivePath, CollectionSummary, Document, JsonValue, MutationRequest } from '../../../types/explorer';
 import { ColumnItem, ColumnSkeletonList } from './ColumnItem';
@@ -80,7 +80,7 @@ export function CollectionsColumn({
       {/* 헤더 */}
       <div className={styles.header}>
         <div className="relative flex items-center gap-0 leading-none mr-0.5">
-          <Layers size={15} className={styles.headerIcon} />
+          <Folder size={15} className={styles.headerIcon} />
           <span className="absolute pl-[1px] -bottom-[0.2rem] right-0 translate-x-1/2 text-xs font-mono text-slate-500 tabular-nums shrink-0 leading-[0.9] bg-white rounded-s">
             {collections.length}
           </span>
@@ -195,7 +195,7 @@ export function CollectionsColumn({
         )}
         {!collections.length && (
           <div className={styles.empty}>
-            <Layers size={28} className="opacity-30" />
+            <Folder size={28} className="opacity-30" />
             <span>Drag and drop a JSON file here to create a collection</span>
           </div>
         )}

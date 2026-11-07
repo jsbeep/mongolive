@@ -1,4 +1,4 @@
-import { Database, Layers, Braces } from 'lucide-react';
+import { Database, Folder, Braces } from 'lucide-react';
 
 interface PlaceholderColumnProps {
   slotIndex: number;
@@ -6,7 +6,7 @@ interface PlaceholderColumnProps {
 
 const SLOT_HINTS = [
   { icon: Database, text: 'Select a database' },
-  { icon: Layers, text: 'Select a collection' },
+  { icon: Folder, text: 'Select a collection' },
   { icon: Braces, text: 'Select a document to view its fields' },
 ] as const;
 

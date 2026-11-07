@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
 import { useExplorerState } from '../hooks/useExplorerState';
 import { buildForumEjsonSample, buildForumJsonSample } from '../data/sampleData';
-import { Header } from '../components/layout/Header';
+import { StatusBar } from '../components/layout/StatusBar';
 import { LandingIntro } from '../components/layout/LandingIntro';
 import { Footer } from '../components/layout/Footer';
 import { Breadcrumbs } from '../components/dashboard/Breadcrumbs';
@@ -11,20 +10,22 @@ import { ChangeToneContext } from '../components/common/ChangeFlash';
 import { ConflictModal } from '../components/common/ConflictModal';
 import { ReferenceCandidatesModal } from '../components/common/ReferenceCandidatesModal';
 import { TooltipLayer } from '../components/common/TooltipLayer';
-import { ActivityPanel } from '../components/activity/ActivityPanel';
+import { Sidebar } from '../components/layout/Sidebar';
+import { NotificationCenter, type NotificationTab } from '../components/notifications/NotificationCenter';
+import { Toast } from '../components/notifications/Toast';
 import { useActivityLog } from '../hooks/useActivityLog';
-import { SPRING_SOFT } from '../utils/motionPresets';
+import { useSidebar } from '../hooks/useSidebar';
+import { useSystemLog } from '../hooks/useSystemLog';
 
 // ── 스타일 ────────────────────────────────────────────────────────────────────
 
 const styles = {
   root: 'w-full bg-grid-fade',
-  screen: 'h-screen w-full overflow-hidden flex flex-col gap-2 p-4',
-  toastPositioner: 'fixed bottom-20 left-1/2 z-[101] -translate-x-1/2 flex items-center gap-3',
-  toast: 'flex items-center gap-3 px-4 py-2.5 rounded-2xl text-sm font-medium shadow-elevated backdrop-blur',
-  toastSuccess: 'bg-white border border-slate-200 text-slate-800',
-  toastError: 'bg-red-500 text-white',
-  undoBtn: 'text-emerald-600 font-semibold underline underline-offset-2 hover:text-emerald-700 ml-1',
+  // 화면 = [사이드바][컬럼] + 맨 아래 상태바(VSCode처럼 가장자리까지)
+  screen: 'h-screen w-full overflow-hidden flex flex-col',
+  // 사이드바와 컬럼 사이 틈은 사이드바가 스스로 둔다(접히면 틈도 0)
+  body: 'relative flex flex-1 min-h-0 m-3 mb-2',
+  columns: 'flex-1 min-w-0 min-h-0 flex flex-col h-full overflow-hidden rounded-2xl bg-white/80 border border-slate-200/60 shadow-panel',
 } as const;
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────────────────
@@ -32,8 +33,11 @@ const styles = {
 export default function ExplorerPage() {
   const state = useExplorerState();
   const [showIntro, setShowIntro] = useState(true);
-  const [isActivityOpen, setIsActivityOpen] = useState(false);
+  const sidebar = useSidebar();
   const activityLog = useActivityLog();
+  const systemLog = useSystemLog();
+  const [centerOpen, setCenterOpen] = useState(false);
+  const [centerTab, setCenterTab] = useState<NotificationTab>('changes');
 
   // 초기 연결
   useEffect(() => {
@@ -84,83 +88,114 @@ export default function ExplorerPage() {
     dismissToast,
     undo,
     refresh,
+    openCollection,
   } = state;
-  // 활동 패널의 '이 컬렉션' 범위 — 문서 목록 컬럼이 열려 있으면 그 컬렉션 이름
+  // 지금 컬렉션 — 문서 목록 컬럼이 열려 있으면 그 컬렉션 이름(트리 강조, 알림 센터의 '이 컬렉션' 범위)
   const documentsPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'documents');
   const activeCollectionName = documentsPath?.kind === 'normal' ? documentsPath.collectionName ?? null : null;
 
   return (
     <div className={styles.root}>
       <div className={styles.screen}>
-        {/* 헤더 */}
-        <Header
-          activeDatabase={activeDatabase}
+        {/* [사이드바][컬럼] — 넓은 화면에선 사이드바가 컬럼을 밀어내고, 좁으면 '전체'는 이 영역 위에 뜬다 */}
+        <div className={styles.body}>
+          <Sidebar
+            sidebar={sidebar}
+            databases={databases}
+            activeDatabase={activeDatabase}
+            activeCollection={activeCollectionName}
+            collections={collections}
+            onSelectDatabase={selectDatabase}
+            onOpenCollection={async (database, name, label) => {
+              // 좁은 화면에서 떠 있는 사이드바는 고르면 닫는다(열린 경로를 가리므로)
+              if (sidebar.isOverlay) sidebar.setMode('rail');
+              await openCollection(database, name, label);
+            }}
+            onMutate={mutate}
+          />
+
+          {/* Miller Columns */}
+          <div className={styles.columns}>
+            {/* 브레드크럼 — 첫 칸(DB)은 DB 고르기 드롭다운 */}
+            <Breadcrumbs
+              breadcrumbs={breadcrumbs}
+              onNavigate={(index) => popToIndex(index)}
+              openDocument={openDocument}
+              onCommitFieldPath={pushFieldPath}
+              databases={databases}
+              activeDatabase={activeDatabase}
+              onSelectDatabase={(name) => void selectDatabase(name)}
+            />
+            {/* 강조 색: 내 저장 = 연초록, 밖에서 온 변경 = 하늘색 (ChangeFlash가 꺼내 쓴다) */}
+            <ChangeToneContext.Provider value={changeTone}>
+              <MillerColumns
+                visibleColumns={visibleColumns}
+                maxVisibleColumns={maxVisibleColumns}
+                collections={collections}
+                documents={documents}
+                documentPage={documentPage}
+                documentQuery={documentQuery}
+                setDocumentQuery={setDocumentQuery}
+                openDocument={openDocument}
+                isLoading={isLoading}
+                changedPaths={changedPaths}
+                editingId={editingId}
+                activePaths={activePaths}
+                selectCollection={selectCollection}
+                selectDocument={selectDocument}
+                pushJsonPath={pushJsonPath}
+                pushReference={pushReference}
+                navigateToReference={navigateToReference}
+                pushReferenceByField={pushReferenceByField}
+                navigateToReferenceByField={navigateToReferenceByField}
+                popToIndex={popToIndex}
+                mutate={mutate}
+                uniqueOids={uniqueOids}
+                registerUniqueOid={registerUniqueOid}
+                unregisterUniqueOid={unregisterUniqueOid}
+                setEditingId={setEditingId}
+                clearChangedPaths={clearChangedPaths}
+              />
+            </ChangeToneContext.Provider>
+          </div>
+        </div>
+
+        <StatusBar
           connectionStatus={connectionStatus}
-          databases={databases}
-          selectDatabase={selectDatabase}
-          mutate={mutate}
+          onRefresh={() => void refresh()}
           maxVisibleColumns={maxVisibleColumns}
           setMaxVisibleColumns={setMaxVisibleColumns}
-          onRefresh={() => void refresh()}
-          isActivityOpen={isActivityOpen}
-          hasActivityUnread={activityLog.unread > 0}
-          onToggleActivity={() => setIsActivityOpen((v) => !v)}
-        />
-        <ActivityPanel
-          open={isActivityOpen}
-          onClose={() => setIsActivityOpen(false)}
-          activeDatabase={activeDatabase}
-          activeCollection={activeCollectionName}
-          log={activityLog}
-          onNavigate={(entry) => {
-            // 이동하면 패널을 닫아 열린 경로가 가려지지 않게
-            setIsActivityOpen(false);
-            void state.navigateToChange(entry);
+          unreadChanges={activityLog.unread}
+          unseenErrors={systemLog.unseenErrors}
+          isCenterOpen={centerOpen}
+          onToggleCenter={() => setCenterOpen((v) => !v)}
+          onOpenSystem={() => {
+            // 연결 상태를 누르면 연결 기록(System 탭) — 이미 그 탭이 열려 있으면 닫는다
+            if (centerOpen && centerTab === 'system') setCenterOpen(false);
+            else {
+              setCenterTab('system');
+              setCenterOpen(true);
+            }
           }}
         />
-
-        {/* Miller Columns */}
-        <div className="flex-1 min-h-0 flex flex-col h-full w-full overflow-hidden rounded-2xl bg-white/80 border border-slate-200/60 shadow-panel">
-          {/* 브레드크럼 */}
-          <Breadcrumbs
-            breadcrumbs={breadcrumbs}
-            onNavigate={(index) => popToIndex(index)}
-            openDocument={openDocument}
-            onCommitFieldPath={pushFieldPath}
-          />
-          {/* 강조 색: 내 저장 = 연초록, 밖에서 온 변경 = 하늘색 (ChangeFlash가 꺼내 쓴다) */}
-          <ChangeToneContext.Provider value={changeTone}>
-            <MillerColumns
-              visibleColumns={visibleColumns}
-              maxVisibleColumns={maxVisibleColumns}
-              collections={collections}
-              documents={documents}
-              documentPage={documentPage}
-              documentQuery={documentQuery}
-              setDocumentQuery={setDocumentQuery}
-              openDocument={openDocument}
-              isLoading={isLoading}
-              changedPaths={changedPaths}
-              editingId={editingId}
-              activePaths={activePaths}
-              selectCollection={selectCollection}
-              selectDocument={selectDocument}
-              pushJsonPath={pushJsonPath}
-              pushReference={pushReference}
-              navigateToReference={navigateToReference}
-              pushReferenceByField={pushReferenceByField}
-              navigateToReferenceByField={navigateToReferenceByField}
-              popToIndex={popToIndex}
-              mutate={mutate}
-              uniqueOids={uniqueOids}
-              registerUniqueOid={registerUniqueOid}
-              unregisterUniqueOid={unregisterUniqueOid}
-              setEditingId={setEditingId}
-              clearChangedPaths={clearChangedPaths}
-            />
-          </ChangeToneContext.Provider>
-        </div>
       </div>
+
+      {/* 알림 센터 — 상태바의 종으로 여닫는다 */}
+      <NotificationCenter
+        open={centerOpen}
+        onClose={() => setCenterOpen(false)}
+        tab={centerTab}
+        onTabChange={setCenterTab}
+        activity={activityLog}
+        system={systemLog}
+        activeDatabase={activeDatabase}
+        activeCollection={activeCollectionName}
+        onNavigate={(entry) => {
+          // 이동하면 닫는다 — 오른쪽 컬럼(열리는 문서)을 가리므로
+          setCenterOpen(false);
+          void state.navigateToChange(entry);
+        }}
+      />
 
       {/* data-tt 속성이 달린 컨트롤의 툴팁 — 컬럼 밖으로 나가야 해서 body portal */}
       <TooltipLayer />
@@ -192,39 +227,13 @@ export default function ExplorerPage() {
         </div>
       )}
 
-      {/* 토스트 알림 */}
-      <div className={styles.toastPositioner} aria-live="assertive">
-        <AnimatePresence>
-          {toast && (
-            <motion.div
-              key={toast.id}
-              className={`${styles.toast} ${toast.type === 'error' ? styles.toastError : styles.toastSuccess}`}
-              initial={{ y: 20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 20, opacity: 0 }}
-              transition={SPRING_SOFT}
-            >
-              <span>{toast.message}</span>
-              {toast.undoable && (
-                <button
-                  type="button"
-                  className={styles.undoBtn}
-                  onClick={() => { void undo(); dismissToast(); }}
-                >
-                  Undo
-                </button>
-              )}
-              <button
-                type="button"
-                className="ml-1 opacity-60 hover:opacity-100"
-                onClick={dismissToast}
-              >
-                ✕
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+      {/* 토스트 — 오른쪽 아래(알림 센터가 열려 있으면 그 위) */}
+      <Toast
+        toast={toast}
+        raised={centerOpen}
+        onUndo={() => { void undo(); dismissToast(); }}
+        onDismiss={dismissToast}
+      />
     </div>
   );
 }

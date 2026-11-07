@@ -61,6 +61,8 @@ const CHAIN_COLORS = ['#f59e0b', '#8b5cf6', '#3b82f6', '#ec4899', '#14b8a6'] as 
 
 export const MIN_VISIBLE_COLUMNS = 2;
 export const MAX_VISIBLE_COLUMNS = 6;
+// 폰 너비 — 이보다 좁으면 Tree 모드로 연다
+const MOBILE_QUERY = '(max-width: 767px)';
 
 let pathIdCounter = 0;
 export const nextPathId = () => ++pathIdCounter;
@@ -144,6 +146,8 @@ export interface UseExplorerStateResult {
   initialize: () => Promise<void>;
   selectDatabase: (name: string) => Promise<void>;
   selectCollection: (name: string, label: string) => Promise<void>;
+  // 사이드바 트리용 — 다른 DB의 컬렉션이면 그 DB로 옮긴 다음 연다
+  openCollection: (database: string, name: string, label: string) => Promise<void>;
   selectDocument: (oid: string, title: string) => Promise<void>;
   // 문서 목록 검색어/정렬/페이지 변경. 검색어나 정렬이 바뀌면 첫 페이지로 간다.
   setDocumentQuery: (patch: Partial<DocumentListQuery>) => Promise<void>;
@@ -240,11 +244,32 @@ export function useExplorerState(): UseExplorerStateResult {
   // 충돌 창이 답을 기다리는 mutate()를 깨운다
   const conflictResolverRef = useRef<((overwrite: boolean) => void) | null>(null);
   const [referenceCandidates, setReferenceCandidates] = useState<PendingFieldReference | null>(null);
-  const [maxVisibleColumns, setMaxVisibleColumnsState] = useState(MIN_VISIBLE_COLUMNS + 1);
+  // 폰 너비면 Tree 모드(컬럼 최소)로 시작한다
+  const [maxVisibleColumns, setMaxVisibleColumnsState] = useState(() =>
+    window.matchMedia(MOBILE_QUERY).matches ? MIN_VISIBLE_COLUMNS : MIN_VISIBLE_COLUMNS + 1,
+  );
 
   const setMaxVisibleColumns = useCallback((count: number) => {
     const clamped = Math.min(MAX_VISIBLE_COLUMNS, Math.max(MIN_VISIBLE_COLUMNS, count));
     setMaxVisibleColumnsState(clamped);
+  }, []);
+
+  // 쓰는 중에 폰 너비로 좁아지면(창 크기 조절 등) Tree로 바꾸고, 다시 넓어지면 바꾸기 전 컬럼 수로 돌려놓는다.
+  // 폰 너비에서도 상태 표시줄 버튼으로 Columns로 바꿀 수 있다.
+  useEffect(() => {
+    const query = window.matchMedia(MOBILE_QUERY);
+    let beforeMobile = MIN_VISIBLE_COLUMNS + 1;
+    const onChange = () => {
+      setMaxVisibleColumnsState((current) => {
+        if (query.matches) {
+          beforeMobile = current;
+          return MIN_VISIBLE_COLUMNS;
+        }
+        return beforeMobile;
+      });
+    };
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
   }, []);
 
   const { toast, showToast, dismissToast } = useToast();
@@ -305,7 +330,13 @@ export function useExplorerState(): UseExplorerStateResult {
 
   // ── 액션 ────────────────────────────────────────────────────────────────────
 
+  // 첫 연결(DB 목록 → 첫 DB의 컬렉션). 끝까지 성공해야 initializedRef가 켜진다. 실패하면 '초기화 전'으로 남고,
+  // 새로고침 버튼이나 실시간 연결 복구(handleLiveStatus) 때 다시 시도한다. 동시에 두 번 돌지 않게 막는다.
+  const initializingRef = useRef(false);
+  const initializedRef = useRef(false);
   const initialize = useCallback(async () => {
+    if (initializingRef.current) return;
+    initializingRef.current = true;
     setConnectionStatus('connecting');
     setIsLoading(true);
     try {
@@ -327,10 +358,12 @@ export function useExplorerState(): UseExplorerStateResult {
         },
       ]);
       setEditingId(null);
+      initializedRef.current = true;
     } catch {
       setConnectionStatus('error');
       showToast('Failed to connect to DB.', 'error');
     } finally {
+      initializingRef.current = false;
       setIsLoading(false);
     }
   }, [showToast]);
@@ -765,6 +798,18 @@ export function useExplorerState(): UseExplorerStateResult {
     ]);
   }, []);
 
+  const openCollection = useCallback(async (database: string, name: string, label: string) => {
+    if (activeDatabaseRef.current !== database) {
+      try {
+        await focusDatabase(database);
+      } catch {
+        showToast('Could not load database.', 'error');
+        return;
+      }
+    }
+    await selectCollection(name, label);
+  }, [focusDatabase, selectCollection, showToast]);
+
   // 충돌 창을 띄우고 사용자가 고를 때까지 기다린다
   const askConflict = useCallback(
     (pending: PendingConflict) =>
@@ -904,35 +949,6 @@ export function useExplorerState(): UseExplorerStateResult {
     }
   }, [showToast]);
 
-  // 새로고침은 데이터만 다시 받아오는 게 아니라 collection/document/field 경로도 전부 비운다 —
-  // selectDatabase가 쓰는 것과 같은 초기화 패턴으로 collections 목록까지만 남긴다.
-  const refresh = useCallback(async () => {
-    if (!activeDatabaseRef.current) return;
-    setIsLoading(true);
-    try {
-      const cols = await api.getCollections(activeDatabaseRef.current);
-      activeCollectionRef.current = null;
-      activeDocumentOidRef.current = null;
-      setCollections(cols);
-      clearDocuments();
-      setOpenDocument(null);
-      setActivePaths([
-        {
-          kind: 'normal',
-          columnKind: 'collections',
-          label: activeDatabaseRef.current,
-          databaseName: activeDatabaseRef.current,
-          comp: { id: nextPathId(), direction: -1 },
-        },
-      ]);
-      setEditingId(null);
-    } catch {
-      showToast('Failed to refresh.', 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [showToast]);
-
   // ── 실시간 반영 ────────────────────────────────────────────────────────────
   // 서버(changeStream)가 보내는 변경을 받아 지금 화면에 걸린 부분만 다시 읽는다.
   // 목록 순서·페이지는 서버가 정하므로 이벤트로 직접 고치지 않고 '현재 페이지 다시 받기'로 맞춘다.
@@ -949,7 +965,8 @@ export function useExplorerState(): UseExplorerStateResult {
   const livePendingRef = useRef<LivePending>(emptyLivePending());
   const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const flushLive = useCallback(async () => {
+  // 반환값: 다시 받기에 성공했나(새로고침 버튼이 실패를 알리는 데 쓴다 — 실시간 경로는 조용히 넘어간다)
+  const flushLive = useCallback(async (): Promise<boolean> => {
     liveTimerRef.current = null;
     const pending = livePendingRef.current;
     livePendingRef.current = emptyLivePending();
@@ -963,7 +980,7 @@ export function useExplorerState(): UseExplorerStateResult {
         if (db && !dbs.some((d) => d.name === db)) {
           showToast(`Database "${db}" was removed outside this app`, 'error');
           await focusDatabase(dbs[0]?.name ?? null);
-          return;
+          return true;
         }
       }
       if (db && pending.collections) {
@@ -977,14 +994,18 @@ export function useExplorerState(): UseExplorerStateResult {
           setOpenDocument(null);
           setActivePaths((prev) => prev.slice(0, 1));
           setEditingId(null);
-          return;
+          return true;
         }
       }
       if (db && col && pending.documents) {
         await loadDocuments(db, col, documentQueryRef.current);
       }
       if (db && col && docId && pending.openDocument) {
-        const doc = await api.getFullDocumentByIdInCollection(db, col, docId).catch(() => null);
+        // 404만 '삭제됨'이다 — 네트워크 실패까지 삭제로 보면 서버가 잠깐 끊긴 사이 문서가 닫혀 버린다
+        const doc = await api.getFullDocumentByIdInCollection(db, col, docId).catch((e: unknown) => {
+          if ((e as { status?: number }).status === 404) return null;
+          throw e;
+        });
         // 그 사이 다른 문서로 옮겼으면 버린다
         if (activeDocumentOidRef.current === docId) {
           if (doc) {
@@ -999,14 +1020,32 @@ export function useExplorerState(): UseExplorerStateResult {
         }
       }
       if (pending.highlight.length) flashChangedPaths(pending.highlight);
+      return true;
     } catch {
       // 일시적인 실패 — 다음 변경이나 재연결(resync) 때 다시 맞춰진다
+      return false;
     }
   }, [showToast, focusDatabase, clearDocuments, loadDocuments, flashChangedPaths]);
 
   const scheduleLive = useCallback(() => {
     if (!liveTimerRef.current) liveTimerRef.current = setTimeout(() => void flushLive(), LIVE_BATCH_MS);
   }, [flushLive]);
+
+  // 새로고침 = '다시 맞추기'. 보던 경로(컬렉션·문서·필드·페이지)는 그대로 두고 지금 화면에 걸린 것만 다시 받는다
+  // — 재연결 때 자동으로 하는 resync와 같은 일을 지금 바로. 아직 첫 연결에 실패한 상태면 첫 연결부터 다시.
+  const refresh = useCallback(async () => {
+    if (!initializedRef.current) {
+      await initialize();
+      return;
+    }
+    if (liveTimerRef.current) {
+      clearTimeout(liveTimerRef.current);
+      liveTimerRef.current = null;
+    }
+    // 기다리던 하이라이트는 살리고, 받을 범위는 전부로
+    livePendingRef.current = { ...livePendingRef.current, databases: true, collections: true, documents: true, openDocument: true };
+    if (!(await flushLive())) showToast("Couldn't reach the server — try again in a moment.", 'error');
+  }, [initialize, flushLive, showToast]);
 
   const handleLiveChange = useCallback((change: LiveChange) => {
     const pending = livePendingRef.current;
@@ -1055,12 +1094,18 @@ export function useExplorerState(): UseExplorerStateResult {
   const handleLiveStatus = useCallback((status: LiveStatus) => {
     // 헤더의 연결 점 — 서버 연결이 끊기면 노랑/빨강
     setConnectionStatus(status.state === 'running' ? 'connected' : status.state === 'connecting' ? 'connecting' : 'error');
+    // 첫 연결이 실패한 채(Mongo가 그때 안 붙었음)라면, 서버가 다시 살아났을 때 처음부터 연결한다.
+    // 이게 없으면 점은 초록인데 화면은 빈 채로 남는다.
+    if (status.state === 'running' && !initializedRef.current) {
+      void initialize();
+      return;
+    }
     if (status.resync) {
       // 변경을 놓쳤을 수 있다 — 지금 화면에 걸린 걸 전부 다시 받는다
       livePendingRef.current = { databases: true, collections: true, documents: true, openDocument: true, highlight: [] };
       scheduleLive();
     }
-  }, [scheduleLive]);
+  }, [scheduleLive, initialize]);
 
   // 구독은 한 번만 — 핸들러는 ref로 최신 것을 부른다
   const liveHandlersRef = useRef({ handleLiveChange, handleLiveStatus });
@@ -1200,6 +1245,7 @@ export function useExplorerState(): UseExplorerStateResult {
     initialize,
     selectDatabase,
     selectCollection,
+    openCollection,
     selectDocument,
     setDocumentQuery,
     pushJsonPath,

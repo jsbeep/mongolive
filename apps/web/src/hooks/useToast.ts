@@ -1,5 +1,6 @@
 // path: src/hooks/useToast.ts
 import { useCallback, useRef, useState } from 'react';
+import { pushSystemEvent } from '../services/systemLog';
 
 let toastIdCounter = 0;
 const nextId = () => String(++toastIdCounter);
@@ -19,6 +20,8 @@ export function useToast() {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     const id = nextId();
     setToast({ id, message, type, undoable });
+    // 에러는 몇 초 뒤 사라져도 알림 센터(System 탭)에 남긴다
+    if (type === 'error') pushSystemEvent('error', message);
     toastTimerRef.current = setTimeout(() => setToast(null), type === 'error' ? 3000 : 5000);
   }, []);
 

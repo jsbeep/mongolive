@@ -3,13 +3,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Database, Layers, FileText, Braces, ChevronRight,
+  Database, Folder, FileText, Braces, ChevronRight,
   KeyRound, Calendar, Sigma, Binary, Hash, CornerDownLeft, CornerUpLeft,
   ToggleLeft, Ban, Box,
 } from 'lucide-react';
-import { ExplorerPathSegment, Document, JsonValue } from '../../types/explorer';
+import { ExplorerPathSegment, Document, JsonValue, type DatabaseSummary } from '../../types/explorer';
 import { getEntries, getFieldType, isExpandableType, type JsonFieldType } from '../../utils/jsonTree';
 import { cn } from '../../utils/cn';
+import { BreadcrumbDatabaseMenu } from './BreadcrumbDatabaseMenu';
 
 const styles = {
   container: 'relative flex h-12 min-h-12 items-center overflow-hidden rounded-[14px] m-3 mb-0 border border-slate-200/80 bg-white/80 px-3 shadow-soft backdrop-blur',
@@ -48,6 +49,10 @@ interface BreadcrumbsProps {
   onNavigate: (index: number) => void;
   openDocument: Document | null;
   onCommitFieldPath: (segments: string[]) => void;
+  // 첫 칸(DB) 드롭다운용
+  databases: DatabaseSummary[];
+  activeDatabase: string | null;
+  onSelectDatabase: (name: string) => void;
 }
 
 const getIconForKind = (kind: ExplorerPathSegment['kind']) => {
@@ -55,7 +60,7 @@ const getIconForKind = (kind: ExplorerPathSegment['kind']) => {
     case 'database':
       return Database;
     case 'collection':
-      return Layers;
+      return Folder;
     case 'document':
       return FileText;
     case 'field':
@@ -65,7 +70,7 @@ const getIconForKind = (kind: ExplorerPathSegment['kind']) => {
   }
 };
 
-export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFieldPath }: BreadcrumbsProps) {
+export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFieldPath, databases, activeDatabase, onSelectDatabase }: BreadcrumbsProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -287,6 +292,20 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFie
                   transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                   className="inline-flex items-center gap-1"
                 >
+                  {index === 0 && segment.kind === 'database' ? (
+                    // 첫 칸(DB) = DB 고르기 드롭다운
+                    <BreadcrumbDatabaseMenu
+                      label={segment.label}
+                      isLast={isLast}
+                      databases={databases}
+                      activeDatabase={activeDatabase}
+                      onSelectDatabase={(name) => {
+                        if (isEditing) setIsEditing(false);
+                        onSelectDatabase(name);
+                      }}
+                      onBackToRoot={() => handleBreadcrumbClick(0)}
+                    />
+                  ) : (
                   <button
                     type="button"
                     disabled={isLast && !clickableLast}
@@ -309,6 +328,7 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFie
                     {IconComponent && <IconComponent className={styles.icon} />}
                     <span className="max-w-40 truncate">{segment.label}</span>
                   </button>
+                  )}
                   {(index < breadcrumbs.length - 1 || (isEditing && index === boundaryIndex)) && (
                     <ChevronRight className={styles.chevron} aria-hidden="true" strokeWidth={2.5} />
                   )}
