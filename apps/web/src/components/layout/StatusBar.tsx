@@ -3,7 +3,8 @@
 //   오른쪽: Tree/Columns · 컬럼 수 − n + · 설정 · 로그아웃 · 알림 센터(종)
 // 바는 예전 헤더처럼 둥근 카드, 항목은 테두리 없이 hover 배경만 있는 덜 둥근 네모.
 import { useState } from 'react';
-import { Bell, BellDot, Circle, Columns3, ListTree, LogOut, Minus, Plus, RefreshCw, Settings } from 'lucide-react';
+import { Bell, BellDot, Circle, Columns3, ListTree, Lock, LogOut, Minus, Plus, RefreshCw, Settings } from 'lucide-react';
+import { useServerSettings } from '../../services/serverSettings';
 import { m } from 'framer-motion';
 import { MIN_VISIBLE_COLUMNS, MAX_VISIBLE_COLUMNS, type UseExplorerStateResult } from '../../hooks/useExplorerState';
 import { dataSourceKind } from '../../services/api';
@@ -22,6 +23,8 @@ interface StatusBarProps {
   onToggleCenter: () => void;
   onOpenSystem: () => void;
   onOpenSettings: () => void;
+  // Read-only 배지 → 설정 창 › Safety
+  onOpenSafety: () => void;
 }
 
 const styles = {
@@ -48,7 +51,9 @@ export function StatusBar({
   onToggleCenter,
   onOpenSystem,
   onOpenSettings,
+  onOpenSafety,
 }: StatusBarProps) {
+  const safety = useServerSettings();
   const auth = useAuth();
   const status = CONNECTION_STATUS[connectionStatus];
   const [rotation, setRotation] = useState(0);
@@ -90,6 +95,17 @@ export function StatusBar({
             <RefreshCw size={14} aria-hidden="true" />
           </m.span>
         </button>
+        {safety.readOnly && (
+          <button
+            type="button"
+            className={cn(styles.item, 'bg-amber-100 font-semibold text-amber-800 hover:bg-amber-200/80')}
+            onClick={onOpenSafety}
+            data-tt="Read-only mode — every edit is blocked. Click to change"
+          >
+            <Lock size={13} />
+            Read-only
+          </button>
+        )}
       </div>
 
       <div className="flex-1" />

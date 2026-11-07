@@ -26,7 +26,9 @@ const conflictInfoOf = (e: unknown): ConflictInfo | null => {
   const err = e as { status?: number; body?: { conflict?: ConflictInfo } };
   return err?.status === 409 && err.body?.conflict ? err.body.conflict : null;
 };
+import { getServerSettingsSnapshot } from '../services/serverSettings';
 import {
+  writeBlockedReason,
   collectionKey,
   compareKey,
   idString,
@@ -827,6 +829,12 @@ export function useExplorerState(): UseExplorerStateResult {
   }, []);
 
   const mutate = useCallback(async (op: MutationRequest): Promise<MutationResult> => {
+    // 안전장치(설정 창 › Safety): 막힌 쓰기는 보내기 전에 알린다. 서버도 같은 규칙으로 403을 내므로 최종 판단은 서버
+    const blocked = writeBlockedReason(getServerSettingsSnapshot(), op);
+    if (blocked) {
+      showToast(blocked, 'error');
+      throw new MutationCancelledError();
+    }
     setIsLoading(true);
     try {
       let result: MutationResult;
@@ -927,7 +935,11 @@ export function useExplorerState(): UseExplorerStateResult {
     setIsLoading(true);
     try {
       const undone = await api.undoLast();
-      if (!undone) return;
+      if (!undone) {
+        // Ctrl+Z로 불렸는데 되돌릴 게 없을 때(토스트의 Undo 버튼은 되돌릴 수 있을 때만 보인다)
+        showToast('Nothing to undo', 'success');
+        return;
+      }
       setDatabases(await api.listDatabases());
       const db = activeDatabaseRef.current;
       if (db) {

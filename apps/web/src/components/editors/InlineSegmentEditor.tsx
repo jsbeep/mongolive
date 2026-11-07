@@ -206,9 +206,11 @@ export function InlineSegmentEditor({
   // Date 입력은 '값 표시' 설정과 같은 시간대로(로컬 / UTC) — 화면에 보이는 시각과 편집기 시각이 같게.
   // 밀리초까지 다룬다(예전엔 분까지라 열었다 저장만 해도 초·밀리초가 지워졌다). 편집을 여는 순간의 설정으로 고정.
   const [dateMode] = useState(() => getPreferences().dateDisplay);
+  // 밀리초를 안 보이면 초까지만 입력한다(저장할 때 원래 밀리초를 이어 붙인다 — fromDateInput)
+  const [dateWithMs] = useState(() => getPreferences().showMs);
   const [initialDateInput] = useState(() => {
     const ms = dateMs(initialValue);
-    return ms === undefined ? '' : toDateInput(ms, dateMode);
+    return ms === undefined ? '' : toDateInput(ms, dateMode, dateWithMs);
   });
   const [dateValue, setDateValue] = useState(initialDateInput);
   // ObjectID 타입: 새로 생성 vs 기존 문서 참조 선택
@@ -488,7 +490,7 @@ export function InlineSegmentEditor({
     if (selectedType === 'Date') {
       // 손대지 않았으면 원래 값 그대로(저장 형식까지 — $date의 문자열/숫자 표기)
       if (initialValue !== undefined && dateMs(initialValue) !== undefined && dateValue === initialDateInput) return initialValue;
-      const ms = dateValue ? fromDateInput(dateValue, dateMode) : Date.now();
+      const ms = dateValue ? fromDateInput(dateValue, dateMode, dateWithMs ? undefined : dateMs(initialValue)) : Date.now();
       return makeDate(new Date(Number.isNaN(ms) ? Date.now() : ms));
     }
     if (selectedType === 'Decimal128') return makeDecimal(rawValue);
@@ -835,8 +837,8 @@ export function InlineSegmentEditor({
               <div className="flex items-center gap-2">
                 <input
                   type="datetime-local"
-                  // 밀리초까지 입력·유지
-                  step="0.001"
+                  // 밀리초를 보일 때만 밀리초까지 입력(아니면 초까지)
+                  step={dateWithMs ? '0.001' : '1'}
                   className={styles.valueInput}
                   value={dateValue}
                   onChange={(e) => setDateValue(e.target.value)}

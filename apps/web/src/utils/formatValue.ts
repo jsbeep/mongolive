@@ -17,33 +17,39 @@ const parts = (d: Date, utc: boolean) =>
     ? [d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds()]
     : [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()];
 
-// "2026-11-08 22:42:25.123"
-const stamp = (d: Date, utc: boolean) => {
+// "2026-11-08 22:42:25" (+ ".123")
+const stamp = (d: Date, utc: boolean, withMs: boolean) => {
   const [y, mo, da, h, mi, s, ms] = parts(d, utc);
-  return `${y}-${pad(mo)}-${pad(da)} ${pad(h)}:${pad(mi)}:${pad(s)}.${pad(ms, 3)}`;
+  return `${y}-${pad(mo)}-${pad(da)} ${pad(h)}:${pad(mi)}:${pad(s)}${withMs ? `.${pad(ms, 3)}` : ''}`;
 };
 
-export const formatDate = (ms: number, mode: DateDisplay): string => {
+// iso = '저장된 그대로'라서 밀리초 설정과 상관없이 늘 전부 보여 준다
+export const formatDate = (ms: number, mode: DateDisplay, withMs = true): string => {
   const d = new Date(ms);
   if (Number.isNaN(d.getTime())) return String(ms);
   if (mode === 'iso') return d.toISOString();
-  if (mode === 'utc') return `${stamp(d, true)} UTC`;
-  return `${stamp(d, false)} ${offsetLabel(ms)}`;
+  if (mode === 'utc') return `${stamp(d, true, withMs)} UTC`;
+  return `${stamp(d, false, withMs)} ${offsetLabel(ms)}`;
 };
 
-// 툴팁 — 세 가지를 다 보여 준다(어느 걸로 보고 있든 헷갈리지 않게)
+// 툴팁 — 세 가지를 밀리초까지 다 보여 준다(어느 걸로 보고 있든 헷갈리지 않게)
 export const dateTooltip = (ms: number): string =>
   [formatDate(ms, 'local'), formatDate(ms, 'utc'), formatDate(ms, 'iso')].join('\n');
 
-// datetime-local 입력과 주고받기 — 표시 설정과 같은 시간대로(iso는 UTC). 밀리초까지 남긴다.
-// "YYYY-MM-DDTHH:mm:ss.SSS"
-export const toDateInput = (ms: number, mode: DateDisplay): string => {
+// datetime-local 입력과 주고받기 — 표시 설정과 같은 시간대로(iso는 UTC).
+// "YYYY-MM-DDTHH:mm:ss" (+ ".SSS" — 밀리초를 보일 때)
+export const toDateInput = (ms: number, mode: DateDisplay, withMs: boolean): string => {
   const [y, mo, da, h, mi, s, msec] = parts(new Date(ms), mode !== 'local');
-  return `${y}-${pad(mo)}-${pad(da)}T${pad(h)}:${pad(mi)}:${pad(s)}.${pad(msec, 3)}`;
+  return `${y}-${pad(mo)}-${pad(da)}T${pad(h)}:${pad(mi)}:${pad(s)}${withMs ? `.${pad(msec, 3)}` : ''}`;
 };
-export const fromDateInput = (value: string, mode: DateDisplay): number =>
+// keepMsFrom: 밀리초를 안 보이게 편집한 경우, 원래 값의 밀리초를 이어 붙인다(분만 고쳐도 .484가 남게).
+// 입력에 밀리초가 있으면(밀리초를 보일 때) 입력한 그대로.
+export const fromDateInput = (value: string, mode: DateDisplay, keepMsFrom?: number): number => {
   // 시간대 표시가 없는 문자열은 브라우저가 이 기기 시간으로 읽는다 — UTC로 읽으려면 Z를 붙인다
-  mode === 'local' ? new Date(value).getTime() : Date.parse(`${value}Z`);
+  const ms = mode === 'local' ? new Date(value).getTime() : Date.parse(`${value}Z`);
+  if (keepMsFrom === undefined || value.includes('.') || Number.isNaN(ms)) return ms;
+  return ms + (((keepMsFrom % 1000) + 1000) % 1000);
+};
 export const dateInputZone = (mode: DateDisplay): string => (mode === 'local' ? offsetLabel() : 'UTC');
 
 // ObjectId 앞 8자리(hex) = 만든 시각(초)
@@ -56,5 +62,6 @@ export const formatOid = (hex: string, mode: OidDisplay): string => (mode === 's
 
 export const oidTooltip = (hex: string, dateMode: DateDisplay): string => {
   const created = oidCreatedAt(hex);
-  return created === null ? hex : `${hex}\nCreated ${formatDate(created, dateMode)}`;
+  // 만든 시각은 초 단위라 밀리초는 뺀다
+  return created === null ? hex : `${hex}\nCreated ${formatDate(created, dateMode, false)}`;
 };

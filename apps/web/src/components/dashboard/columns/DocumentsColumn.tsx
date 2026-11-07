@@ -14,6 +14,7 @@ import { api } from '../../../services/api';
 import { columnListStyles as styles } from './columnListStyles';
 import { isPathChanged } from '../../../utils/changedPaths';
 import { useFileDrop } from '../../../hooks/useFileDrop';
+import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 import { FilterSortToolbar, type SortOption } from './FilterSortToolbar';
 import { PageRail, PageTransition } from './PageRail';
 
@@ -167,8 +168,11 @@ export function DocumentsColumn({
     setIsEditingPrimaryKey(false);
   };
 
+  // 안전장치(설정 창 › Safety): read-only거나 이 컬렉션(또는 DB)이 보호 대상이면 편집·추가·파일 드롭을 숨긴다
+  const canEditHere = canEditIn(useServerSettings(), activeDatabaseName, activeCollectionName);
+
   return (
-    <div className={styles.container} {...dragHandlers}>
+    <div className={styles.container} {...(canEditHere ? dragHandlers : {})}>
       <DropOverlay visible={isColumnDragOver} label="Drop a file to import as a document" />
 
       {/* 헤더 */}
@@ -401,8 +405,8 @@ export function DocumentsColumn({
                 variant="document"
                 reduceMotion={reduceMotion}
                 onSelect={() => void onSelectDocument(doc.id, doc.title)}
-                onEdit={() => onSetEditingId(`document:${doc.id}`)}
-                onDelete={() => setDeleteTarget(doc)}
+                onEdit={canEditHere ? () => onSetEditingId(`document:${doc.id}`) : undefined}
+                onDelete={canEditHere ? () => setDeleteTarget(doc) : undefined}
               />
             );
           })}
@@ -435,7 +439,7 @@ export function DocumentsColumn({
             pendingImportFile={pendingImportFile}
             onPendingImportFileConsumed={() => setPendingImportFile(null)}
           />
-        ) : (
+        ) : canEditHere && (
           <AddItemButton
             label="Add Document"
             onClick={() => onSetEditingId('document:__new__')}

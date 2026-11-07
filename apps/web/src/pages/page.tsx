@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useExplorerState } from '../hooks/useExplorerState';
 import { StatusBar } from '../components/layout/StatusBar';
 import { Breadcrumbs } from '../components/dashboard/Breadcrumbs';
@@ -10,7 +10,8 @@ import { TooltipLayer } from '../components/common/TooltipLayer';
 import { Sidebar } from '../components/layout/Sidebar';
 import { NotificationCenter, type NotificationTab } from '../components/notifications/NotificationCenter';
 import { Toast } from '../components/notifications/Toast';
-import { SettingsModal } from '../components/settings/SettingsModal';
+import { SettingsModal, type SettingsSection } from '../components/settings/SettingsModal';
+import { startServerSettingsSync } from '../services/serverSettings';
 import { useActivityLog } from '../hooks/useActivityLog';
 import { useSidebar } from '../hooks/useSidebar';
 import { useSystemLog } from '../hooks/useSystemLog';
@@ -36,6 +37,15 @@ export default function ExplorerPage() {
   const [centerOpen, setCenterOpen] = useState(false);
   const [centerTab, setCenterTab] = useState<NotificationTab>('changes');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
+  const openSettings = (section?: SettingsSection) => {
+    setCenterOpen(false);
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  };
+
+  // 안전장치 설정(read-only, 보호 대상) — 앱이 켜질 때 받고, 다른 탭·기기에서 바꾸면 따라간다
+  useEffect(() => startServerSettingsSync(), []);
 
   // 초기 연결
   useEffect(() => {
@@ -91,6 +101,24 @@ export default function ExplorerPage() {
   // 지금 컬렉션 — 문서 목록 컬럼이 열려 있으면 그 컬렉션 이름(트리 강조, 알림 센터의 '이 컬렉션' 범위)
   const documentsPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'documents');
   const activeCollectionName = documentsPath?.kind === 'normal' ? documentsPath.collectionName ?? null : null;
+
+  // Ctrl+Z(⌘Z) = 마지막 문서·필드 편집 되돌리기(한 단계). 입력칸 안에선 브라우저의 글자 되돌리기를 그대로 두고,
+  // 모달(설정·충돌·삭제 확인)이 떠 있을 때도 건드리지 않는다
+  const undoRef = useRef(undo);
+  undoRef.current = undo;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'z') return;
+      const target = e.target as Element | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      e.preventDefault();
+      dismissToast();
+      void undoRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [dismissToast]);
 
   return (
     <div className={styles.root}>
@@ -167,10 +195,8 @@ export default function ExplorerPage() {
           unseenErrors={systemLog.unseenErrors}
           isCenterOpen={centerOpen}
           onToggleCenter={() => setCenterOpen((v) => !v)}
-          onOpenSettings={() => {
-            setCenterOpen(false);
-            setSettingsOpen(true);
-          }}
+          onOpenSettings={() => openSettings()}
+          onOpenSafety={() => openSettings('safety')}
           onOpenSystem={() => {
             // 연결 상태를 누르면 연결 기록(System 탭) — 이미 그 탭이 열려 있으면 닫는다
             if (centerOpen && centerTab === 'system') setCenterOpen(false);
@@ -213,7 +239,7 @@ export default function ExplorerPage() {
       />
 
       {/* 설정 창 — 상태바의 톱니바퀴 */}
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} databases={databases} onMutate={mutate} />
+      <SettingsModal open={settingsOpen} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} databases={databases} onMutate={mutate} />
 
       {/* 토스트 — 오른쪽 아래(알림 센터가 열려 있으면 그 위) */}
       <Toast

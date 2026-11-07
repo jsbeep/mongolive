@@ -13,6 +13,7 @@ import { columnListStyles as styles } from './columnListStyles';
 import { isPathChanged } from '../../../utils/changedPaths';
 import { useFileDrop } from '../../../hooks/useFileDrop';
 import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../../utils/motionPresets';
+import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,9 @@ export function CollectionsColumn({
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [refsManagerTarget, setRefsManagerTarget] = useState<{ collectionName: string; suggestedFieldKeys: string[] } | null>(null);
   const databaseName = path.kind === 'normal' ? (path.databaseName ?? '') : '';
+  // 안전장치(설정 창 › Safety): read-only거나 이 DB가 보호 대상이면 추가·파일 드롭을, 컬렉션이 보호 대상이면 그 행의 편집을 숨긴다
+  const safety = useServerSettings();
+  const canEditDb = canEditIn(safety, databaseName);
 
   // 컬럼 전체에 파일을 드롭하면 "컬렉션 추가" 에디터를 열고 그 파일을 업로드한 것처럼 처리
   const { isDragOver: isColumnDragOver, dragHandlers } = useFileDrop((file) => {
@@ -74,7 +78,7 @@ export function CollectionsColumn({
   };
 
   return (
-    <div className={styles.container} {...dragHandlers}>
+    <div className={styles.container} {...(canEditDb ? dragHandlers : {})}>
       <DropOverlay visible={isColumnDragOver} label="Drop a file to import as a collection" />
 
       {/* 헤더 */}
@@ -136,8 +140,8 @@ export function CollectionsColumn({
                 variant="collection"
                 reduceMotion={reduceMotion}
                 onSelect={() => void onSelectCollection(col.name, col.label)}
-                onEdit={() => onSetEditingId(`collection:${col.name}`)}
-                onDelete={() => setDeleteTarget(col)}
+                onEdit={canEditIn(safety, databaseName, col.name) ? () => onSetEditingId(`collection:${col.name}`) : undefined}
+                onDelete={canEditIn(safety, databaseName, col.name) ? () => setDeleteTarget(col) : undefined}
               />
             );
           })
@@ -183,7 +187,7 @@ export function CollectionsColumn({
             pendingImportFile={pendingImportFile}
             onPendingImportFileConsumed={() => setPendingImportFile(null)}
           />
-        ) : (
+        ) : canEditDb && (
           <AddItemButton
             label="Add Collection"
             onClick={() => onSetEditingId('collection:__new__')}
@@ -193,7 +197,7 @@ export function CollectionsColumn({
             reduceMotion={reduceMotion}
           />
         )}
-        {!collections.length && (
+        {!collections.length && canEditDb && (
           <div className={styles.empty}>
             <Folder size={28} className="opacity-30" />
             <span>Drag and drop a JSON file here to create a collection</span>
@@ -207,6 +211,7 @@ export function CollectionsColumn({
           isOpen={!!deleteTarget}
           targetType="collection"
           targetLabel={deleteTarget.label}
+          confirmText={deleteTarget.name}
           onConfirm={handleDelete}
           onCancel={() => setDeleteTarget(null)}
         />,

@@ -16,6 +16,7 @@ import type {
   LiveLogEntry,
   LiveStatus,
   Diagnostics,
+  ServerSettings,
   LiveView,
   MutationRequest,
   MutationResult,
@@ -69,6 +70,13 @@ export interface DataSource {
   getMetrics(): Promise<ClientMetrics | null>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
+
+  // ── 안전장치(설정 창 › Safety) ──
+  // remote: 서버의 settings.json(모든 브라우저 공통, /mutate가 이걸로 거절). mock: 이 브라우저의 localStorage.
+  getServerSettings(): Promise<ServerSettings>;
+  saveServerSettings(next: ServerSettings): Promise<ServerSettings>;
+  // 다른 탭·기기에서 바꿔도 알려 준다
+  onServerSettings(listener: (settings: ServerSettings) => void): () => void;
 
   // ── 메타데이터: 이 앱이 직접 만든 '고유 oid' (참조가 아닌 식별자 값) ──
   listOwnedOids(): Promise<string[]>;

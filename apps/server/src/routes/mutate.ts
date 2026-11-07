@@ -6,12 +6,13 @@
 // 메타데이터 연산(titleKey/PK/FK)은 meta.json에만 쓰고 MongoDB는 건드리지 않는다.
 // 문서 쓰기는 writes/documents.ts(6-1), 컬렉션/DB 쓰기는 writes/structure.ts(6-2).
 import { Router } from 'express';
-import { collectionKey, type MutationRequest, type MutationResult } from '@mongolive/shared';
+import { collectionKey, writeBlockedReason, type MutationRequest, type MutationResult } from '@mongolive/shared';
 import { getClient } from '../db';
 import { listOwnedOids, setOwnedOid, updateCollectionMeta } from '../meta';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
 import { DOCUMENT_OPS, runDocumentOp } from '../writes/documents';
 import { runStructureOp, STRUCTURE_OPS } from '../writes/structure';
+import { getServerSettings } from '../settings';
 
 export const mutateRouter = Router();
 
@@ -40,6 +41,16 @@ const collectionResult = (database: string, collection: string): MutationResult 
 mutateRouter.post('/mutate', async (req, res) => {
   const op = req.body as Partial<MutationRequest> & Record<string, unknown>;
   if (!op || typeof op !== 'object') throw new HttpError(400, '요청 본문이 없습니다');
+
+  // 안전장치(설정 창 › Safety): read-only / 보호 대상이면 거절. 되돌리기도 이 길로 오므로 같이 막힌다.
+  // 모양이 틀린 요청은 판정이 실패할 수 있다 — 그건 아래 검사가 400으로 거절한다
+  let blocked: string | null = null;
+  try {
+    blocked = writeBlockedReason(getServerSettings(), op as MutationRequest);
+  } catch {
+    blocked = null;
+  }
+  if (blocked) throw new HttpError(403, blocked);
 
   if (typeof op.type === 'string' && DOCUMENT_OPS.has(op.type)) {
     res.json(await runDocumentOp(op as Parameters<typeof runDocumentOp>[0]));

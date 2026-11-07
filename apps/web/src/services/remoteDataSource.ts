@@ -23,6 +23,7 @@ import type {
   ReferenceInfo,
   ServerMetrics,
   Diagnostics,
+  ServerSettings,
 } from '../types/explorer';
 import { fetchAuthStatus, notifySessionExpired } from './auth';
 import type { ClientMetrics, DataSource } from './dataSource';
@@ -100,6 +101,7 @@ export const createRemoteDataSource = (): DataSource => {
   let everConnected = false;
   const changeListeners = new Set<(change: LiveChange) => void>();
   const statusListeners = new Set<(status: LiveStatus) => void>();
+  const settingsListeners = new Set<(settings: ServerSettings) => void>();
   const emitStatus = (status: LiveStatus) => statusListeners.forEach((listener) => listener(status));
   const logListeners = new Set<(entries: LiveLogEntry[], isBacklog: boolean) => void>();
 
@@ -166,6 +168,8 @@ export const createRemoteDataSource = (): DataSource => {
     });
     next.on('connect_error', (e: Error) => emitStatus({ state: 'error', error: e.message }));
     next.on('status', (status: LiveStatus) => emitStatus(status));
+    // 설정 창 › Safety가 바뀌면(이 탭이든 다른 기기든) 서버가 모두에게 알린다
+    next.on('settings', (settings: ServerSettings) => settingsListeners.forEach((listener) => listener(settings)));
     next.on('change', (change: LiveChange) => {
       // 어딘가 바뀌었으니 oid 위치 캐시는 믿을 수 없다
       oidCache.clear();
@@ -288,6 +292,16 @@ export const createRemoteDataSource = (): DataSource => {
       };
     },
     getDiagnostics: () => request<Diagnostics>('/diagnostics'),
+
+    getServerSettings: () => request<ServerSettings>('/settings'),
+    saveServerSettings: (next) => request<ServerSettings>('/settings', { method: 'PUT', body: JSON.stringify(next) }),
+    onServerSettings(listener) {
+      ensureSocket();
+      settingsListeners.add(listener);
+      return () => {
+        settingsListeners.delete(listener);
+      };
+    },
 
     async getMetrics(): Promise<ClientMetrics> {
       const s = ensureSocket();

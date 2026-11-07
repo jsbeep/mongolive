@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { authFilePath, metaFilePath } from './paths';
+import { authFilePath, metaFilePath, settingsFilePath } from './paths';
 
 // 환경변수 → 설정 객체. 서버 전체에서 process.env를 직접 읽지 말고 이 모듈만 쓴다.
 // 값은 apps/server/.env(커밋 안 됨)에서 Node의 --env-file로 들어온다. 예시는 .env.example.
@@ -84,6 +84,8 @@ export const config = {
   authFile: authFilePath(),
   // 앱 메타데이터(PK/FK 선언 등) 파일 — MongoDB가 아니라 이 컴퓨터에 저장한다
   metaFile: metaFilePath(),
+  // 설정 창에서 바꾸는 서버 설정(read-only, 보호 대상) — 보안과 상관없는 실수 방지용만
+  settingsFile: settingsFilePath(),
   // 빌드된 웹 화면(corepack pnpm build). 있으면 서버가 화면까지 내준다 — 포트 하나로 배포할 때
   webDist: process.env.WEB_DIST || fileURLToPath(new URL('../../web/dist', import.meta.url)),
 } as const;

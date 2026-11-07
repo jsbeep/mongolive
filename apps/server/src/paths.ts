@@ -10,3 +10,6 @@ export const metaFilePath = (): string => process.env.META_FILE || join(APP_DIR,
 
 // 비밀번호 해시 + 쿠키 서명 키
 export const authFilePath = (): string => process.env.AUTH_FILE || join(APP_DIR, 'auth.json');
+
+// 서버 쪽 설정(설정 창 › Safety: read-only, 보호 대상). 보안 설정(.env)은 여기 두지 않는다
+export const settingsFilePath = (): string => process.env.SETTINGS_FILE || join(APP_DIR, 'settings.json');

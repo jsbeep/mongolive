@@ -7,11 +7,13 @@
 // DB 관리(예전 헤더 드롭다운): 제목 옆 + = 추가, 행에 올리면 휴지통 = 삭제. 이름 변경/복제는 MongoDB에 명령이 없어 없음.
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronRight, Database, Folder, FolderOpen, Loader2, Plus, Trash2, X } from 'lucide-react';
+import { Check, ChevronRight, Database, Folder, FolderOpen, Loader2, Lock, Plus, Trash2, X } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, MutationRequest } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { DeleteConfirmModal } from '../common/DeleteConfirmModal';
+import { canEditIn, useServerSettings } from '../../services/serverSettings';
+import { isProtected } from '../../types/explorer';
 
 interface DatabaseTreeProps {
   databases: DatabaseSummary[];
@@ -57,6 +59,8 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
   const [newName, setNewName] = useState('');
   const [pending, setPending] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DatabaseSummary | null>(null);
+  // 안전장치(설정 창 › Safety): read-only면 추가를, 막힌 DB는 삭제를 숨기고 보호 대상엔 자물쇠
+  const safety = useServerSettings();
 
   // 지금 DB는 늘 펼쳐 둔다(컬럼에서 DB를 바꿔도 트리가 따라온다)
   useEffect(() => {
@@ -132,12 +136,14 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
     <div className="flex min-h-0 flex-1 flex-col px-2">
       <div className={styles.sectionHead}>
         <span className={styles.sectionTitle}>Databases</span>
-        <button type="button" className={styles.iconBtn} onClick={() => setAdding((v) => !v)} aria-label="New database" data-tt="New database">
-          <Plus size={14} />
-        </button>
+        {!safety.readOnly && (
+          <button type="button" className={styles.iconBtn} onClick={() => setAdding((v) => !v)} aria-label="New database" data-tt="New database">
+            <Plus size={14} />
+          </button>
+        )}
       </div>
 
-      {adding && (
+      {adding && !safety.readOnly && (
         <div className={styles.addRow}>
           <input
             autoFocus
@@ -193,19 +199,26 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
                 </span>
                 <Database size={14} className={cn('shrink-0', isActive ? 'text-emerald-600' : 'text-slate-400')} />
                 <span className={styles.label}>{db.label}</span>
-                <span className={cn(styles.count, styles.countHideOnHover)}>{db.collectionCount}</span>
-                <button
-                  type="button"
-                  className={styles.rowAction}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleteTarget(db);
-                  }}
-                  aria-label={`Delete ${db.label}`}
-                  data-tt="Delete database"
-                >
-                  <Trash2 size={13} />
-                </button>
+                {isProtected(safety, db.name) && <Lock size={11} className="shrink-0 text-amber-500" aria-label="Protected" data-tt="Protected — editing is blocked (Settings › Safety)" />}
+                {canEditIn(safety, db.name) ? (
+                  <>
+                    <span className={cn(styles.count, styles.countHideOnHover)}>{db.collectionCount}</span>
+                    <button
+                      type="button"
+                      className={styles.rowAction}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteTarget(db);
+                      }}
+                      aria-label={`Delete ${db.label}`}
+                      data-tt="Delete database"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </>
+                ) : (
+                  <span className={styles.count}>{db.collectionCount}</span>
+                )}
               </div>
 
               {isOpen && (
@@ -232,6 +245,9 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
                         >
                           <Icon size={14} className={cn('shrink-0', isActiveCol ? 'text-emerald-600' : 'text-slate-400')} />
                           <span className={styles.label}>{col.label || col.name}</span>
+                          {isProtected(safety, db.name, col.name) && !isProtected(safety, db.name) && (
+                            <Lock size={11} className="shrink-0 text-amber-500" aria-label="Protected" data-tt="Protected — editing is blocked (Settings › Safety)" />
+                          )}
                           <span className={styles.count}>{col.documentCount}</span>
                         </button>
                       );
@@ -249,6 +265,7 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
           isOpen={!!deleteTarget}
           targetType="database"
           targetLabel={deleteTarget.label}
+          confirmText={deleteTarget.name}
           onConfirm={async () => {
             await onMutate({ type: 'deleteDatabase', database: deleteTarget.name });
             setDeleteTarget(null);

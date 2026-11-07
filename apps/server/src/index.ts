@@ -15,6 +15,8 @@ import { readRouter } from './routes/read';
 import { metricsRouter } from './routes/metrics';
 import { refsRouter } from './routes/refs';
 import { diagnosticsRouter } from './routes/diagnostics';
+import { settingsRouter } from './routes/settings';
+import { getServerSettings, loadServerSettings, onServerSettingsChange } from './settings';
 
 const app = express();
 // 문지기가 맨 앞 — 거절할 요청은 본문(최대 10MB)을 읽기도 전에 돌려보낸다
@@ -34,6 +36,7 @@ app.use('/api', mutateRouter);
 app.use('/api', refsRouter);
 app.use('/api', metricsRouter);
 app.use('/api', diagnosticsRouter);
+app.use('/api', settingsRouter);
 
 // 위에서 처리하지 못한 /api 요청
 app.use('/api', (_req, res) => {
@@ -77,6 +80,10 @@ const start = async () => {
     process.exit(1);
   }
 
+  // 안전장치 설정(read-only, 보호 대상)은 첫 요청 전에 읽어 둔다 — 읽기 전에 쓰기가 들어오면 막을 수 없다
+  await loadServerSettings();
+  if (getServerSettings().readOnly) console.log('[settings] read-only 모드 — 쓰기를 모두 거절합니다');
+
   // 연결이 안 돼도 서버는 띄운다 — /api/health에서 원인을 볼 수 있고, 요청마다 다시 연결을 시도한다.
   const mongo = await checkMongo();
   if (mongo.ok) {
@@ -99,6 +106,8 @@ const start = async () => {
   // WebSocket은 CORS를 따르지 않아서 express 쪽과 같은 문지기를 allowRequest로 따로 세운다.
   const io = new SocketServer(server, { serveClient: false, allowRequest: allowSocket });
   const realtime = startRealtime(io);
+  // 설정 창에서 Safety를 바꾸면 열려 있는 모든 탭에 알린다(편집 버튼 숨김/보임이 바로 바뀌게)
+  const offSettings = onServerSettingsChange((settings) => io.emit('settings', settings));
   const recheck = setInterval(() => {
     for (const socket of io.sockets.sockets.values()) {
       if (!hasValidSession(socket.request)) socket.disconnect(true);
@@ -108,6 +117,7 @@ const start = async () => {
   // Ctrl+C / 재시작 시 Mongo 연결을 정리하고 종료
   const shutdown = async () => {
     clearInterval(recheck);
+    offSettings();
     stopTls();
     await realtime.stop();
     io.close();

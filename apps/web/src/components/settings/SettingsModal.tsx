@@ -1,23 +1,27 @@
 // 설정 창 (상태바의 톱니바퀴). 왼쪽 목록 + 오른쪽 내용.
 //   Display     — 값 표시(Date 시간대, ObjectId 줄임). 이 브라우저에만(services/preferences)
+//   Safety      — read-only·보호 대상(서버 settings.json, 모든 브라우저 공통 — 서버가 막는다), 삭제 확인 강도(이 브라우저)
 //   Data        — 샘플 데이터 불러오기
 //   Diagnostics — 서버·MongoDB·changeStream·권한 (GET /api/diagnostics)
 //   Security    — 보안 설정(.env)을 읽기만. 화면에서 바꿀 수 있으면 세션 하나만 탈취돼도 인증을 끌 수 있어서
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, m } from 'framer-motion';
-import { CircleAlert, CircleCheck, Database, Loader2, Monitor, RefreshCw, Shield, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import type { DatabaseSummary, Diagnostics, MutationRequest } from '../../types/explorer';
+import { CircleAlert, CircleCheck, Database, Loader2, Lock, Monitor, Plus, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import type { CollectionSummary, DatabaseSummary, Diagnostics, MutationRequest } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
-import { setPreference, usePreferences, type DateDisplay, type OidDisplay } from '../../services/preferences';
+import { setPreference, usePreferences, type DateDisplay, type DeleteConfirmLarge, type DeleteConfirmSmall, type OidDisplay } from '../../services/preferences';
+import { saveServerSettings, useServerSettings } from '../../services/serverSettings';
 import { buildForumEjsonSample, buildForumJsonSample } from '../../data/sampleData';
 import { formatDate, formatOid, offsetLabel } from '../../utils/formatValue';
 import { cn } from '../../utils/cn';
 
-type Section = 'display' | 'data' | 'diagnostics' | 'security';
+export type SettingsSection = 'display' | 'safety' | 'data' | 'diagnostics' | 'security';
+type Section = SettingsSection;
 
 const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: 'display', label: 'Display', icon: Monitor },
+  { id: 'safety', label: 'Safety', icon: ShieldCheck },
   { id: 'data', label: 'Data', icon: Database },
   { id: 'diagnostics', label: 'Diagnostics', icon: Stethoscope },
   { id: 'security', label: 'Security', icon: Shield },
@@ -25,6 +29,8 @@ const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
 
 interface SettingsModalProps {
   open: boolean;
+  // 열 때 보여 줄 칸(상태바의 Read-only 배지 → Safety)
+  initialSection?: Section;
   onClose: () => void;
   databases: DatabaseSummary[];
   onMutate: (op: MutationRequest) => Promise<unknown>;
@@ -117,7 +123,12 @@ function DisplaySection() {
             { value: 'iso', label: 'ISO (as stored)' },
           ]}
         />
-        <p className={styles.preview}>{formatDate(now, prefs.dateDisplay)}</p>
+        <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+          <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600" checked={prefs.showMs} onChange={(e) => setPreference('showMs', e.target.checked)} />
+          Show milliseconds
+          <span className="text-slate-400">— off: hidden in the list and the editor, but kept when you save. ISO always shows them.</span>
+        </label>
+        <p className={styles.preview}>{formatDate(now, prefs.dateDisplay, prefs.showMs)}</p>
       </div>
       <div className={styles.group}>
         <p className={styles.groupTitle}>ObjectIds</p>
@@ -131,6 +142,160 @@ function DisplaySection() {
           ]}
         />
         <p className={styles.preview}>{formatOid(SAMPLE_OID, prefs.oidDisplay)}</p>
+      </div>
+    </>
+  );
+}
+
+// ── Safety ───────────────────────────────────────────────────────────────────
+
+function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={cn('relative h-5 w-9 shrink-0 rounded-full transition-colors', checked ? 'bg-amber-500' : 'bg-slate-200')}
+    >
+      {/* left-0을 꼭 준다 — 없으면 버튼의 가운데 정렬 위치에서 출발해 손잡이가 밖으로 삐져나온다 */}
+      <span className={cn('absolute left-0 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform', checked ? 'translate-x-[18px]' : 'translate-x-0.5')} />
+    </button>
+  );
+}
+
+function SafetySection({ databases }: { databases: DatabaseSummary[] }) {
+  const settings = useServerSettings();
+  const prefs = usePreferences();
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [pickDb, setPickDb] = useState('');
+  const [pickCol, setPickCol] = useState('');
+  const [cols, setCols] = useState<CollectionSummary[]>([]);
+
+  useEffect(() => {
+    setPickCol('');
+    if (!pickDb) {
+      setCols([]);
+      return;
+    }
+    api.getCollections(pickDb).then(setCols, () => setCols([]));
+  }, [pickDb]);
+
+  const save = async (next: typeof settings) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await saveServerSettings(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const where = dataSourceKind === 'remote' ? 'Saved on the server and applied to every browser. The server refuses blocked edits (undo too).' : 'Mock mode: saved in this browser.';
+
+  return (
+    <>
+      <div className={styles.group}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className={styles.groupTitle}>Read-only mode</p>
+            <p className={styles.groupHint}>Blocks every edit — documents, collections and databases. Handy when browsing a database you must not change. {where}</p>
+          </div>
+          <Switch label="Read-only mode" checked={settings.readOnly} onChange={(v) => void save({ ...settings, readOnly: v })} />
+        </div>
+      </div>
+
+      <div className={styles.group}>
+        <p className={styles.groupTitle}>Protected databases &amp; collections</p>
+        <p className={styles.groupHint}>Editing is blocked only here; everything else stays editable. Declaring references (Manage references) still works — it doesn't touch MongoDB.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <select className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-400/60" value={pickDb} onChange={(e) => setPickDb(e.target.value)} aria-label="Database">
+            <option value="">Database…</option>
+            {databases.map((d) => <option key={d.name} value={d.name}>{d.name}</option>)}
+          </select>
+          <select className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 disabled:opacity-50" value={pickCol} onChange={(e) => setPickCol(e.target.value)} disabled={!pickDb} aria-label="Collection">
+            <option value="">Whole database</option>
+            {cols.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+          </select>
+          <button
+            type="button"
+            className={styles.btn}
+            disabled={!pickDb || saving}
+            onClick={() => {
+              void save({ ...settings, protected: [...settings.protected, pickCol ? { database: pickDb, collection: pickCol } : { database: pickDb }] });
+              setPickDb('');
+            }}
+          >
+            <Plus size={13} />
+            Protect
+          </button>
+        </div>
+        {settings.protected.length > 0 ? (
+          <ul className="mt-3 flex flex-col">
+            {settings.protected.map((p) => {
+              const label = p.collection ? `${p.database}.${p.collection}` : p.database;
+              return (
+                <li key={label} className={styles.row}>
+                  <Lock size={13} className="mt-px shrink-0 text-amber-500" />
+                  <span className={styles.rowValue}>{label}</span>
+                  <span className="text-[11px] text-slate-400">{p.collection ? 'collection' : 'whole database'}</span>
+                  <button
+                    type="button"
+                    className="rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                    aria-label={`Unprotect ${label}`}
+                    data-tt="Unprotect"
+                    onClick={() => void save({ ...settings, protected: settings.protected.filter((x) => x !== p) })}
+                  >
+                    <X size={13} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="mt-3 text-xs text-slate-400">Nothing protected.</p>
+        )}
+        {error && <p className={cn(styles.callout, 'bg-rose-50 text-rose-700')}>{error}</p>}
+      </div>
+
+      <div className={styles.group}>
+        <p className={styles.groupTitle}>Delete confirmation</p>
+        <p className={styles.groupHint}>Saved in this browser.</p>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <span className="w-40 shrink-0 text-xs text-slate-500">Databases &amp; collections</span>
+            <Segment<DeleteConfirmLarge>
+              value={prefs.deleteConfirmLarge}
+              onChange={(v) => setPreference('deleteConfirmLarge', v)}
+              options={[
+                { value: 'type', label: 'Type the name' },
+                { value: 'confirm', label: 'Confirm' },
+              ]}
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="w-40 shrink-0 text-xs text-slate-500">Documents &amp; fields</span>
+            <Segment<DeleteConfirmSmall>
+              value={prefs.deleteConfirmSmall}
+              onChange={(v) => setPreference('deleteConfirmSmall', v)}
+              options={[
+                { value: 'confirm', label: 'Confirm' },
+                { value: 'none', label: "Don't ask" },
+              ]}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.group}>
+        <p className={styles.groupTitle}>Undo</p>
+        <p className={styles.groupHint}>
+          <kbd className="rounded border border-slate-200 bg-slate-50 px-1 font-mono">Ctrl</kbd>+<kbd className="rounded border border-slate-200 bg-slate-50 px-1 font-mono">Z</kbd> (⌘Z on Mac) undoes your last document or field edit — one step, and only if nobody changed it since. Inside a text box it undoes typing instead.
+        </p>
       </div>
     </>
   );
@@ -329,8 +494,12 @@ function SecuritySection({ diag }: { diag: ReturnType<typeof useDiagnostics> }) 
 
 // ── 창 ───────────────────────────────────────────────────────────────────────
 
-export function SettingsModal({ open, onClose, databases, onMutate }: SettingsModalProps) {
+export function SettingsModal({ open, initialSection, onClose, databases, onMutate }: SettingsModalProps) {
   const [section, setSection] = useState<Section>('display');
+  // 열 때마다 요청받은 칸으로(없으면 마지막에 보던 칸)
+  useEffect(() => {
+    if (open && initialSection) setSection(initialSection);
+  }, [open, initialSection]);
   // Diagnostics·Security가 같은 응답을 쓴다 — 둘 중 하나를 열 때 한 번 받는다
   const diag = useDiagnostics(open && (section === 'diagnostics' || section === 'security'));
 
@@ -386,6 +555,7 @@ export function SettingsModal({ open, onClose, databases, onMutate }: SettingsMo
               </div>
               <div className={styles.content}>
                 {section === 'display' && <DisplaySection />}
+                {section === 'safety' && <SafetySection databases={databases} />}
                 {section === 'data' && <DataSection databases={databases} onMutate={onMutate} />}
                 {section === 'diagnostics' && <DiagnosticsSection diag={diag} />}
                 {section === 'security' && <SecuritySection diag={diag} />}

@@ -23,6 +23,7 @@ import {
   dateMs,
 } from '../../../types/explorer';
 import { usePreferences } from '../../../services/preferences';
+import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 import { dateTooltip, formatDate, formatOid, oidTooltip } from '../../../utils/formatValue';
 import { api } from '../../../services/api';
 import { InlineSegmentEditor } from '../../editors/InlineSegmentEditor';
@@ -128,6 +129,7 @@ export function JsonLevelColumn({
   // HeaderIcon)만 분리하고, 이 블록은 파일 경계를 넘기지 않았다.
   // 값 표시 설정(설정 창) — Date 시간대, ObjectId 줄임
   const prefs = usePreferences();
+  const safetySettings = useServerSettings();
   const refOid     = path.kind === 'reference' && path.ref.kind === 'oid' ? path.ref.oid : null;
   const refField   = path.kind === 'reference' && path.ref.kind === 'field' ? path.ref : null;
   const chainColor = path.kind === 'reference' ? path.chainColor : undefined;
@@ -341,7 +343,9 @@ export function JsonLevelColumn({
 
   const isObjectNode = isEjsonObject(currentNode);
   const isArrayNode = Array.isArray(currentNode);
-  const canAddField = !!displayDoc && (isObjectNode || isArrayNode);
+  // 안전장치(설정 창 › Safety): read-only거나 이 문서의 컬렉션(참조로 연 문서면 그 컬렉션)이 보호 대상이면 편집을 숨긴다
+  const canEditHere = canEditIn(safetySettings, mutateDatabaseName, mutateCollectionName);
+  const canAddField = canEditHere && !!displayDoc && (isObjectNode || isArrayNode);
   // path.comp.id를 포함해야 한다 — 그렇지 않으면 동일한 projectionPath를 가진
   // 다른 컬럼(예: 부모 문서와 그 안의 REF 문서가 둘 다 루트에서 "필드 추가"를
   // 누를 때)이 editingId 문자열이 우연히 같아져서 두 컬럼의 InlineSegmentEditor가
@@ -445,7 +449,7 @@ export function JsonLevelColumn({
     const refLabel = isArrayIndexKey ? `${refConfigKey}[${fieldKey}]` : fieldKey;
     const isFieldRef = !!fieldRefConfig && (type === 'string' || type === 'number' || type === 'long' || type === 'decimal128');
     // _id만 수정 불가, REF로 분류된 oid도 키 이름/참조 대상을 수정할 수 있어야 함
-    const isEditable = !isId;
+    const isEditable = !isId && canEditHere;
     const isContainer = type === 'object' || type === 'array';
     // 이 필드를 펼쳐서 다음 컬럼이 열려있는 중인지 — handlePushChild/onPushReference가
     // 만드는 다음 ActivePath와 같은 모양인지로 판별한다(클릭 핸들러와 동일한 비교 기준).
@@ -622,7 +626,7 @@ export function JsonLevelColumn({
         }
         case 'date': {
           const ms = dateMs(value);
-          const date = ms === undefined ? displayValue(value) : formatDate(ms, prefs.dateDisplay);
+          const date = ms === undefined ? displayValue(value) : formatDate(ms, prefs.dateDisplay, prefs.showMs);
           return (
             <>
               <span className="flex items-center justify-center gap-1 text-[11px] font-mono pl-1.5 pr-2 py-0.5 rounded-lg bg-rose-50 text-rose-600 font-semibold shrink-0">
@@ -765,7 +769,7 @@ export function JsonLevelColumn({
   // ── 렌더 ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className={cn('relative flex flex-col min-h-0', !isNested && 'flex-1')} {...dragHandlers}>
+    <div className={cn('relative flex flex-col min-h-0', !isNested && 'flex-1')} {...(canEditHere ? dragHandlers : {})}>
       <DropOverlay visible={isColumnDragOver} label={canAddField ? 'Drop a file to import as a field' : 'Fields cannot be added here'} />
       {/* Ref 강조 — 상단 컬러 바 */}
       {chainColor && (

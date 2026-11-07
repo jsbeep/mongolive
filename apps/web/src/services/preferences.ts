@@ -7,21 +7,33 @@ import { useSyncExternalStore } from 'react';
 export type DateDisplay = 'local' | 'utc' | 'iso';
 // ObjectId 표시: full = 24자 전부, short = 뒤 8자(생성 시각·전체 값은 툴팁에)
 export type OidDisplay = 'full' | 'short';
+// 삭제 확인 강도 — DB·컬렉션(되돌릴 수 없고 큼) / 문서·필드
+export type DeleteConfirmLarge = 'type' | 'confirm';
+export type DeleteConfirmSmall = 'confirm' | 'none';
 
 export interface Preferences {
   dateDisplay: DateDisplay;
+  // 밀리초까지 보일지(기본 끔). 보이기만의 문제 — 꺼도 툴팁엔 밀리초가 나오고, 저장 값의 밀리초는 그대로 지킨다
+  showMs: boolean;
   oidDisplay: OidDisplay;
+  // DB·컬렉션 삭제: 이름을 직접 쳐야 하는지(기본) / 확인 버튼만
+  deleteConfirmLarge: DeleteConfirmLarge;
+  // 문서·필드 삭제: 확인 버튼(기본) / 확인 없이 바로(되돌리기 토스트는 그대로 뜬다)
+  deleteConfirmSmall: DeleteConfirmSmall;
 }
 
 const KEY = 'mongolive.preferences';
-const DEFAULTS: Preferences = { dateDisplay: 'local', oidDisplay: 'full' };
+const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm' };
 
 const load = (): Preferences => {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Preferences>;
     return {
       dateDisplay: saved.dateDisplay === 'utc' || saved.dateDisplay === 'iso' || saved.dateDisplay === 'local' ? saved.dateDisplay : DEFAULTS.dateDisplay,
+      showMs: typeof saved.showMs === 'boolean' ? saved.showMs : DEFAULTS.showMs,
       oidDisplay: saved.oidDisplay === 'short' || saved.oidDisplay === 'full' ? saved.oidDisplay : DEFAULTS.oidDisplay,
+      deleteConfirmLarge: saved.deleteConfirmLarge === 'confirm' || saved.deleteConfirmLarge === 'type' ? saved.deleteConfirmLarge : DEFAULTS.deleteConfirmLarge,
+      deleteConfirmSmall: saved.deleteConfirmSmall === 'none' || saved.deleteConfirmSmall === 'confirm' ? saved.deleteConfirmSmall : DEFAULTS.deleteConfirmSmall,
     };
   } catch {
     return DEFAULTS;
