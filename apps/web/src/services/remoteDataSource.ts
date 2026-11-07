@@ -25,7 +25,9 @@ import type {
   Diagnostics,
   ServerSettings,
 } from '../types/explorer';
+import { mutationTarget } from '../types/explorer';
 import { fetchAuthStatus, notifySessionExpired } from './auth';
+import { getPreferences } from './preferences';
 import type { ClientMetrics, DataSource } from './dataSource';
 
 const BASE = '/api';
@@ -127,7 +129,8 @@ export const createRemoteDataSource = (): DataSource => {
 
   // 되돌리기: 직전 쓰기 한 번의 반대 연산(서버가 응답에 실어 준다). 컬렉션/DB 연산이면 없음.
   // 반대 연산엔 '쓴 직후 값' 확인이 들어 있어서, 그 사이 누가 또 바꿨으면 서버가 409로 거절한다.
-  let lastUndo: MutationRequest | null = null;
+  // 여러 단계: 마지막 것이 끝. 개수는 설정 창 › Safety(이 브라우저). 다시 실행하기(redo)는 없다
+  let undoStack: MutationRequest[] = [];
 
   const sendMutation = async (op: MutationRequest): Promise<MutationResult> => {
     writesInFlight += 1;
@@ -244,17 +247,30 @@ export const createRemoteDataSource = (): DataSource => {
       request<FieldValueCandidate[]>(`${collectionPath(database, collection)}/field-values?key=${enc(key)}`),
 
     async mutate(op: MutationRequest): Promise<MutationResult> {
-      // 실패해도 직전 되돌리기는 버린다 — 무엇이 반쯤 바뀌었을지 모르므로(Mock도 매 mutate마다 새로 잡는다)
-      lastUndo = null;
-      const result = await sendMutation(op);
-      lastUndo = result.undo ?? null;
+      let result: MutationResult;
+      try {
+        result = await sendMutation(op);
+      } catch (e) {
+        // 충돌(409)·안전장치(403)는 아무것도 안 바뀐 것 — 쌓인 되돌리기는 그대로.
+        // 그 밖의 실패는 무엇이 반쯤 바뀌었을지 모르므로 비운다
+        const status = (e as { status?: number }).status;
+        if (status !== 409 && status !== 403) undoStack = [];
+        throw e;
+      }
+      if (result.undo) {
+        undoStack = [...undoStack, result.undo].slice(-getPreferences().undoDepth);
+      } else if (mutationTarget(op)) {
+        // 되돌릴 수 없는 쓰기(컬렉션·DB 연산)를 지나서 그 전 편집을 되돌리면 헷갈린다 — 여기서 끊는다.
+        // 메타데이터 선언(제목 키·PK·FK)은 MongoDB를 안 건드리므로 그대로 둔다
+        undoStack = [];
+      }
       return result;
     },
     async undoLast() {
-      const undo = lastUndo;
+      const undo = undoStack[undoStack.length - 1];
       if (!undo) return false;
-      // 한 번만(다시 실행하기는 없다)
-      lastUndo = null;
+      // 꺼낸 것은 성공하든 실패하든 버린다(실패 = 그 사이 바뀜 → 더는 되돌릴 수 없다). 그 아래 것들은 남는다
+      undoStack = undoStack.slice(0, -1);
       try {
         await sendMutation(undo);
       } catch (e) {
@@ -264,7 +280,7 @@ export const createRemoteDataSource = (): DataSource => {
       }
       return true;
     },
-    canUndo: () => lastUndo !== null,
+    canUndo: () => undoStack.length > 0,
 
     setLiveView(next: LiveView) {
       view = next;

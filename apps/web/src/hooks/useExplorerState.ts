@@ -27,6 +27,7 @@ const conflictInfoOf = (e: unknown): ConflictInfo | null => {
   return err?.status === 409 && err.body?.conflict ? err.body.conflict : null;
 };
 import { getServerSettingsSnapshot } from '../services/serverSettings';
+import { getPreferences, LIVE_BATCH_MS } from '../services/preferences';
 import {
   writeBlockedReason,
   collectionKey,
@@ -115,6 +116,39 @@ export type DocumentPageInfo = Omit<DocumentPage, 'items'> & { markId?: string }
 
 const EMPTY_DOCUMENT_QUERY: DocumentListQuery = { page: 0, filter: '', sort: 'none' };
 
+// 컬렉션별 문서 목록 필터·정렬 기억(이 브라우저) — 컬렉션을 직접 고를 때만 꺼내 쓴다.
+// 참조·변경 기록으로 이동할 때는 빈 조건으로 연다(저장된 필터에 걸려 가려던 문서가 안 보이면 안 되므로).
+const COLLECTION_QUERY_KEY = 'mongolive.collectionQuery';
+type SavedQuery = Pick<DocumentListQuery, 'filter' | 'sort'>;
+const SORTS = new Set<DocumentSort>(['none', 'title-asc', 'title-desc', 'fields-desc', 'fields-asc', 'updated-desc', 'updated-asc']);
+const readSavedQueries = (): Record<string, SavedQuery> => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(COLLECTION_QUERY_KEY) ?? '{}') as unknown;
+    return raw && typeof raw === 'object' ? (raw as Record<string, SavedQuery>) : {};
+  } catch {
+    return {};
+  }
+};
+const savedQueryFor = (database: string, collection: string): DocumentListQuery => {
+  const saved = readSavedQueries()[collectionKey(database, collection)];
+  return {
+    ...EMPTY_DOCUMENT_QUERY,
+    filter: typeof saved?.filter === 'string' ? saved.filter : '',
+    sort: SORTS.has(saved?.sort as DocumentSort) ? saved!.sort : 'none',
+  };
+};
+const rememberQuery = (database: string, collection: string, query: DocumentListQuery) => {
+  const all = readSavedQueries();
+  const key = collectionKey(database, collection);
+  if (!query.filter && query.sort === 'none') delete all[key];
+  else all[key] = { filter: query.filter, sort: query.sort };
+  try {
+    localStorage.setItem(COLLECTION_QUERY_KEY, JSON.stringify(all));
+  } catch {
+    // 기억 못 해도 지금 목록엔 적용된다
+  }
+};
+
 export interface UseExplorerStateResult {
   // 상태
   connectionStatus: ConnectionStatus;
@@ -176,8 +210,7 @@ export interface UseExplorerStateResult {
   refresh: () => Promise<void>;
 }
 
-// 실시간 이벤트를 이만큼 모았다가 한 번에 반영한다 — 연달아 오는 변경(일괄 수정 등)에 매번 다시 읽지 않도록
-const LIVE_BATCH_MS = 150;
+// 실시간 이벤트는 잠깐 모았다가 한 번에 반영한다(LIVE_BATCH_MS, 설정 › Realtime) — 연달아 오는 변경(일괄 수정 등)에 매번 다시 읽지 않도록
 const STRUCTURE_OPS = new Set<LiveChange['op']>(['create', 'drop', 'rename', 'dropDatabase']);
 
 interface LivePending {
@@ -409,7 +442,8 @@ export function useExplorerState(): UseExplorerStateResult {
     try {
       // DB로 한정해서 조회한다 — 이름만 넘기면 findCollection이 전체 DB를 훑어
       // 다른 DB의 동명 컬렉션(users 등)을 먼저 집어온다
-      await loadDocuments(activeDatabaseRef.current ?? '', name, EMPTY_DOCUMENT_QUERY);
+      // 이 컬렉션에서 마지막으로 쓴 필터·정렬로 연다
+      await loadDocuments(activeDatabaseRef.current ?? '', name, savedQueryFor(activeDatabaseRef.current ?? '', name));
       activeCollectionRef.current = name;
       activeDocumentOidRef.current = null;
       setOpenDocument(null);
@@ -1040,7 +1074,8 @@ export function useExplorerState(): UseExplorerStateResult {
   }, [showToast, focusDatabase, clearDocuments, loadDocuments, flashChangedPaths]);
 
   const scheduleLive = useCallback(() => {
-    if (!liveTimerRef.current) liveTimerRef.current = setTimeout(() => void flushLive(), LIVE_BATCH_MS);
+    // 묶는 간격은 설정 › Realtime(즉시 0.15초 / 느슨하게 1.5초)
+    if (!liveTimerRef.current) liveTimerRef.current = setTimeout(() => void flushLive(), LIVE_BATCH_MS[getPreferences().liveBatch]);
   }, [flushLive]);
 
   // 새로고침 = '다시 맞추기'. 보던 경로(컬렉션·문서·필드·페이지)는 그대로 두고 지금 화면에 걸린 것만 다시 받는다
@@ -1225,6 +1260,7 @@ export function useExplorerState(): UseExplorerStateResult {
     const db = activeDatabaseRef.current;
     const col = activeCollectionRef.current;
     if (!db || !col) return;
+    if (criteriaChanged) rememberQuery(db, col, next);
     try {
       await loadDocuments(db, col, next);
     } catch {

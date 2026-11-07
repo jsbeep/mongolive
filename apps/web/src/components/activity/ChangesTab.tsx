@@ -8,7 +8,7 @@ import { CheckCheck, ChevronDown, Pause, Play, Trash2 } from 'lucide-react';
 import type { LiveLogEntry, LiveOperation } from '../../types/explorer';
 import { cn } from '../../utils/cn';
 
-type Scope = 'all' | 'database' | 'collection';
+type Scope = 'all' | 'database' | 'collection' | 'document';
 type OpGroup = 'insert' | 'update' | 'delete' | 'structure';
 
 const opGroup = (op: LiveOperation): OpGroup =>
@@ -39,7 +39,9 @@ const styles = {
     'text-xs px-2 py-1 rounded-lg bg-slate-100/80 text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-400/60',
   iconBtn: 'p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors disabled:opacity-40 disabled:pointer-events-none',
   counts: 'flex shrink-0 items-center gap-1.5 px-3 py-2 text-[11px] font-mono text-slate-500 border-b border-slate-100',
-  count: 'flex items-center gap-1 px-1.5 py-0.5 rounded font-semibold uppercase',
+  count: 'flex items-center gap-1 px-1.5 py-0.5 rounded font-semibold uppercase transition-opacity',
+  // 배지로 끈 종류 — 색을 빼고 줄을 긋는다(켜짐 색과 둘 중 하나만)
+  countOff: 'bg-transparent text-slate-400 line-through ring-1 ring-inset ring-slate-200',
   list: 'flex-1 min-h-0 overflow-y-auto px-2 py-2 flex flex-col gap-px',
   // 한 줄: [배지] [위치 / 바뀐 경로] [시각 / 문서 id] — 안 읽음·읽음 배경은 둘 중 하나만(cn은 겹침을 정리해 주지 않는다)
   row: 'flex items-start gap-2.5 px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60',
@@ -166,9 +168,23 @@ interface ChangesTabProps {
   onNavigate: (entry: LiveLogEntry) => void;
   activeDatabase: string | null;
   activeCollection: string | null;
+  // 지금 열린 문서(LiveLogEntry.documentId와 같은 규칙의 id) — '이 문서' 범위
+  activeDocumentId: string | null;
 }
 
-export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMarkAllRead, onNavigate, activeDatabase, activeCollection }: ChangesTabProps) {
+// 배지로 끈 연산 종류 — 이 브라우저에 기억
+const HIDDEN_OPS_KEY = 'mongolive.activity.hiddenOps';
+const OP_GROUPS: OpGroup[] = ['insert', 'update', 'delete', 'structure'];
+const loadHiddenOps = (): Set<OpGroup> => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HIDDEN_OPS_KEY) ?? '[]') as unknown;
+    return new Set(Array.isArray(saved) ? OP_GROUPS.filter((g) => saved.includes(g)) : []);
+  } catch {
+    return new Set();
+  }
+};
+
+export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMarkAllRead, onNavigate, activeDatabase, activeCollection, activeDocumentId }: ChangesTabProps) {
   // 일시정지 = 그 순간의 목록을 얼려서 보여준다. 그동안 들어온 건 개수만 알려주고, 재개하면 다시 실시간.
   const [frozen, setFrozen] = useState<LiveLogEntry[] | null>(null);
   const paused = frozen !== null;
@@ -179,14 +195,38 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
     return liveEntries.filter((e) => !ids.has(e.id)).length;
   }, [frozen, liveEntries]);
   const [scope, setScope] = useState<Scope>('all');
+  // 고른 범위가 사라지면(컬렉션·문서를 닫음) 한 단계 넓힌다
+  const effectiveScope: Scope =
+    scope === 'document' && !activeDocumentId ? (activeCollection ? 'collection' : activeDatabase ? 'database' : 'all')
+      : scope === 'collection' && !activeCollection ? (activeDatabase ? 'database' : 'all')
+        : scope === 'database' && !activeDatabase ? 'all'
+          : scope;
+  const [hiddenOps, setHiddenOps] = useState<Set<OpGroup>>(loadHiddenOps);
+  const toggleOp = (g: OpGroup) =>
+    setHiddenOps((prev) => {
+      const next = new Set(prev);
+      if (next.has(g)) next.delete(g);
+      else next.add(g);
+      try {
+        localStorage.setItem(HIDDEN_OPS_KEY, JSON.stringify([...next]));
+      } catch {
+        // 기억 못 해도 이번엔 적용된다
+      }
+      return next;
+    });
 
   const togglePause = () => setFrozen((current) => (current ? null : liveEntries));
 
-  const visible = useMemo(() => entries.filter((e) => {
-    if (scope === 'all') return true;
+  // 범위로 거른 것 — 배지의 개수는 이걸로 센다(연산 종류로 거르기 전)
+  const inScope = useMemo(() => entries.filter((e) => {
+    if (effectiveScope === 'all') return true;
     if (e.database !== activeDatabase) return false;
-    return scope === 'database' || e.collection === activeCollection || e.collection === undefined;
-  }), [entries, scope, activeDatabase, activeCollection]);
+    if (effectiveScope === 'database') return true;
+    if (effectiveScope === 'document') return e.collection === activeCollection && e.documentId === activeDocumentId;
+    return e.collection === activeCollection || e.collection === undefined;
+  }), [entries, effectiveScope, activeDatabase, activeCollection, activeDocumentId]);
+  // 배지로 끈 연산 종류는 목록에서 뺀다
+  const visible = useMemo(() => (hiddenOps.size ? inScope.filter((e) => !hiddenOps.has(opGroup(e.op))) : inScope), [inScope, hiddenOps]);
 
   // 같은 문서(+ 같은 출처: 내 저장/남의 변경)에 연속으로 생긴 기록을 묶는다. 최신이 앞.
   // key = 묶음의 가장 오래된 기록 id — 새 기록은 위(최신 쪽)에 붙으므로 펼침 상태가 유지된다.
@@ -215,17 +255,18 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
 
   const counts = useMemo(() => {
     const c: Record<OpGroup, number> = { insert: 0, update: 0, delete: 0, structure: 0 };
-    for (const e of visible) c[opGroup(e.op)] += 1;
+    for (const e of inScope) c[opGroup(e.op)] += 1;
     return c;
-  }, [visible]);
+  }, [inScope]);
 
   return (
     <>
       <div className={styles.toolbar}>
-        <select className={styles.scopeSelect} value={scope} onChange={(e) => setScope(e.target.value as Scope)} aria-label="Scope">
+        <select className={styles.scopeSelect} value={effectiveScope} onChange={(e) => setScope(e.target.value as Scope)} aria-label="Scope">
           <option value="all">All databases</option>
           <option value="database" disabled={!activeDatabase}>This database{activeDatabase ? ` (${activeDatabase})` : ''}</option>
           <option value="collection" disabled={!activeCollection}>This collection{activeCollection ? ` (${activeCollection})` : ''}</option>
+          <option value="document" disabled={!activeDocumentId}>This document{activeDocumentId ? ` (${activeDocumentId.length > 12 ? `…${activeDocumentId.slice(-8)}` : activeDocumentId})` : ''}</option>
         </select>
         <span className="flex-1" />
         <button type="button" className={cn(styles.iconBtn, paused && 'bg-amber-50 text-amber-600')} onClick={togglePause} data-tt={paused ? 'Resume' : 'Pause — keep collecting, stop updating the list'}>
@@ -240,13 +281,25 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
       </div>
 
       <div className={styles.counts}>
-        <span className="text-slate-600">{visible.length} events</span>
+        <span className="text-slate-600">{visible.length}{visible.length !== inScope.length ? ` of ${inScope.length}` : ''} events</span>
         <span className="flex-1" />
-        {(Object.keys(counts) as OpGroup[]).map((g) => (
-          <span key={g} className={cn(styles.count, OP_BADGE[g])}>
-            {g === 'structure' ? 'ddl' : g} {counts[g]}
-          </span>
-        ))}
+        {OP_GROUPS.map((g) => {
+          const off = hiddenOps.has(g);
+          const label = g === 'structure' ? 'ddl' : g;
+          return (
+            // 누르면 그 종류를 목록에서 끄고/켠다. 지금 범위에 없는 종류(0)는 흐리게
+            <button
+              key={g}
+              type="button"
+              aria-pressed={!off}
+              onClick={() => toggleOp(g)}
+              className={cn(styles.count, off ? styles.countOff : OP_BADGE[g], counts[g] === 0 && !off && 'opacity-40')}
+              data-tt={off ? `Show ${label} again` : `Hide ${label} from the list`}
+            >
+              {label} {counts[g]}
+            </button>
+          );
+        })}
       </div>
 
       {paused && heldCount > 0 && <div className={styles.newBanner}>{heldCount} new while paused</div>}

@@ -28,6 +28,7 @@ interface NotificationCenterProps {
   system: SystemLog;
   activeDatabase: string | null;
   activeCollection: string | null;
+  activeDocumentId: string | null;
   onNavigate: (entry: LiveLogEntry) => void;
 }
 
@@ -48,7 +49,7 @@ const styles = {
   mockNotice: 'm-4 rounded-lg bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-500',
 } as const;
 
-export function NotificationCenter({ open, onClose, tab, onTabChange, activity, system, activeDatabase, activeCollection, onNavigate }: NotificationCenterProps) {
+export function NotificationCenter({ open, onClose, tab, onTabChange, activity, system, activeDatabase, activeCollection, activeDocumentId, onNavigate }: NotificationCenterProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   // System 탭을 보고 있는 동안 생긴 에러는 '본 것'
@@ -136,6 +137,7 @@ export function NotificationCenter({ open, onClose, tab, onTabChange, activity, 
                 onNavigate={onNavigate}
                 activeDatabase={activeDatabase}
                 activeCollection={activeCollection}
+                activeDocumentId={activeDocumentId}
               />
             ) : (
               <MetricsTab />

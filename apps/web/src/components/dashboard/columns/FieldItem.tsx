@@ -1,7 +1,8 @@
 // path: src/components/dashboard/columns/FieldItem.tsx
 import type { ReactNode } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
-import { ChevronRight, Pencil } from 'lucide-react';
+import { ChevronRight, Pencil, Route } from 'lucide-react';
+import { CopyBtn } from './CopyBtn';
 import { cn } from '../../../utils/cn';
 import { SPRING_SNAPPY, SPRING_HOVER } from '../../../utils/motionPresets';
 import { useHover } from '../../../hooks/useHover';
@@ -21,13 +22,15 @@ export interface FieldItemProps {
   reserveEditWidth?: boolean;
   onEdit: () => void;
   onClick: (() => void) | null;
+  // 이 필드의 문서 안 경로("a.b.0") — 있으면 올렸을 때 경로 복사 버튼(편집 가능 여부와 상관없이)
+  copyPath?: string;
   children: ReactNode;
 }
 
 export function FieldItem({
   fieldKey, isId, isExpandable, isEditable, isHighlighted, isActive = false, reduceMotion = false,
   reserveEditWidth = false,
-  onEdit, onClick, children,
+  onEdit, onClick, children, copyPath,
 }: FieldItemProps) {
   const { hovered, hoverHandlers } = useHover();
 
@@ -75,6 +78,12 @@ export function FieldItem({
       </div>
 
       <div className={cn("flex items-center shrink-0", reserveEditWidth && 'self-start')}>
+        {copyPath && (
+          // 자리는 늘 잡아 두고(올릴 때 값이 밀리지 않게) 올렸을 때만 보인다
+          <span className={cn('transition-opacity', hovered ? 'opacity-100' : 'pointer-events-none opacity-0')} onClick={(e) => e.stopPropagation()}>
+            <CopyBtn text={copyPath} icon={Route} size={14} tip={`Copy path  ${copyPath}`} className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors" />
+          </span>
+        )}
         {isExpandable && (
           <m.span
             animate={{ x: hovered && isEditable ? 2 : 0 }}

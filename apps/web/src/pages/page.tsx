@@ -101,6 +101,9 @@ export default function ExplorerPage() {
   // 지금 컬렉션 — 문서 목록 컬럼이 열려 있으면 그 컬렉션 이름(트리 강조, 알림 센터의 '이 컬렉션' 범위)
   const documentsPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'documents');
   const activeCollectionName = documentsPath?.kind === 'normal' ? documentsPath.collectionName ?? null : null;
+  // 지금 열린 문서(알림 센터의 '이 문서' 범위) — 참조를 따라 연 문서 말고, 이 컬렉션에서 고른 문서
+  const documentPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'json');
+  const activeDocumentId = documentPath?.kind === 'normal' ? documentPath.documentOid ?? null : null;
 
   // Ctrl+Z(⌘Z) = 마지막 문서·필드 편집 되돌리기(한 단계). 입력칸 안에선 브라우저의 글자 되돌리기를 그대로 두고,
   // 모달(설정·충돌·삭제 확인)이 떠 있을 때도 건드리지 않는다
@@ -218,6 +221,7 @@ export default function ExplorerPage() {
         system={systemLog}
         activeDatabase={activeDatabase}
         activeCollection={activeCollectionName}
+        activeDocumentId={activeDocumentId}
         onNavigate={(entry) => {
           // 이동하면 닫는다 — 오른쪽 컬럼(열리는 문서)을 가리므로
           setCenterOpen(false);
@@ -239,7 +243,14 @@ export default function ExplorerPage() {
       />
 
       {/* 설정 창 — 상태바의 톱니바퀴 */}
-      <SettingsModal open={settingsOpen} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} databases={databases} onMutate={mutate} />
+      <SettingsModal
+        open={settingsOpen}
+        initialSection={settingsSection}
+        onClose={() => setSettingsOpen(false)}
+        databases={databases}
+        onMutate={mutate}
+        onOpenCollection={(database, collection, label) => void openCollection(database, collection, label)}
+      />
 
       {/* 토스트 — 오른쪽 아래(알림 센터가 열려 있으면 그 위) */}
       <Toast

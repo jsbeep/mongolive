@@ -10,6 +10,12 @@ export type OidDisplay = 'full' | 'short';
 // 삭제 확인 강도 — DB·컬렉션(되돌릴 수 없고 큼) / 문서·필드
 export type DeleteConfirmLarge = 'type' | 'confirm';
 export type DeleteConfirmSmall = 'confirm' | 'none';
+// 되돌리기 몇 단계까지 기억할지
+export const UNDO_DEPTHS = [1, 10, 30] as const;
+export type UndoDepth = (typeof UNDO_DEPTHS)[number];
+// 실시간 반영 간격: 즉시(변경을 0.15초 단위로 묶음) / 느슨하게(1.5초 단위 — 변경이 몰릴 때 화면·요청이 덜 바쁘다)
+export type LiveBatch = 'immediate' | 'relaxed';
+export const LIVE_BATCH_MS: Record<LiveBatch, number> = { immediate: 150, relaxed: 1500 };
 
 export interface Preferences {
   dateDisplay: DateDisplay;
@@ -20,10 +26,12 @@ export interface Preferences {
   deleteConfirmLarge: DeleteConfirmLarge;
   // 문서·필드 삭제: 확인 버튼(기본) / 확인 없이 바로(되돌리기 토스트는 그대로 뜬다)
   deleteConfirmSmall: DeleteConfirmSmall;
+  undoDepth: UndoDepth;
+  liveBatch: LiveBatch;
 }
 
 const KEY = 'mongolive.preferences';
-const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm' };
+const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate' };
 
 const load = (): Preferences => {
   try {
@@ -34,6 +42,8 @@ const load = (): Preferences => {
       oidDisplay: saved.oidDisplay === 'short' || saved.oidDisplay === 'full' ? saved.oidDisplay : DEFAULTS.oidDisplay,
       deleteConfirmLarge: saved.deleteConfirmLarge === 'confirm' || saved.deleteConfirmLarge === 'type' ? saved.deleteConfirmLarge : DEFAULTS.deleteConfirmLarge,
       deleteConfirmSmall: saved.deleteConfirmSmall === 'none' || saved.deleteConfirmSmall === 'confirm' ? saved.deleteConfirmSmall : DEFAULTS.deleteConfirmSmall,
+      undoDepth: (UNDO_DEPTHS as readonly number[]).includes(saved.undoDepth as number) ? (saved.undoDepth as UndoDepth) : DEFAULTS.undoDepth,
+      liveBatch: saved.liveBatch === 'relaxed' || saved.liveBatch === 'immediate' ? saved.liveBatch : DEFAULTS.liveBatch,
     };
   } catch {
     return DEFAULTS;
