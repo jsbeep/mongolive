@@ -41,10 +41,6 @@ export interface CollectionSummary {
   titleKey?: string;
   primaryKey?: string;
   referenceFields?: Record<string, ReferenceFieldConfig>;
-  // 문서 중 하나라도 _id가 $oid 모양이면 true — PK 버튼 잠금(=_id) 판정에 사용
-  hasOidIds?: boolean;
-  // 문서 중 하나라도 (선언된 PK 또는 기본값 _id) 필드가 없으면 true — PK 버튼 경고 표시에 사용
-  hasPrimaryKeyGaps?: boolean;
 }
 
 export interface DocumentSummary {

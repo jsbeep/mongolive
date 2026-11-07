@@ -28,9 +28,6 @@ export const DOCUMENT_LIST_LIMIT = 5000;
 
 export const readRouter = Router();
 
-// getDocumentId(summary.ts)가 식별자로 인정하는 BSON 타입 — 이 밖의 타입이면 문서를 식별할 수 없다
-const ID_TYPES = ['objectId', 'string', 'int', 'long', 'double', 'decimal'];
-
 // 일반 컬렉션 이름만(뷰·시스템 컬렉션 제외). 뷰는 _id 조회/변경 감지가 안 되므로 지금은 다루지 않는다.
 export const listCollectionNames = async (db: Db): Promise<string[]> => {
   const infos = await db.listCollections({ type: 'collection' }, { nameOnly: true }).toArray();
@@ -73,20 +70,13 @@ readRouter.get('/databases/:db/collections', async (req, res) => {
     names.map(async (name): Promise<CollectionSummary> => {
       const collection = db.collection(name);
       const meta = await getCollectionMeta(db.databaseName, name);
-      // Mock과 같은 정의: _id로도, 선언된 PK로도 식별할 수 없는 문서가 하나라도 있는가.
-      // ($not $type은 필드가 아예 없는 경우도 잡는다)
-      const gapFilter: Record<string, unknown> = { _id: { $not: { $type: ID_TYPES } } };
-      if (meta.primaryKey && meta.primaryKey !== '_id') gapFilter[meta.primaryKey] = { $not: { $type: ID_TYPES } };
-
-      const [documentCount, sizeBytes, oidSample, gapSample] = await Promise.all([
+      const [documentCount, sizeBytes] = await Promise.all([
         collection.estimatedDocumentCount(),
         collection
           .aggregate<{ storageStats?: { size?: number } }>([{ $collStats: { storageStats: {} } }])
           .next()
           .then((s) => s?.storageStats?.size ?? 0)
           .catch(() => 0),
-        collection.findOne({ _id: { $type: 'objectId' } }, { projection: { _id: 1 } }),
-        collection.findOne(gapFilter, { projection: { _id: 1 } }),
       ]);
       return {
         name,
@@ -98,8 +88,6 @@ readRouter.get('/databases/:db/collections', async (req, res) => {
         titleKey: meta.titleKey,
         primaryKey: meta.primaryKey,
         referenceFields: meta.referenceFields,
-        hasOidIds: oidSample !== null,
-        hasPrimaryKeyGaps: gapSample !== null,
       };
     }),
   );

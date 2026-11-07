@@ -110,9 +110,6 @@ export const getCollections = async (dbId: string): Promise<CollectionSummary[]>
     titleKey: collection.titleKey,
     primaryKey: collection.primaryKey,
     referenceFields: collection.referenceFields,
-    hasOidIds: collection.documents.some((d) => isOid(d._id)),
-    // (선언된 PK가 있으면 그 필드, 없으면 기본값 _id 기준) 식별값이 없는 문서가 하나라도 있는지
-    hasPrimaryKeyGaps: collection.documents.some((d) => getDocumentId(d, collection.primaryKey) === undefined),
   }));
 };
 

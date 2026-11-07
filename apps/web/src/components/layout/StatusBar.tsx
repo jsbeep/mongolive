@@ -29,15 +29,15 @@ interface StatusBarProps {
 
 const styles = {
   // 예전 헤더와 같은 둥근 카드(rounded-[14px], 테두리, 그림자) — 화면 가장자리에서 띄워 컬럼 패널과 줄을 맞춘다
-  bar: 'mx-3 mb-3 flex h-10 shrink-0 items-center gap-1 rounded-[14px] border border-slate-200/80 bg-white/85 px-2 text-xs text-slate-600 shadow-soft backdrop-blur-md',
+  bar: 'mx-3 mb-3 flex h-12 shrink-0 items-center gap-1 rounded-[14px] border border-slate-200/80 bg-white/85 px-2 text-[13px] text-slate-600 shadow-soft backdrop-blur-md',
   group: 'flex items-center gap-0.5',
   // 켜짐/꺼짐 배경은 둘 중 하나만(cn은 겹침을 정리해 주지 않는다)
-  item: 'inline-flex h-7 items-center gap-1.5 rounded-md px-2 transition-colors disabled:cursor-not-allowed disabled:opacity-35',
+  item: 'inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 transition-colors disabled:cursor-not-allowed disabled:opacity-35',
   itemIdle: 'hover:bg-slate-200/60 hover:text-slate-900 disabled:hover:bg-transparent',
   itemOn: 'bg-slate-200/70 text-slate-900',
-  square: 'w-7 justify-center px-0',
+  square: 'w-9 justify-center px-0',
   count: 'min-w-[1ch] text-center font-semibold tabular-nums',
-  sep: 'mx-1 h-3 w-px bg-slate-200',
+  sep: 'mx-1 h-4 w-px bg-slate-200',
 } as const;
 
 export function StatusBar({
@@ -66,7 +66,7 @@ export function StatusBar({
       <div className={styles.group}>
         {dataSourceKind === 'mock' ? (
           <span className={cn(styles.item, 'cursor-default')} data-tt="In-browser mock data — nothing is sent to a server">
-            <Circle size={9} className="text-orange-400" fill="currentColor" stroke="none" />
+            <Circle size={10} className="text-orange-400" fill="currentColor" stroke="none" />
             Mock data
           </span>
         ) : (
@@ -77,7 +77,7 @@ export function StatusBar({
             data-keeps-notifications
             data-tt="Connection history"
           >
-            <Circle size={9} className={status.color} fill="currentColor" stroke="none" />
+            <Circle size={10} className={status.color} fill="currentColor" stroke="none" />
             {status.label}
           </button>
         )}
@@ -92,7 +92,7 @@ export function StatusBar({
           data-tt="Re-sync what's on screen (keeps your place)"
         >
           <m.span className="inline-flex" animate={{ rotate: rotation }} transition={{ duration: 0.8, ease: 'easeInOut' }}>
-            <RefreshCw size={14} aria-hidden="true" />
+            <RefreshCw size={16} aria-hidden="true" />
           </m.span>
         </button>
         {safety.readOnly && (
@@ -102,7 +102,7 @@ export function StatusBar({
             onClick={onOpenSafety}
             data-tt="Read-only mode — every edit is blocked. Click to change"
           >
-            <Lock size={13} />
+            <Lock size={15} />
             Read-only
           </button>
         )}
@@ -118,7 +118,7 @@ export function StatusBar({
           onClick={() => setMaxVisibleColumns(isTreeMode ? 3 : MIN_VISIBLE_COLUMNS)}
           data-tt={isTreeMode ? 'Tree mode — click to spread levels across columns' : 'Column mode — click to stack levels into one tree'}
         >
-          {isTreeMode ? <ListTree size={14} /> : <Columns3 size={14} />}
+          {isTreeMode ? <ListTree size={16} /> : <Columns3 size={16} />}
           {isTreeMode ? 'Tree' : 'Columns'}
         </button>
         <div className={styles.group} role="group" aria-label="Visible column count">
@@ -129,7 +129,7 @@ export function StatusBar({
             disabled={maxVisibleColumns <= MIN_VISIBLE_COLUMNS}
             aria-label="Show fewer columns"
           >
-            <Minus size={14} />
+            <Minus size={16} />
           </button>
           <button
             type="button"
@@ -147,7 +147,7 @@ export function StatusBar({
             disabled={maxVisibleColumns >= MAX_VISIBLE_COLUMNS}
             aria-label="Show more columns"
           >
-            <Plus size={14} />
+            <Plus size={16} />
           </button>
         </div>
 
@@ -160,7 +160,7 @@ export function StatusBar({
           aria-label="Settings"
           data-tt="Settings"
         >
-          <Settings size={14} />
+          <Settings size={16} />
         </button>
         {auth.canLogout && (
           <button
@@ -170,7 +170,7 @@ export function StatusBar({
             aria-label="Sign out"
             data-tt="Sign out of this browser"
           >
-            <LogOut size={14} />
+            <LogOut size={16} />
           </button>
         )}
         <button
@@ -183,7 +183,7 @@ export function StatusBar({
           data-tt={unseenErrors ? `${unseenErrors} new error${unseenErrors > 1 ? 's' : ''}` : unreadChanges ? `${unreadChanges} unread change${unreadChanges > 1 ? 's' : ''}` : 'Notifications'}
         >
           {/* 안 본 에러가 있으면 종의 점을 빨갛게 */}
-          <BellIcon size={14} className={unseenErrors > 0 ? 'text-rose-500' : hasNews ? 'text-sky-600' : undefined} />
+          <BellIcon size={16} className={unseenErrors > 0 ? 'text-rose-500' : hasNews ? 'text-sky-600' : undefined} />
           {unreadChanges > 0 && <span className={styles.count}>{unreadChanges > 99 ? '99+' : unreadChanges}</span>}
         </button>
       </div>

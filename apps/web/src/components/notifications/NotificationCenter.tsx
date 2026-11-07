@@ -32,8 +32,8 @@ interface NotificationCenterProps {
   onNavigate: (entry: LiveLogEntry) => void;
 }
 
-// 상태바 바로 위 — 상태바: 아래 여백 12px + 높이 40px, 그 위로 6px
-export const CENTER_BOTTOM = 58;
+// 상태바 바로 위 — 상태바: 아래 여백 12px + 높이 48px, 그 위로 6px
+export const CENTER_BOTTOM = 66;
 export const CENTER_HEIGHT = 'min(520px, calc(100vh - 6rem))';
 
 const styles = {

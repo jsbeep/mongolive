@@ -404,10 +404,12 @@ function ReferencesSection({ databases, onMutate, onOpenCollection }: Pick<Setti
             const isOpen = !collapsed.has(database);
             return (
               <section key={database}>
-                {/* 스크롤해도 DB 이름이 위에 붙어 있다(-mx-6 px-6: 내용 영역 좌우 여백까지 덮어 아래 카드가 비치지 않게) */}
+                {/* 스크롤해도 DB 이름이 맨 위에 붙어 있다.
+                    -top-5: 스크롤 영역의 위 여백(py-5)만큼 끌어올려 틈 없이 붙게(top-0이면 여백만큼 떠서 그 틈으로 카드가 비친다)
+                    -mx-6 px-6: 내용 영역 좌우 여백까지 덮어 아래 카드가 비치지 않게 */}
                 <button
                   type="button"
-                  className="sticky top-0 z-10 -mx-6 flex w-[calc(100%+3rem)] items-center gap-2 bg-white/95 px-6 py-2 text-left backdrop-blur"
+                  className="sticky -top-5 z-10 -mx-6 flex w-[calc(100%+3rem)] items-center gap-2 bg-white px-6 py-2 text-left"
                   onClick={() => toggle(database)}
                   aria-expanded={isOpen}
                 >
@@ -423,12 +425,12 @@ function ReferencesSection({ databases, onMutate, onOpenCollection }: Pick<Setti
                       const pk = customPk(c);
                       const base = { database, collection: c.name };
                       return (
-                        <div key={c.name} className="rounded-xl border border-slate-100 px-4 py-3">
-                          <button type="button" className="font-mono text-xs font-semibold text-slate-700 hover:text-emerald-700 hover:underline" onClick={() => onOpenCollection(database, c.name, c.label || c.name)} data-tt="Open this collection">
-                            {c.name}
-                          </button>
-                          {(c.titleKey || pk) && (
-                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                        <div key={c.name} className="rounded-xl border border-slate-100 px-4 py-2.5">
+                          {/* 컬렉션 이름과 제목 키(·PK)를 한 줄에 — 참조(FK)만 아래로 */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button type="button" className="mr-1 font-mono text-xs font-semibold text-slate-700 hover:text-emerald-700 hover:underline" onClick={() => onOpenCollection(database, c.name, c.label || c.name)} data-tt="Open this collection">
+                              {c.name}
+                            </button>
                               {c.titleKey && (
                                 <span className={chip}>
                                   title: {c.titleKey}
@@ -441,10 +443,9 @@ function ReferencesSection({ databases, onMutate, onOpenCollection }: Pick<Setti
                                   <button type="button" className={removeBtn} aria-label="Remove primary key" onClick={() => void run({ type: 'setCollectionPrimaryKey', ...base, primaryKey: '' })}><X size={11} /></button>
                                 </span>
                               )}
-                            </div>
-                          )}
+                          </div>
                           {fks.length > 0 && (
-                            <ul className="mt-2 flex flex-col gap-1">
+                            <ul className="mt-1.5 flex flex-col gap-1">
                               {fks.map(([field, ref]) => (
                                 <li key={field} className="flex items-center gap-2 font-mono text-[11px] text-slate-700">
                                   <span>{field}</span>

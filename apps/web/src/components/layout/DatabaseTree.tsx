@@ -44,7 +44,8 @@ const styles = {
   // 숫자 자리에 겹쳐 나온다(올리거나 행 안에 포커스가 있을 때) — 안 보일 때 자리를 차지하면 숫자 세로줄이 어긋난다
   rowAction: 'hidden h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-200/70 hover:text-slate-700 group-hover:inline-flex group-focus-within:inline-flex',
   countHideOnHover: 'group-hover:hidden group-focus-within:hidden',
-  note: 'flex h-7 items-center gap-1.5 pl-[52px] text-xs text-slate-400',
+  // 컬렉션 행과 같은 들여쓰기 + 아이콘 자리
+  note: 'flex h-7 items-center gap-1.5 pl-[64px] text-xs text-slate-400',
   addRow: 'flex h-8 shrink-0 items-center gap-1 px-1',
   addInput:
     'min-w-0 flex-1 rounded-md bg-slate-100/80 px-2 py-1 text-[13px] text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400/60',
@@ -239,7 +240,8 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
                           type="button"
                           role="treeitem"
                           aria-selected={isActiveCol}
-                          className={cn(styles.row, 'pl-[30px]', isActiveCol ? styles.rowActiveCol : styles.rowIdle)}
+                          // 폴더 아이콘이 DB 이름 글자 아래에 오도록(DB 아이콘과 같은 세로줄이면 DB인지 컬렉션인지 헷갈린다)
+                          className={cn(styles.row, 'pl-[44px]', isActiveCol ? styles.rowActiveCol : styles.rowIdle)}
                           onClick={() => void onOpenCollection(db.name, col.name, col.label || col.name)}
                           data-tt={col.description || undefined}
                         >

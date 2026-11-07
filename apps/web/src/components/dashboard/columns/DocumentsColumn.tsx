@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileText, Tag, Check, X, ArrowLeft, KeyRound, Lock, Link, AlertTriangle, Filter } from 'lucide-react';
+import { FileText, Tag, Check, X, ArrowLeft, Link, Filter } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { ActivePath, CollectionSummary, DocumentSort, DocumentSummary, JsonObject, MutationRequest } from '../../../types/explorer';
 import type { DocumentListQuery, DocumentPageInfo } from '../../../hooks/useExplorerState';
@@ -84,17 +84,10 @@ export function DocumentsColumn({
   const collectionLabel = path.kind === 'normal' ? path.label : '';
   const activeCollectionSummary = collections.find((c) => c.name === activeCollectionName);
   const currentTitleKey = activeCollectionSummary?.titleKey;
-  const currentPrimaryKey = activeCollectionSummary?.primaryKey;
-  // _id.$oid를 쓰는 문서가 하나라도 있으면 PK는 항상 '_id' — 기존 oid REF 메커니즘을 따른다
-  const isPrimaryKeyLocked = activeCollectionSummary?.hasOidIds ?? false;
-  // 현재 PK(또는 기본값 _id) 필드가 없는 문서가 하나라도 있으면 경고 표시
-  const hasPrimaryKeyGaps = activeCollectionSummary?.hasPrimaryKeyGaps ?? false;
   const referenceFields = activeCollectionSummary?.referenceFields ?? {};
 
   const [isEditingTitleKey, setIsEditingTitleKey] = useState(false);
   const [titleKeyInput, setTitleKeyInput] = useState('');
-  const [isEditingPrimaryKey, setIsEditingPrimaryKey] = useState(false);
-  const [primaryKeyInput, setPrimaryKeyInput] = useState('');
   const [isManagingRefs, setIsManagingRefs] = useState(false);
 
   // 문서 검색/정렬 — 토글 가능한 보조 툴바 (헤더의 필터 아이콘). 거르기·정렬·페이지 자르기는
@@ -157,17 +150,6 @@ export function DocumentsColumn({
     setIsEditingTitleKey(false);
   };
 
-  const handleSavePrimaryKey = async () => {
-    if (!activeCollectionName || !activeDatabaseName) return;
-    await onMutate({
-      type: 'setCollectionPrimaryKey',
-      database: activeDatabaseName,
-      collection: activeCollectionName,
-      primaryKey: primaryKeyInput.trim(),
-    });
-    setIsEditingPrimaryKey(false);
-  };
-
   // 안전장치(설정 창 › Safety): read-only거나 이 컬렉션(또는 DB)이 보호 대상이면 편집·추가·파일 드롭을 숨긴다
   const canEditHere = canEditIn(useServerSettings(), activeDatabaseName, activeCollectionName);
 
@@ -207,35 +189,6 @@ export function DocumentsColumn({
               <X size={14} />
             </button>
           </>
-        ) : isEditingPrimaryKey ? (
-          <>
-            <input
-              autoFocus
-              type="text"
-              className="flex-1 min-w-0 text-xs px-2 py-1 rounded-lg bg-slate-100/80 text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400/60 focus:bg-white transition-all"
-              placeholder="Field key to use as primary key (e.g. code)"
-              value={primaryKeyInput}
-              onChange={(e) => setPrimaryKeyInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleSavePrimaryKey();
-                if (e.key === 'Escape') setIsEditingPrimaryKey(false);
-              }}
-            />
-            <button
-              type="button"
-              className="p-1.5 rounded-lg text-emerald-500 hover:bg-emerald-50 transition-colors shrink-0"
-              onClick={() => void handleSavePrimaryKey()}
-            >
-              <Check size={14} />
-            </button>
-            <button
-              type="button"
-              className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors shrink-0"
-              onClick={() => setIsEditingPrimaryKey(false)}
-            >
-              <X size={14} />
-            </button>
-          </>
         ) : (
           <>
             <div className="relative flex items-center gap-0 leading-none mr-0.5">
@@ -259,32 +212,6 @@ export function DocumentsColumn({
             >
               <Tag size={12} />
               <span className="text-[11px] font-mono">{currentTitleKey ?? 'name'}</span>
-            </button>
-            <button
-              type="button"
-              className={cn(
-                'relative flex items-center gap-1 px-2 py-1 rounded-lg transition-colors shrink-0',
-                hasPrimaryKeyGaps ? 'bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-600' : 'bg-slate-100 hover:bg-slate-200/70 text-slate-500 hover:text-slate-700',
-                (!activeCollectionName || isPrimaryKeyLocked) && 'opacity-40 pointer-events-none',
-              )}
-              data-tt={
-                isPrimaryKeyLocked
-                  ? 'Primary key — locked to _id for ObjectId collections'
-                  : hasPrimaryKeyGaps
-                    ? `Some documents are missing the primary key field (${currentPrimaryKey ?? '_id'})`
-                    : 'Primary key — the field other collections reference this one by'
-              }
-              onClick={() => {
-                if (isPrimaryKeyLocked) return;
-                setPrimaryKeyInput(currentPrimaryKey ?? '_id');
-                setIsEditingPrimaryKey(true);
-              }}
-            >
-              {hasPrimaryKeyGaps && (
-                <AlertTriangle size={10} className="absolute -top-1.5 -right-1.5 text-red-500 bg-white rounded-full" />
-              )}
-              {isPrimaryKeyLocked ? <Lock size={12} /> : <KeyRound size={12} />}
-              <span className="text-[11px] font-mono">{isPrimaryKeyLocked ? '_id' : currentPrimaryKey ?? '_id'}</span>
             </button>
             <button
               type="button"
