@@ -24,6 +24,8 @@ import {
 import { api } from '../../services/api';
 import { generateObjectId } from '../../utils/objectId';
 import { copyToClipboard } from '../../utils/clipboard';
+import { getPreferences } from '../../services/preferences';
+import { dateInputZone, fromDateInput, toDateInput } from '../../utils/formatValue';
 
 // ── 타입 정의 ─────────────────────────────────────────────────────────────────
 
@@ -56,14 +58,6 @@ const EJSON_EXTRA_TYPES: FieldType[] = ['Date', 'Decimal128', 'Long'];
 
 const isInvalidJson = (text: string): boolean => {
   try { JSON.parse(text); return false; } catch { return true; }
-};
-
-// "YYYY-MM-DDTHH:mm" (datetime-local input 형식)로 변환 — 실패 시 빈 문자열
-const isoToLocalInput = (iso: string): string => {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
 // String 값 편집 textarea: 내용에 맞춰 1줄에서 최대 4줄까지 자라고 그 이상은 스크롤.
@@ -209,10 +203,14 @@ export function InlineSegmentEditor({
   const [boolValue, setBoolValue] = useState(
     typeof initialValue === 'boolean' ? initialValue : false,
   );
-  const [dateValue, setDateValue] = useState(() => {
+  // Date 입력은 '값 표시' 설정과 같은 시간대로(로컬 / UTC) — 화면에 보이는 시각과 편집기 시각이 같게.
+  // 밀리초까지 다룬다(예전엔 분까지라 열었다 저장만 해도 초·밀리초가 지워졌다). 편집을 여는 순간의 설정으로 고정.
+  const [dateMode] = useState(() => getPreferences().dateDisplay);
+  const [initialDateInput] = useState(() => {
     const ms = dateMs(initialValue);
-    return ms === undefined ? '' : isoToLocalInput(new Date(ms).toISOString());
+    return ms === undefined ? '' : toDateInput(ms, dateMode);
   });
+  const [dateValue, setDateValue] = useState(initialDateInput);
   // ObjectID 타입: 새로 생성 vs 기존 문서 참조 선택
   const [objectIdMode, setObjectIdMode] = useState<'generate' | 'pick'>('generate');
   const [generatedOid, setGeneratedOid] = useState<string>(() => {
@@ -488,8 +486,10 @@ export function InlineSegmentEditor({
       return makeOid(objectIdMode === 'pick' ? refDocId : generatedOid);
     }
     if (selectedType === 'Date') {
-      const d = dateValue ? new Date(dateValue) : new Date();
-      return makeDate(Number.isNaN(d.getTime()) ? new Date() : d);
+      // 손대지 않았으면 원래 값 그대로(저장 형식까지 — $date의 문자열/숫자 표기)
+      if (initialValue !== undefined && dateMs(initialValue) !== undefined && dateValue === initialDateInput) return initialValue;
+      const ms = dateValue ? fromDateInput(dateValue, dateMode) : Date.now();
+      return makeDate(new Date(Number.isNaN(ms) ? Date.now() : ms));
     }
     if (selectedType === 'Decimal128') return makeDecimal(rawValue);
     if (selectedType === 'Long') return makeLong(rawValue.trim());
@@ -832,13 +832,21 @@ export function InlineSegmentEditor({
                 )}
               </div>
             ) : selectedType === 'Date' ? (
-              <input
-                type="datetime-local"
-                className={styles.valueInput}
-                value={dateValue}
-                onChange={(e) => setDateValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit(); if (e.key === 'Escape') onCancel(); }}
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="datetime-local"
+                  // 밀리초까지 입력·유지
+                  step="0.001"
+                  className={styles.valueInput}
+                  value={dateValue}
+                  onChange={(e) => setDateValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit(); if (e.key === 'Escape') onCancel(); }}
+                />
+                {/* 이 입력이 어느 시간대인지 — 설정 창의 Date 표시를 따른다 */}
+                <span className="shrink-0 text-[11px] font-mono text-slate-400" data-tt="Time zone of this input — follows Settings › Display › Dates">
+                  {dateInputZone(dateMode)}
+                </span>
+              </div>
             ) : selectedType === 'Decimal128' || selectedType === 'Long' ? (
               <div className="flex flex-col gap-1">
                 <input

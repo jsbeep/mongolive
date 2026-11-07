@@ -14,6 +14,7 @@ import { mutateRouter } from './routes/mutate';
 import { readRouter } from './routes/read';
 import { metricsRouter } from './routes/metrics';
 import { refsRouter } from './routes/refs';
+import { diagnosticsRouter } from './routes/diagnostics';
 
 const app = express();
 // 문지기가 맨 앞 — 거절할 요청은 본문(최대 10MB)을 읽기도 전에 돌려보낸다
@@ -32,6 +33,7 @@ app.use('/api', readRouter);
 app.use('/api', mutateRouter);
 app.use('/api', refsRouter);
 app.use('/api', metricsRouter);
+app.use('/api', diagnosticsRouter);
 
 // 위에서 처리하지 못한 /api 요청
 app.use('/api', (_req, res) => {

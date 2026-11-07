@@ -32,6 +32,8 @@ export interface MongoStatus {
   ok: boolean;
   // changeStream은 replica set(또는 sharded cluster)에서만 동작한다 — 이름이 없으면 5단계가 불가능
   replicaSet: string | null;
+  // mongos(sharded cluster)면 setName 없이도 changeStream이 된다
+  sharded: boolean;
   version: string | null;
   error?: string;
 }
@@ -44,9 +46,10 @@ export const checkMongo = async (): Promise<MongoStatus> => {
     return {
       ok: true,
       replicaSet: typeof hello.setName === 'string' ? hello.setName : null,
+      sharded: hello.msg === 'isdbgrid',
       version: typeof build.version === 'string' ? build.version : null,
     };
   } catch (e) {
-    return { ok: false, replicaSet: null, version: null, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, replicaSet: null, sharded: false, version: null, error: e instanceof Error ? e.message : String(e) };
   }
 };

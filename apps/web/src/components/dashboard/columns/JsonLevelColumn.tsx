@@ -20,7 +20,10 @@ import {
   type NormalActivePath,
   type ReferenceActivePath,
   PAGE_SIZE,
+  dateMs,
 } from '../../../types/explorer';
+import { usePreferences } from '../../../services/preferences';
+import { dateTooltip, formatDate, formatOid, oidTooltip } from '../../../utils/formatValue';
 import { api } from '../../../services/api';
 import { InlineSegmentEditor } from '../../editors/InlineSegmentEditor';
 import { DeleteConfirmModal } from '../../common/DeleteConfirmModal';
@@ -123,6 +126,8 @@ export function JsonLevelColumn({
   // 잡아내지 못하고 런타임에서만 드러난다. 그래서 이번 리팩토링에서는
   // 순수 유틸(jsonTree.ts)과 이미 독립적인 서브컴포넌트(CopyBtn/FieldItem/
   // HeaderIcon)만 분리하고, 이 블록은 파일 경계를 넘기지 않았다.
+  // 값 표시 설정(설정 창) — Date 시간대, ObjectId 줄임
+  const prefs = usePreferences();
   const refOid     = path.kind === 'reference' && path.ref.kind === 'oid' ? path.ref.oid : null;
   const refField   = path.kind === 'reference' && path.ref.kind === 'field' ? path.ref : null;
   const chainColor = path.kind === 'reference' ? path.chainColor : undefined;
@@ -595,8 +600,8 @@ export function JsonLevelColumn({
                 <Link size={11} className="text-blue-400 shrink-0" />
                   REF
                 </span>
-                <span className="text-[12px] font-mono text-blue-500 truncate" title={oid}>
-                  {oid}
+                <span className="text-[12px] font-mono text-blue-500 truncate" title={oidTooltip(oid, prefs.dateDisplay)}>
+                  {formatOid(oid, prefs.oidDisplay)}
                 </span>
                 <CopyBtn text={oid} />
               </>
@@ -608,22 +613,23 @@ export function JsonLevelColumn({
               <KeyRound size={11} className="text-amber-500 shrink-0" />
                 OID
               </span>
-              <span className="text-[12px] font-mono text-amber-700 truncate" title={oid}>
-                {oid}
+              <span className="text-[12px] font-mono text-amber-700 truncate" title={oidTooltip(oid, prefs.dateDisplay)}>
+                {formatOid(oid, prefs.oidDisplay)}
               </span>
               <CopyBtn text={oid} />
             </>
           );
         }
         case 'date': {
-          const date = displayValue(value);
+          const ms = dateMs(value);
+          const date = ms === undefined ? displayValue(value) : formatDate(ms, prefs.dateDisplay);
           return (
             <>
               <span className="flex items-center justify-center gap-1 text-[11px] font-mono pl-1.5 pr-2 py-0.5 rounded-lg bg-rose-50 text-rose-600 font-semibold shrink-0">
                 <Calendar size={11} className="text-rose-400 shrink-0" />
                 DATE
               </span>
-              <span className="text-[12px] font-mono text-rose-700 truncate" title={date}>
+              <span className="text-[12px] font-mono text-rose-700 truncate" title={ms === undefined ? date : dateTooltip(ms)}>
                 {date}
               </span>
             </>

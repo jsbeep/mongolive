@@ -15,6 +15,7 @@ import type {
   LiveChange,
   LiveLogEntry,
   LiveStatus,
+  Diagnostics,
   LiveView,
   MutationRequest,
   MutationResult,
@@ -66,6 +67,8 @@ export interface DataSource {
   onActivityLog(listener: (entries: LiveLogEntry[], isBacklog: boolean) => void): () => void;
   // 서버 지표 + 브라우저↔서버 왕복 시간. Mock은 null.
   getMetrics(): Promise<ClientMetrics | null>;
+  // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
+  getDiagnostics(): Promise<Diagnostics | null>;
 
   // ── 메타데이터: 이 앱이 직접 만든 '고유 oid' (참조가 아닌 식별자 값) ──
   listOwnedOids(): Promise<string[]>;

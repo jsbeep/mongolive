@@ -22,6 +22,7 @@ import type {
   MutationResult,
   ReferenceInfo,
   ServerMetrics,
+  Diagnostics,
 } from '../types/explorer';
 import { fetchAuthStatus, notifySessionExpired } from './auth';
 import type { ClientMetrics, DataSource } from './dataSource';
@@ -286,6 +287,8 @@ export const createRemoteDataSource = (): DataSource => {
         if (logListeners.size === 0 && s.connected) s.emit('log:unsubscribe');
       };
     },
+    getDiagnostics: () => request<Diagnostics>('/diagnostics'),
+
     async getMetrics(): Promise<ClientMetrics> {
       const s = ensureSocket();
       // 왕복 시간: 서버가 받자마자 응답하는 'rtt'를 보내고 응답까지 잰다(2초 안에 없으면 null)

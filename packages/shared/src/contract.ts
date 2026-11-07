@@ -238,6 +238,37 @@ export interface ServerMetrics {
   };
 }
 
+// ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
+// 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
+
+export interface Diagnostics {
+  server: { version: string; node: string; uptimeSec: number };
+  mongo: {
+    ok: boolean;
+    version: string | null;
+    // changeStream은 replica set이나 sharded cluster에서만 된다
+    topology: 'replicaSet' | 'sharded' | 'standalone' | 'unknown';
+    replicaSet: string | null;
+    error?: string;
+  };
+  // 서버가 연 changeStream의 지금 상태
+  realtime: Omit<LiveStatus, 'resync'>;
+  // serverStatus(지표 탭) 권한 — clusterMonitor 역할이 있어야 한다
+  serverStatus: 'ok' | 'denied' | 'error';
+  // .env 값(읽기 전용). mongoUri는 비밀번호와 옵션을 가린 것
+  security: {
+    authMode: string;
+    host: string;
+    port: number;
+    https: boolean;
+    trustProxy: boolean;
+    allowInsecureHttp: boolean;
+    mongoUri: string;
+    authFile: string;
+    metaFile: string;
+  };
+}
+
 // ── 변경 요청 ────────────────────────────────────────────────────────────────
 
 export interface MutateFieldSpec {

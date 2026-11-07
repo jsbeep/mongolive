@@ -1,9 +1,9 @@
 // 하단 상태바 (VSCode 하단바 느낌) — 예전 헤더의 버튼들을 작게 내려 둔 곳.
 //   왼쪽:   연결 상태(누르면 알림 센터의 System 탭 = 연결 기록) · 새로고침(= 다시 맞추기)
-//   오른쪽: Tree/Columns · 컬럼 수 − n + · 로그아웃 · 알림 센터(종)
+//   오른쪽: Tree/Columns · 컬럼 수 − n + · 설정 · 로그아웃 · 알림 센터(종)
 // 바는 예전 헤더처럼 둥근 카드, 항목은 테두리 없이 hover 배경만 있는 덜 둥근 네모.
 import { useState } from 'react';
-import { Bell, BellDot, Circle, Columns3, ListTree, LogOut, Minus, Plus, RefreshCw } from 'lucide-react';
+import { Bell, BellDot, Circle, Columns3, ListTree, LogOut, Minus, Plus, RefreshCw, Settings } from 'lucide-react';
 import { m } from 'framer-motion';
 import { MIN_VISIBLE_COLUMNS, MAX_VISIBLE_COLUMNS, type UseExplorerStateResult } from '../../hooks/useExplorerState';
 import { dataSourceKind } from '../../services/api';
@@ -21,6 +21,7 @@ interface StatusBarProps {
   isCenterOpen: boolean;
   onToggleCenter: () => void;
   onOpenSystem: () => void;
+  onOpenSettings: () => void;
 }
 
 const styles = {
@@ -46,6 +47,7 @@ export function StatusBar({
   isCenterOpen,
   onToggleCenter,
   onOpenSystem,
+  onOpenSettings,
 }: StatusBarProps) {
   const auth = useAuth();
   const status = CONNECTION_STATUS[connectionStatus];
@@ -135,6 +137,15 @@ export function StatusBar({
 
         <span className={styles.sep} aria-hidden="true" />
 
+        <button
+          type="button"
+          className={cn(styles.item, styles.itemIdle, styles.square)}
+          onClick={onOpenSettings}
+          aria-label="Settings"
+          data-tt="Settings"
+        >
+          <Settings size={14} />
+        </button>
         {auth.canLogout && (
           <button
             type="button"

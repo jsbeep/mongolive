@@ -46,6 +46,7 @@ export const createMockDataSource = (): DataSource => {
     onLiveStatus: () => () => undefined,
     onActivityLog: () => () => undefined,
     getMetrics: async () => null,
+    getDiagnostics: async () => null,
 
     async listOwnedOids() {
       return getUniqueOids();

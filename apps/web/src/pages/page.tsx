@@ -10,6 +10,7 @@ import { TooltipLayer } from '../components/common/TooltipLayer';
 import { Sidebar } from '../components/layout/Sidebar';
 import { NotificationCenter, type NotificationTab } from '../components/notifications/NotificationCenter';
 import { Toast } from '../components/notifications/Toast';
+import { SettingsModal } from '../components/settings/SettingsModal';
 import { useActivityLog } from '../hooks/useActivityLog';
 import { useSidebar } from '../hooks/useSidebar';
 import { useSystemLog } from '../hooks/useSystemLog';
@@ -34,6 +35,7 @@ export default function ExplorerPage() {
   const systemLog = useSystemLog();
   const [centerOpen, setCenterOpen] = useState(false);
   const [centerTab, setCenterTab] = useState<NotificationTab>('changes');
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 초기 연결
   useEffect(() => {
@@ -165,6 +167,10 @@ export default function ExplorerPage() {
           unseenErrors={systemLog.unseenErrors}
           isCenterOpen={centerOpen}
           onToggleCenter={() => setCenterOpen((v) => !v)}
+          onOpenSettings={() => {
+            setCenterOpen(false);
+            setSettingsOpen(true);
+          }}
           onOpenSystem={() => {
             // 연결 상태를 누르면 연결 기록(System 탭) — 이미 그 탭이 열려 있으면 닫는다
             if (centerOpen && centerTab === 'system') setCenterOpen(false);
@@ -205,6 +211,9 @@ export default function ExplorerPage() {
         onSelect={(candidate) => void resolveReferenceCandidate(candidate)}
         onCancel={dismissReferenceCandidates}
       />
+
+      {/* 설정 창 — 상태바의 톱니바퀴 */}
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} databases={databases} onMutate={mutate} />
 
       {/* 토스트 — 오른쪽 아래(알림 센터가 열려 있으면 그 위) */}
       <Toast
