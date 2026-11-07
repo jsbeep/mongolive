@@ -257,6 +257,8 @@ export function InlineSegmentEditor({
     }
   }, [currentRefInfo]);
   const keyInputRef = useRef<HTMLInputElement>(null);
+  // 값 입력 영역 — 타입마다 입력 요소가 달라서(textarea/input/스위치/select) 영역 안의 첫 입력에 포커스한다
+  const valueAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (selectedType !== 'ObjectID' || objectIdMode !== 'pick' || !activeDatabaseName) return;
@@ -280,7 +282,20 @@ export function InlineSegmentEditor({
       .catch(() => setFieldRefCandidates([]));
   }, [referenceFieldConfig?.targetCollection, referenceFieldConfig?.targetKey, activeDatabaseName]);
 
+  // 처음 포커스: 필드 '수정'은 값(대개 고치려는 건 값이라서), 그 밖(추가, 컬렉션·문서 이름 바꾸기)은 key.
+  // 값에 입력할 게 없으면(Null 등) key로. 글자 입력이면 커서를 끝에 둔다.
   useEffect(() => {
+    if (mode === 'edit' && level === 'field') {
+      const target = valueAreaRef.current?.querySelector<HTMLElement>('textarea, input, select, button');
+      if (target) {
+        target.focus();
+        if (target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type === 'text')) {
+          const end = target.value.length;
+          target.setSelectionRange(end, end);
+        }
+        return;
+      }
+    }
     keyInputRef.current?.focus();
   }, []);
 
@@ -721,6 +736,7 @@ export function InlineSegmentEditor({
             </AnimatePresence>
 
             {/* 값 입력 */}
+            <div ref={valueAreaRef} className="contents">
             {selectedType === 'Boolean' ? (
               <div className={styles.row}>
                 <span className="text-xs text-slate-500">Value</span>
@@ -893,6 +909,7 @@ export function InlineSegmentEditor({
                 onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit(); if (e.key === 'Escape') onCancel(); }}
               />
             )}
+            </div>
           </>
         )}
       </div>

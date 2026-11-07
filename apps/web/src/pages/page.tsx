@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useExplorerState } from '../hooks/useExplorerState';
-import { buildForumEjsonSample, buildForumJsonSample } from '../data/sampleData';
 import { StatusBar } from '../components/layout/StatusBar';
-import { LandingIntro } from '../components/layout/LandingIntro';
-import { Footer } from '../components/layout/Footer';
 import { Breadcrumbs } from '../components/dashboard/Breadcrumbs';
 import { MillerColumns } from '../components/dashboard/MillerColumns';
 import { ChangeToneContext } from '../components/common/ChangeFlash';
@@ -32,7 +29,6 @@ const styles = {
 
 export default function ExplorerPage() {
   const state = useExplorerState();
-  const [showIntro, setShowIntro] = useState(true);
   const sidebar = useSidebar();
   const activityLog = useActivityLog();
   const systemLog = useSystemLog();
@@ -209,23 +205,6 @@ export default function ExplorerPage() {
         onSelect={(candidate) => void resolveReferenceCandidate(candidate)}
         onCancel={dismissReferenceCandidates}
       />
-
-      {/* 스크롤 시 노출되는 소개 섹션 — X로 닫으면 Footer까지 함께 사라지고 explorer 패널만 남는다 */}
-      {showIntro && (
-        <div className="flex flex-col min-h-screen w-full">
-          <LandingIntro
-            onClose={() => setShowIntro(false)}
-            onLoadSample={async (kind) => {
-              const existingNames = databases.map((d) => d.name);
-              const database = kind === 'ejson'
-                ? buildForumEjsonSample(existingNames)
-                : buildForumJsonSample(existingNames);
-              await mutate({ type: 'createDatabase', database });
-            }}
-          />
-          <Footer />
-        </div>
-      )}
 
       {/* 토스트 — 오른쪽 아래(알림 센터가 열려 있으면 그 위) */}
       <Toast
