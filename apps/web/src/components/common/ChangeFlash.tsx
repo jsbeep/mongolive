@@ -27,6 +27,8 @@ export const CHANGE_FLASH_MS = 2000;
 
 const HIDDEN = 'translateX(-100%)';
 const SHOWN = 'translateX(0)';
+// 쉬는 동안엔 투명하게 둔다 — 왼쪽으로 밀어 둔 막의 끝이 액자 경계와 소수점 픽셀에서 반올림되면
+// (125% 같은 화면 배율) 1px짜리 줄이 행 왼쪽에 새어 보인다. 재생할 때만 불투명하게.
 
 export function ChangeFlash({ active }: { active: boolean }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -37,10 +39,10 @@ export function ChangeFlash({ active }: { active: boolean }) {
     // 차오름(20%) → 머묾 → 왼쪽으로 빠짐
     const animation = ref.current.animate(
       [
-        { transform: HIDDEN, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
-        { transform: SHOWN, offset: 0.2 },
-        { transform: SHOWN, offset: 0.6, easing: 'cubic-bezier(0.64, 0, 0.78, 0)' },
-        { transform: HIDDEN },
+        { transform: HIDDEN, opacity: 1, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+        { transform: SHOWN, opacity: 1, offset: 0.2 },
+        { transform: SHOWN, opacity: 1, offset: 0.6, easing: 'cubic-bezier(0.64, 0, 0.78, 0)' },
+        { transform: HIDDEN, opacity: 1 },
       ],
       { duration: CHANGE_FLASH_MS },
     );
@@ -49,7 +51,7 @@ export function ChangeFlash({ active }: { active: boolean }) {
 
   return (
     <span aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-[inherit]">
-      <span ref={ref} className={`absolute inset-0 rounded-[inherit] ${TONE_CLASS[tone]}`} style={{ transform: HIDDEN }} />
+      <span ref={ref} className={`absolute inset-0 rounded-[inherit] ${TONE_CLASS[tone]}`} style={{ transform: HIDDEN, opacity: 0 }} />
     </span>
   );
 }

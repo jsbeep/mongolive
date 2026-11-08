@@ -14,6 +14,7 @@ import { api } from '../../../services/api';
 import { columnListStyles as styles } from './columnListStyles';
 import { isPathChanged } from '../../../utils/changedPaths';
 import { useFileDrop } from '../../../hooks/useFileDrop';
+import { FILTER_DOT_CLASS, HeaderTitle } from './HeaderTitle';
 import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 import { FilterSortToolbar, type SortOption } from './FilterSortToolbar';
 import { PageRail, PageTransition } from './PageRail';
@@ -192,13 +193,8 @@ export function DocumentsColumn({
           </>
         ) : (
           <>
-            <div className="relative flex items-center gap-0 leading-none mr-0.5">
-              <FileText size={15} className={styles.headerIcon} />
-              <span className="absolute pl-[1px] -bottom-[0.2rem] right-0.5 translate-x-1/2 text-xs font-mono text-slate-500 tabular-nums shrink-0 leading-[0.9] bg-white rounded-s">
-                {isDocFilterActive ? `${totalMatched}/${totalAll}` : totalAll}
-              </span>
-            </div>
-            <span className={styles.headerTitle}>{collectionLabel}</span>
+            <FileText size={15} className={styles.headerIcon} />
+            <HeaderTitle title={collectionLabel} total={totalAll} matched={isDocFilterActive ? totalMatched : undefined} />
             <button
               type="button"
               className={cn(
@@ -236,7 +232,7 @@ export function DocumentsColumn({
               onClick={() => setIsDocToolbarOpen((v) => !v)}
             >
               {isDocFilterActive && !isDocToolbarOpen && (
-                <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span className={FILTER_DOT_CLASS} />
               )}
               <Filter size={13} />
             </button>

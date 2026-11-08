@@ -1,5 +1,5 @@
 // path: src/components/dashboard/columns/FieldItem.tsx
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
 import { ChevronRight, Pencil, Route } from 'lucide-react';
 import { CopyBtn } from './CopyBtn';
@@ -27,15 +27,21 @@ export interface FieldItemProps {
   copyPath?: string;
   // 키보드 Delete용(화면에선 편집기 안의 삭제 버튼으로 지운다)
   onDelete?: () => void;
+  // 키 글자 바로 왼쪽에 겹쳐 그릴 것 — 순서 바꾸기 손잡이(ReorderRow). 평소엔 키(인덱스)에 올렸을 때만, showLeading이면 늘
+  leading?: ReactNode;
+  showLeading?: boolean;
   children: ReactNode;
 }
 
 export function FieldItem({
   fieldKey, isId, isExpandable, isEditable, isHighlighted, isActive = false, reduceMotion = false,
   reserveEditWidth = false,
-  onEdit, onClick, children, copyPath, onDelete,
+  onEdit, onClick, children, copyPath, onDelete, leading, showLeading = false,
 }: FieldItemProps) {
   const { hovered, hoverHandlers } = useHover();
+  // 손잡이는 키(인덱스) 글자에 올렸을 때만 — 행 어디든 올릴 때마다 나오면 산만하다
+  const [keyHovered, setKeyHovered] = useState(false);
+  const gripShown = !!leading && (keyHovered || showLeading);
   // 키보드 탐색(utils/keyboardNav): 펼칠 수 있으면 열기, 편집·삭제는 편집할 수 있을 때만(_id·안전장치)
   const navRef = useNavRow({
     open: onClick ?? undefined,
@@ -64,8 +70,9 @@ export function FieldItem({
     >
       <ChangeFlash active={isHighlighted} />
       {/* 현재 펼쳐진 경로(다음 컬럼으로 이어지는 필드) 표시용 좌측 인디케이터 */}
+      {/* 손잡이가 보이는 동안엔 숨긴다 — 둘이 같은 왼쪽 여백에 있어 겹친다 */}
       <AnimatePresence>
-        {isActive && (
+        {isActive && !gripShown && (
           <m.span
             className="absolute left-1.5 -translate-y-1/2 w-0.5 h-8 rounded-full bg-emerald-500"
             initial={{ scaleY: 0, opacity: 0 }}
@@ -78,11 +85,24 @@ export function FieldItem({
 
       {/* 부모는 items-center지만 key/컨트롤만 self-start로 올려, 값이 여러 줄로
           길어질 때 문자열 첫 줄과 나란히 상단 정렬한다(한 줄일 땐 center와 동일). */}
-      <span className={cn(
-        'text-[13px] py-1.5 font-mono font-medium shrink-0 w-[20%] truncate self-start',
-        isActive ? 'text-emerald-700' : isId ? 'text-slate-400' : 'text-slate-500',
-      )}>
-        {fieldKey}
+      <span
+        className="relative shrink-0 w-[20%] self-start"
+        onPointerEnter={() => setKeyHovered(true)}
+        onPointerLeave={() => setKeyHovered(false)}
+      >
+        {leading && (
+          // 키 글자 바로 왼쪽(행의 왼쪽 여백 위)에 겹친다 — 자리를 차지하지 않아 키가 밀리지 않고,
+          // 키 칸의 자식이라 키에서 손잡이로 옮겨 가도 사라지지 않는다
+          <span className={cn('absolute -left-[15px] top-1/2 z-10 -translate-y-1/2 transition-opacity', gripShown ? 'opacity-100' : 'pointer-events-none opacity-0')}>
+            {leading}
+          </span>
+        )}
+        <span className={cn(
+          'block text-[13px] py-1.5 font-mono font-medium truncate',
+          isActive ? 'text-emerald-700' : isId ? 'text-slate-400' : 'text-slate-500',
+        )}>
+          {fieldKey}
+        </span>
       </span>
 
       <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">

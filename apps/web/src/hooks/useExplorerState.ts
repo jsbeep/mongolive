@@ -916,8 +916,8 @@ export function useExplorerState(): UseExplorerStateResult {
           const cols = await api.getCollections(op.database);
           setCollections(cols);
         }
-        // 열린 문서 갱신
-        if (activeDocumentOidRef.current && op.type === 'mutateField') {
+        // 열린 문서 갱신 — 필드 수정, 그리고 문서 전체를 다시 쓴 경우(최상위 순서 바꾸기 등)
+        if (activeDocumentOidRef.current && (op.type === 'mutateField' || op.type === 'upsertDocument')) {
           const doc = await api.getFullDocumentByIdInCollection(activeDatabaseRef.current ?? '', activeCollectionRef.current ?? '', activeDocumentOidRef.current);
           setOpenDocument(doc);
         }

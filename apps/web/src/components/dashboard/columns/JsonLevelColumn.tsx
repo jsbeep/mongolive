@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { nextPathId } from '../../../hooks/useExplorerState';
-import { Link, Hash, ToggleLeft, KeyRound, ChevronRight, Calendar, Sigma, Binary, Filter, Box, SquareTerminal } from 'lucide-react';
-import { AnimatePresence, m } from 'framer-motion';
+import { Link, Hash, ToggleLeft, KeyRound, ChevronRight, Calendar, Sigma, Binary, Filter, Box, SquareTerminal, Check, X } from 'lucide-react';
+import { AnimatePresence, Reorder, m } from 'framer-motion';
+import { ReorderRow } from './ReorderRow';
 import { SPRING_SNAPPY } from '../../../utils/motionPresets';
 import { cn } from '../../../utils/cn';
 import {
@@ -33,6 +34,7 @@ import { AddItemButton } from './AddItemButton';
 import { CopyBtn } from './CopyBtn';
 import { FieldItem } from './FieldItem';
 import { HeaderIcon } from './HeaderIcon';
+import { FILTER_DOT_CLASS, HeaderTitle } from './HeaderTitle';
 import { DropOverlay } from './DropOverlay';
 import { PageRail, PageTransition } from './PageRail';
 import { getFieldType, resolveAtPath, getEntries } from '../../../utils/jsonTree';
@@ -41,6 +43,9 @@ import { useFileDrop } from '../../../hooks/useFileDrop';
 import { FilterSortToolbar, type SortOption } from './FilterSortToolbar';
 
 // 필드 정렬 옵션 — array 노드는 key가 인덱스라 숫자로, object 노드는 key를 문자열로 비교
+// 순서 바꾸기는 초안 동안 목록 전체를 펼쳐 그린다 — 너무 길면(그리는 비용) 막는다
+const REORDER_MAX = 200;
+
 const FIELD_SORT_OPTIONS: SortOption[] = [
   { value: 'none', label: 'Default order' },
   { value: 'key-asc', label: 'Key A→Z' },
@@ -348,6 +353,93 @@ export function JsonLevelColumn({
   // 컬럼별로 구분 가능한 값이어야 한다.
   const addFieldEditingId = `field:${path.comp.id}:__new__:${projectionPath.join('.')}`;
 
+  // ── 순서 바꾸기(배열 원소·객체 키) ─────────────────────────────────────────
+  // 손잡이를 잡으면 '초안'이 시작된다: base = 그 순간의 컨테이너. 끄는 동안 순서만 바꿔 들고 있다가
+  // 머리의 ✓로 한 번에 쓴다(✗·Esc = 취소). 쓸 때 base를 '본 값'으로 보내므로, 그 사이 누가 바꿨으면
+  // 다른 수정과 똑같이 충돌로 거절된다. 초안 동안엔 실시간 반영이 와도 base로 그린다.
+  // 평소엔 페이지(PAGE_SIZE개씩)로 보이지만 초안 동안엔 전체를 펼쳐 다른 페이지 자리로도 옮길 수 있다.
+  const [reorder, setReorder] = useState<{ base: JsonValue; order: string[] } | null>(null);
+  const reorderSource = reorder ? reorder.base : currentNode;
+  const isRootLevel = projectionPath.length === 0;
+  const canReorder =
+    canEditHere && !!displayDoc && (isObjectNode || isArrayNode) && entries.length > 1 && entries.length <= REORDER_MAX
+    && !isFieldFilterActive && !editingId;
+  // 다른 노드로 옮기면 초안은 버린다
+  useEffect(() => setReorder(null), [docOidForMutate, projectionPath.join('.')]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 문서 최상위의 _id는 늘 맨 앞(MongoDB도 그렇게 저장한다)
+  const pinId = (order: string[]) => (isRootLevel && order.includes('_id') ? ['_id', ...order.filter((k) => k !== '_id')] : order);
+  // 잡은 행이 화면에서 같은 높이에 머물게 — 초안이 되면 위쪽 페이지 행들이 끼어들어 밀려 내려가므로 스크롤로 되돌린다
+  const reorderAnchorRef = useRef<{ key: string; top: number } | null>(null);
+  const startReorder = (key: string, el: HTMLElement) => {
+    if (reorder) return;
+    reorderAnchorRef.current = { key, top: el.getBoundingClientRect().top };
+    setReorder({ base: currentNode, order: pinId(entries.map((e) => e.key)) });
+  };
+  useLayoutEffect(() => {
+    const anchor = reorderAnchorRef.current;
+    if (!reorder || !anchor) return;
+    reorderAnchorRef.current = null;
+    const row = scrollRef.current?.querySelector<HTMLElement>(`[data-reorder-key="${CSS.escape(anchor.key)}"]`);
+    const scroller = scrollRef.current;
+    if (row && scroller) scroller.scrollTop += row.getBoundingClientRect().top - anchor.top;
+  }, [reorder]);
+  const reorderChanged = !!reorder && reorder.order.join('\u0000') !== getEntries(reorder.base).map((e) => e.key).join('\u0000');
+  const cancelReorder = () => setReorder(null);
+  const commitReorder = async () => {
+    if (!reorder || !reorderChanged || !mutateDatabaseName || !mutateCollectionName) return;
+    const base = reorder.base;
+    const value: JsonValue = Array.isArray(base)
+      ? reorder.order.map((k) => base[Number(k)])
+      : Object.fromEntries(reorder.order.map((k) => [k, (base as Record<string, JsonValue>)[k]]));
+    try {
+      if (isRootLevel) {
+        // 문서 최상위 — 문서 전체를 바꿔 쓴다(지금 문서가 base일 때만)
+        await onMutate({
+          type: 'upsertDocument',
+          database: mutateDatabaseName,
+          collection: mutateCollectionName,
+          document: value as Record<string, unknown>,
+          expected: { exists: true, value: base },
+        });
+      } else {
+        const parentPath = projectionPath.slice(0, -1);
+        const parentNode = displayDoc ? resolveAtPath(displayDoc, parentPath) : null;
+        await onMutate({
+          type: 'mutateField',
+          database: mutateDatabaseName,
+          collection: mutateCollectionName,
+          documentId: docOidForMutate,
+          field: {
+            path: parentPath,
+            key: projectionPath[projectionPath.length - 1],
+            action: 'edit',
+            containerType: Array.isArray(parentNode) ? 'array' : 'object',
+            value,
+            expected: { exists: true, value: base },
+          },
+        });
+      }
+      // 배열은 인덱스가 바뀌었으니 그 아래 열어 둔 컬럼은 엉뚱한 원소를 가리킨다 — 닫는다
+      if (Array.isArray(base) && hasPathsAfter) onPopToIndex(myIndex);
+      refreshRefDocument();
+      refreshRefFieldDocument();
+    } catch {
+      // 실패·충돌 알림은 onMutate가 했다. 초안은 버린다(base가 낡았으니 다시 끌어야 한다)
+    } finally {
+      setReorder(null);
+    }
+  };
+  // 초안 중 Esc = 취소(입력칸이 아닐 때)
+  useEffect(() => {
+    if (!reorder) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || (e.target as Element | null)?.closest('input, textarea')) return;
+      setReorder(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [reorder]);
+
   // 컬럼 전체에 파일을 드롭하면 "필드 추가" 에디터를 열고 그 파일을 업로드한 것처럼 처리
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const { isDragOver: isColumnDragOver, dragHandlers } = useFileDrop((file) => {
@@ -418,11 +510,13 @@ export function JsonLevelColumn({
   // 다 다시 전달해야 해서 분리 이득이 거의 없고 실수할 표면만 늘어난다.
   // 그래서 그대로 두었다 — 수정할 땐 위 4개 책임 중 어디를 건드리는지
   // 먼저 명확히 하고 시작할 것.
-  const renderField = (fieldKey: string, value: JsonValue) => {
+  // opts: 순서 바꾸기 행으로 그릴 때 — grip = 손잡이, inDraft = 초안 중(펼치기·편집·중첩 없이), label = 보일 이름(배열은 새 위치)
+  const renderField = (fieldKey: string, value: JsonValue, opts?: { grip?: ReactNode; inDraft?: boolean; label?: string }) => {
+    const inDraft = !!opts?.inDraft;
     const type = getFieldType(value);
     const isId = fieldKey === '_id';
     const editorId = `field:${path.comp.id}:${[...projectionPath, fieldKey].join('.')}`;
-    const isEditing = editingId === editorId;
+    const isEditing = editingId === editorId && !inDraft;
     // 이 필드가 실제로 속한 DB/컬렉션/문서까지 포함한 전체 경로로 정확히 비교한다 —
     // fieldKey만으로 비교하면 다른 문서/컬렉션의 동명 필드(예: 모든 문서의 "name")가
     // 전부 하이라이트되는 버그가 생긴다.
@@ -444,13 +538,13 @@ export function JsonLevelColumn({
     const refLabel = isArrayIndexKey ? `${refConfigKey}[${fieldKey}]` : fieldKey;
     const isFieldRef = !!fieldRefConfig && (type === 'string' || type === 'number' || type === 'long' || type === 'decimal128');
     // _id만 수정 불가, REF로 분류된 oid도 키 이름/참조 대상을 수정할 수 있어야 함
-    const isEditable = !isId && canEditHere;
+    const isEditable = !isId && canEditHere && !inDraft;
     const isContainer = type === 'object' || type === 'array';
     // 이 필드를 펼쳐서 다음 컬럼이 열려있는 중인지 — handlePushChild/onPushReference가
     // 만드는 다음 ActivePath와 같은 모양인지로 판별한다(클릭 핸들러와 동일한 비교 기준).
     // isFieldRef는 클릭 시점에야 비동기로 실제 문서를 찾기 때문에 라벨(fieldKey) 일치로
     // 근사 비교한다 — oid처럼 동기 비교는 불가능하지만 활성 표시는 정확도가 중요하지 않음
-    const isActive = !nextActivePath ? false
+    const isActive = inDraft || !nextActivePath ? false
       : isOidRef ? (nextActivePath.kind === 'reference' && nextActivePath.ref.kind === 'oid' && nextActivePath.ref.oid === (value as { $oid: string }).$oid)
       : isFieldRef ? (nextActivePath.kind === 'reference' && nextActivePath.ref.kind === 'field' && nextActivePath.label === refLabel)
       : isExpandable ? (
@@ -679,7 +773,7 @@ export function JsonLevelColumn({
     })();
 
     // expandable/ref → 탐색 (ref는 중복 방지), 비확장 + hasPathsAfter → pop
-    const handleClick: (() => void) | null = (() => {
+    const handleClick: (() => void) | null = inDraft ? null : (() => {
       if (isExpandable || isOidRef || isFieldRef) {
         return () => {
           const refOidToPush = isOidRef ? (value as { $oid: string }).$oid : null;
@@ -746,18 +840,21 @@ export function JsonLevelColumn({
     return (
       <FieldItem
         key={fieldKey}
-        fieldKey={fieldKey}
+        fieldKey={opts?.label ?? fieldKey}
         isId={isId}
         isExpandable={isExpandable || isOidRef || isFieldRef}
         isEditable={isEditable}
         isHighlighted={isHighlighted}
         isActive={isActive}
-        reduceMotion={reduceMotion}
         reserveEditWidth={type === 'string' && !isFieldRef}
         onEdit={() => onSetEditingId(editorId)}
         onClick={handleClick}
         copyPath={[...projectionPath, fieldKey].join('.')}
         onDelete={() => setDeleteTarget({ fieldKey, value })}
+        leading={opts?.grip}
+        showLeading={inDraft}
+        // 순서 바꾸기 행은 Reorder.Item이 위치를 움직인다 — 행 자체의 layout 애니메이션은 끈다(둘이 겹치면 떨린다)
+        reduceMotion={reduceMotion || opts !== undefined}
       >
         {valueContent}
       </FieldItem>
@@ -785,13 +882,8 @@ export function JsonLevelColumn({
 
       {/* 헤더 */}
       <div className="shrink-0 flex items-center gap-2.5 px-4 h-12 border-b border-slate-100/80">
-        <div className="relative flex items-center gap-0 leading-none mr-0.5">
-          <HeaderIcon node={currentNode} />
-          <span className="absolute pl-[1px] -bottom-[0.2rem] right-0.5 translate-x-1/2 text-xs font-mono text-slate-500 tabular-nums shrink-0 leading-[0.9] bg-white rounded-s">
-            {isFieldFilterActive ? `${displayEntries.length}/${entries.length}` : entries.length}
-          </span>
-        </div>
-        <span className="text-sm font-semibold text-slate-700 truncate flex-1">{path.label}</span>
+        <HeaderIcon node={currentNode} />
+        <HeaderTitle title={path.label} total={entries.length} matched={isFieldFilterActive ? displayEntries.length : undefined} />
         {chainColor && (
           <button
             type="button"
@@ -812,6 +904,31 @@ export function JsonLevelColumn({
               : 'REF'}
           </button>
         )}
+        {/* 순서 바꾸기 초안 중엔 쿼리 복사·필터 자리에 ✓(저장) / ✗(취소) */}
+        {reorder ? (
+          <>
+            <button
+              type="button"
+              className="shrink-0 rounded-lg bg-emerald-600 p-1.5 text-white transition-colors hover:bg-emerald-700 disabled:opacity-40"
+              disabled={!reorderChanged}
+              onClick={() => void commitReorder()}
+              aria-label="Save the new order"
+              data-tt={reorderChanged ? 'Save the new order' : 'Drag a row to change the order'}
+            >
+              <Check size={13} />
+            </button>
+            <button
+              type="button"
+              className="shrink-0 rounded-lg bg-slate-100 p-1.5 text-slate-500 transition-colors hover:bg-slate-200/70 hover:text-slate-700"
+              onClick={cancelReorder}
+              aria-label="Cancel reordering"
+              data-tt="Cancel (Esc)"
+            >
+              <X size={13} />
+            </button>
+          </>
+        ) : (
+        <>
         {/* mongosh 쿼리 복사 — 이 문서를 _id로, 펼친 깊이만큼 projection까지 */}
         {displayDoc && mutateDatabaseName && mutateCollectionName && displayDoc._id !== undefined && (
           <CopyBtn
@@ -832,10 +949,12 @@ export function JsonLevelColumn({
           onClick={() => setIsFieldToolbarOpen((v) => !v)}
         >
           {isFieldFilterActive && !isFieldToolbarOpen && (
-            <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span className={FILTER_DOT_CLASS} />
           )}
           <Filter size={13} />
         </button>
+        </>
+        )}
       </div>
 
       {/* 필드 검색/정렬 툴바 */}
@@ -874,17 +993,49 @@ export function JsonLevelColumn({
           <p className="flex-1 flex items-center justify-center text-sm text-slate-400 py-10">No fields match the filter</p>
         ) : (
           <PageTransition pageKey={currentEntryPage} disabled={reduceMotion} className="flex flex-col gap-0.5">
-            {/* initial={false}: 페이지째 펼쳐지므로 행마다 따로 나타나는 애니메이션은 생략(행 수만큼 드는 비용).
-                이 페이지를 보는 중에 새로 추가된 필드는 그대로 애니메이션된다. */}
-            <AnimatePresence initial={false}>
-              {visibleEntries.map(({ key, value }) => renderField(key, value))}
-            </AnimatePresence>
+            {canReorder || reorder ? (
+              // 순서를 바꿀 수 있는 목록 — 평소엔 이 페이지 행만, 초안 동안엔 전체(같은 Reorder.Group 안이라
+              // 잡은 행이 다시 그려지지 않아 끌기가 끊기지 않는다)
+              <Reorder.Group
+                as="div"
+                axis="y"
+                values={reorder ? reorder.order : visibleEntries.map((e) => e.key)}
+                onReorder={(next: string[]) => setReorder((r) => (r ? { ...r, order: pinId(next) } : r))}
+                className="flex flex-col gap-0.5"
+              >
+                <AnimatePresence initial={false}>
+                  {(reorder ? reorder.order : visibleEntries.map((e) => e.key)).map((key, pos) => {
+                    const value = Array.isArray(reorderSource) ? reorderSource[Number(key)] : (reorderSource as Record<string, JsonValue>)[key];
+                    return (
+                      <ReorderRow key={key} value={key} locked={isRootLevel && key === '_id'} onGrab={startReorder}>
+                        {(grip) => (
+                          <div data-reorder-key={key}>
+                            {renderField(key, value, {
+                              grip,
+                              inDraft: !!reorder,
+                              // 배열은 초안 동안 새 위치를 번호로 보여 준다
+                              label: reorder && Array.isArray(reorderSource) ? String(pos) : undefined,
+                            })}
+                          </div>
+                        )}
+                      </ReorderRow>
+                    );
+                  })}
+                </AnimatePresence>
+              </Reorder.Group>
+            ) : (
+              /* initial={false}: 페이지째 펼쳐지므로 행마다 따로 나타나는 애니메이션은 생략(행 수만큼 드는 비용).
+                 이 페이지를 보는 중에 새로 추가된 필드는 그대로 애니메이션된다. */
+              <AnimatePresence initial={false}>
+                {visibleEntries.map(({ key, value }) => renderField(key, value))}
+              </AnimatePresence>
+            )}
           </PageTransition>
         )}
 
 
-        {/* 필드 추가 — object/array 노드면 depth 무관하게 항상 표시 */}
-        {canAddField && (
+        {/* 필드 추가 — object/array 노드면 depth 무관하게 항상 표시(순서 바꾸는 동안은 숨김) */}
+        {canAddField && !reorder && (
           editingId === addFieldEditingId ? (
             <InlineSegmentEditor
               mode="add"
@@ -936,14 +1087,14 @@ export function JsonLevelColumn({
           )
         )}
       </div>
-      <PageRail
+      {!reorder && <PageRail
         page={currentEntryPage}
         pageCount={entryPageCount}
         markedPage={activeChildIndex >= 0 ? Math.floor(activeChildIndex / PAGE_SIZE) : undefined}
         onChange={setEntryPage}
         // 중첩 컬럼은 자체 스크롤이 없다 — head 컬럼의 스크롤 안에서 위에 붙어 따라오게
         className={isNested ? 'self-start sticky top-0' : undefined}
-      />
+      />}
       </div>
 
       {/* 삭제 확인 모달 — createPortal로 최상위에 렌더 */}

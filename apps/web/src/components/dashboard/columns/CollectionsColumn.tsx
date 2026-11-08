@@ -13,6 +13,7 @@ import { columnListStyles as styles } from './columnListStyles';
 import { isPathChanged } from '../../../utils/changedPaths';
 import { useFileDrop } from '../../../hooks/useFileDrop';
 import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../../utils/motionPresets';
+import { HeaderTitle } from './HeaderTitle';
 import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -84,12 +85,8 @@ export function CollectionsColumn({
 
       {/* 헤더 */}
       <div className={styles.header}>
-        <div className="relative flex items-center gap-0 leading-none mr-0.5">
-          <Folder size={15} className={styles.headerIcon} />
-          <span className="absolute pl-[1px] -bottom-[0.2rem] right-0 translate-x-1/2 text-xs font-mono text-slate-500 tabular-nums shrink-0 leading-[0.9] bg-white rounded-s">
-            {collections.length}
-          </span>
-        </div>
+        <Folder size={15} className={styles.headerIcon} />
+        <HeaderTitle title="Collections" total={collections.length} />
       </div>
 
       {/* 목록 */}
