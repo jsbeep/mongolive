@@ -16,6 +16,9 @@ export type UndoDepth = (typeof UNDO_DEPTHS)[number];
 // 실시간 반영 간격: 즉시(변경을 0.15초 단위로 묶음) / 느슨하게(1.5초 단위 — 변경이 몰릴 때 화면·요청이 덜 바쁘다)
 export type LiveBatch = 'immediate' | 'relaxed';
 export const LIVE_BATCH_MS: Record<LiveBatch, number> = { immediate: 150, relaxed: 1500 };
+// 애니메이션: auto = 보는 컬렉션이 크면(ANIMATION_DISABLE_THRESHOLD_MB) 컬럼 애니메이션을 끄고, OS의 '동작 줄이기'를 따른다
+//             on = 늘 켬 / off = 늘 끔(가장 빠름 — 움직임 없이 바로 바뀐다)
+export type Animations = 'auto' | 'on' | 'off';
 
 export interface Preferences {
   dateDisplay: DateDisplay;
@@ -28,10 +31,11 @@ export interface Preferences {
   deleteConfirmSmall: DeleteConfirmSmall;
   undoDepth: UndoDepth;
   liveBatch: LiveBatch;
+  animations: Animations;
 }
 
 const KEY = 'mongolive.preferences';
-const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate' };
+const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate', animations: 'auto' };
 
 const load = (): Preferences => {
   try {
@@ -44,6 +48,7 @@ const load = (): Preferences => {
       deleteConfirmSmall: saved.deleteConfirmSmall === 'none' || saved.deleteConfirmSmall === 'confirm' ? saved.deleteConfirmSmall : DEFAULTS.deleteConfirmSmall,
       undoDepth: (UNDO_DEPTHS as readonly number[]).includes(saved.undoDepth as number) ? (saved.undoDepth as UndoDepth) : DEFAULTS.undoDepth,
       liveBatch: saved.liveBatch === 'relaxed' || saved.liveBatch === 'immediate' ? saved.liveBatch : DEFAULTS.liveBatch,
+      animations: saved.animations === 'on' || saved.animations === 'off' || saved.animations === 'auto' ? saved.animations : DEFAULTS.animations,
     };
   } catch {
     return DEFAULTS;

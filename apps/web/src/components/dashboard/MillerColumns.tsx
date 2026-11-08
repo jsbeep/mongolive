@@ -9,6 +9,7 @@ import { JsonLevelColumn } from './columns/JsonLevelColumn';
 import { PlaceholderColumn } from './columns/PlaceholderColumn';
 import type { ActivePath, Document, MutationRequest } from '../../types/explorer';
 import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../utils/motionPresets';
+import { usePreferences } from '../../services/preferences';
 
 // ── 상수 ──────────────────────────────────────────────────────────────────────
 
@@ -129,11 +130,14 @@ export function MillerColumns({
     return cp?.kind === 'normal' ? (cp.databaseName ?? null) : null;
   }, [activePaths]);
 
-  // 조회 중인 컬렉션이 무거우면 layout 애니메이션을 끈다 (FLIP 재계산 비용 절감)
+  // 조회 중인 컬렉션이 무거우면 layout 애니메이션을 끈다 (FLIP 재계산 비용 절감) — 설정 › Display › Animations가 auto일 때.
+  // off면 늘 끄고, on이면 커도 켠다
+  const { animations } = usePreferences();
   const reduceMotion = useMemo(() => {
+    if (animations !== 'auto') return animations === 'off';
     const sizeMb = collections.find((c) => c.name === activeCollectionName)?.sizeMb ?? 0;
     return sizeMb > ANIMATION_DISABLE_THRESHOLD_MB;
-  }, [collections, activeCollectionName]);
+  }, [collections, activeCollectionName, animations]);
 
   // activePaths는 항상 [collections?, documents?, json, json, json...] 순서의 스택이다 —
   // 끝에서부터 연속으로 columnKind==='json'인 구간이 "현재 문서 안에서 얼마나 깊이

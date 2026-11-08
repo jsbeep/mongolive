@@ -12,7 +12,8 @@ import { AnimatePresence, m } from 'framer-motion';
 import { ArrowRight, ChevronRight, CircleAlert, Keyboard, CircleCheck, Database, Link, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, Diagnostics, MutationRequest } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
-import { setPreference, usePreferences, UNDO_DEPTHS, type DateDisplay, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type UndoDepth } from '../../services/preferences';
+import { setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type UndoDepth } from '../../services/preferences';
+import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../utils/motionPresets';
 import { saveServerSettings, useServerSettings } from '../../services/serverSettings';
 import { buildForumEjsonSample, buildForumJsonSample, FORUM_EJSON_DATABASE_NAME, FORUM_JSON_DATABASE_NAME } from '../../data/sampleData';
 import { formatDate, formatOid, offsetLabel } from '../../utils/formatValue';
@@ -151,6 +152,21 @@ function DisplaySection() {
           ]}
         />
         <p className={styles.preview}>{formatOid(SAMPLE_OID, prefs.oidDisplay)}</p>
+      </div>
+      <div className={styles.group}>
+        <p className={styles.groupTitle}>Animations</p>
+        <p className={styles.groupHint}>
+          Auto moves smoothly but turns column animations off while you look at a large collection (over {ANIMATION_DISABLE_THRESHOLD_MB} MB) and follows your system's "reduce motion" setting. Off is the fastest — things change in place without sliding.
+        </p>
+        <Segment<Animations>
+          value={prefs.animations}
+          onChange={(v) => setPreference('animations', v)}
+          options={[
+            { value: 'auto', label: 'Auto' },
+            { value: 'on', label: 'Always' },
+            { value: 'off', label: 'Off (fastest)' },
+          ]}
+        />
       </div>
     </>
   );
@@ -482,6 +498,7 @@ const SHORTCUTS: { title: string; rows: [keys: string[], what: string][] }[] = [
     rows: [
       [[MOD, 'K'], 'Quick jump — databases, collections, ObjectIds, commands'],
       [[MOD, 'Z'], 'Undo your last document or field edit (again for the one before)'],
+      [[MOD, 'B'], 'Sidebar: full ↔ icons (opens it again if hidden)'],
       [['?'], 'This list'],
     ],
   },

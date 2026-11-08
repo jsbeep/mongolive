@@ -129,15 +129,35 @@ export default function ExplorerPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // 빠른 이동의 명령 목록
+  // Ctrl+B(⌘B) = 사이드바 전체 ↔ 아이콘 레일(완전히 접혀 있으면 접기 전 단계로) — VSCode와 같은 키.
+  // 입력칸 안에선 건드리지 않는다(글자 굵게 등 다른 뜻일 수 있다)
+  const sidebarRef = useRef(sidebar);
+  sidebarRef.current = sidebar;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'b') return;
+      const target = e.target as Element | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      e.preventDefault();
+      const s = sidebarRef.current;
+      if (s.mode === 'collapsed') s.restore();
+      else s.setMode(s.mode === 'full' ? 'rail' : 'full');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // 빠른 이동의 명령 목록 — 단축키 표시는 Mac이면 ⌘
+  const mod = navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+';
   const isTreeMode = maxVisibleColumns === MIN_VISIBLE_COLUMNS;
   const quickCommands: QuickCommand[] = [
     { id: 'settings', label: 'Open settings', icon: Settings, run: () => openSettings() },
     { id: 'notifications', label: 'Show notifications', icon: Bell, run: () => setCenterOpen(true) },
     { id: 'resync', label: "Re-sync what's on screen", icon: RefreshCw, run: () => void refresh() },
-    { id: 'undo', label: 'Undo last edit', icon: Undo2, hint: 'Ctrl+Z', run: () => void undo() },
+    { id: 'undo', label: 'Undo last edit', icon: Undo2, hint: `${mod}Z`, run: () => void undo() },
     { id: 'tree', label: isTreeMode ? 'Switch to column mode' : 'Switch to tree mode', icon: ListTree, run: () => setMaxVisibleColumns(isTreeMode ? 3 : MIN_VISIBLE_COLUMNS) },
-    { id: 'sidebar', label: sidebar.mode === 'full' ? 'Collapse sidebar to icons' : 'Expand sidebar', icon: PanelLeft, run: () => sidebar.setMode(sidebar.mode === 'full' ? 'rail' : 'full') },
+    { id: 'sidebar', label: sidebar.mode === 'full' ? 'Collapse sidebar to icons' : 'Expand sidebar', icon: PanelLeft, hint: `${mod}B`, run: () => sidebar.setMode(sidebar.mode === 'full' ? 'rail' : 'full') },
     {
       id: 'readonly',
       label: getServerSettingsSnapshot().readOnly ? 'Turn read-only mode off' : 'Turn read-only mode on',
