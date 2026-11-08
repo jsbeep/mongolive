@@ -1,5 +1,5 @@
 // 밀러 컬럼 키보드 탐색 — Finder의 컬럼 보기처럼 키보드만으로 다닌다.
-//   ↑ ↓ / k j      같은 컬럼 안에서 행 이동
+//   ↑ ↓ / k j      같은 컬럼 안에서 행 이동(첫·마지막 행에서 더 가면 이전·다음 페이지로)
 //   → / l / Enter  고른 행 펼치기 → 다음 컬럼 첫 행으로(펼칠 게 없는 필드에서 Enter = 편집)
 //   ← / h          앞 컬럼으로(그 컬럼에서 펼쳐 둔 행에)
 //   e / F2         편집          Delete  삭제(확인 창은 설정대로)
@@ -94,6 +94,33 @@ export function useMillerKeyboard(containerRef: RefObject<HTMLElement | null>, o
       setTimeout(tick, 60);
     };
 
+    // 그 컬럼의 페이지 화살표 행(PageEdge)을 눌러 넘기고, 새 페이지가 그려지면 첫 행(이전이면 마지막 행)으로
+    // 넘기는 중(새 페이지가 그려지기 전)엔 ↑↓를 더 받지 않는다 — 연타로 여러 장 넘어가거나 사라지는 페이지를 누르지 않게
+    let turning = false;
+    const turnPage = (col: number, dir: 'prev' | 'next') => {
+      const colEl = columnEl(col);
+      const btn = colEl?.querySelector<HTMLButtonElement>(`[data-page-edge="${dir}"]`);
+      if (!btn || btn.disabled || btn.closest('[data-nav-col]') !== colEl) return false;
+      const before = rowsOf(col)[0];
+      btn.click();
+      turning = true;
+      const started = Date.now();
+      const tick = () => {
+        const rows = rowsOf(col);
+        if (rows.length && rows[0] !== before) {
+          turning = false;
+          cursorRef.current = { col, row: dir === 'next' ? 0 : rows.length - 1 };
+          paint(true);
+        } else if (Date.now() - started < OPEN_WAIT_MS) {
+          setTimeout(tick, 60);
+        } else {
+          turning = false;
+        }
+      };
+      setTimeout(tick, 60);
+      return true;
+    };
+
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
       if (document.querySelector('[aria-modal="true"]')) return;
@@ -117,6 +144,11 @@ export function useMillerKeyboard(containerRef: RefObject<HTMLElement | null>, o
       // 버튼에 포커스가 있을 때 Enter는 그 버튼의 일 — 커서가 안 보이는 동안엔 가로채지 않는다
       if (key === 'Enter' && !visibleRef.current) return;
 
+      if (turning && ['ArrowUp', 'ArrowDown', 'j', 'k'].includes(key)) {
+        e.preventDefault();
+        return;
+      }
+
       ensureCursor();
       const c = cursorRef.current;
       if (!c) return;
@@ -134,10 +166,12 @@ export function useMillerKeyboard(containerRef: RefObject<HTMLElement | null>, o
       switch (key) {
         case 'ArrowDown':
         case 'j':
+          if (c.row >= rowsOf(c.col).length - 1 && turnPage(c.col, 'next')) return;
           c.row += 1;
           break;
         case 'ArrowUp':
         case 'k':
+          if (c.row <= 0 && turnPage(c.col, 'prev')) return;
           c.row -= 1;
           break;
         case 'ArrowLeft':

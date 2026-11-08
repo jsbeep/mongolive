@@ -582,7 +582,7 @@ const SHORTCUTS: { title: string; rows: [keys: string[], what: string][] }[] = [
   {
     title: 'In the columns',
     rows: [
-      [['↑', '↓'], 'Move within a column (also k / j)'],
+      [['↑', '↓'], 'Move within a column (also k / j) — past the first or last row turns the page'],
       [['→', 'Enter'], 'Open the row into the next column (also l)'],
       [['←'], 'Back to the previous column (also h)'],
       [['e'], 'Edit the row (also F2; Enter on a field that has nothing to open)'],

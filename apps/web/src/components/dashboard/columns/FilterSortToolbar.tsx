@@ -12,6 +12,8 @@ interface FilterSortToolbarProps {
   sortValue: string;
   onSortChange: (value: string) => void;
   sortOptions: SortOption[];
+  // Esc로 닫기 — 필터 버튼을 다시 누른 것과 같다(걸어 둔 필터는 그대로, 버튼의 초록 점으로 남는다)
+  onClose: () => void;
 }
 
 // 컬럼 헤더의 필터 아이콘을 토글하면 나타나는 보조 툴바 — 검색어 입력 + 정렬 기준 선택
@@ -22,9 +24,17 @@ export function FilterSortToolbar({
   sortValue,
   onSortChange,
   sortOptions,
+  onClose,
 }: FilterSortToolbarProps) {
   return (
-    <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/60">
+    <div
+      className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/60"
+      onKeyDown={(e) => {
+        if (e.key !== 'Escape') return;
+        e.stopPropagation();
+        onClose();
+      }}
+    >
       <div className="relative flex-1 min-w-0">
         <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
         <input

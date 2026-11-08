@@ -54,7 +54,7 @@ export interface DocumentSummary {
 // ── 문서 목록 페이지 ──────────────────────────────────────────────────────────
 
 // 한 페이지(문서 목록)·한 화면(필드 목록)에 보여 줄 개수. 둘이 같은 단위를 쓴다.
-export const PAGE_SIZE = 7;
+export const PAGE_SIZE = 10;
 
 export type DocumentSort =
   | 'none'

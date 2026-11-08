@@ -18,6 +18,7 @@ import { FILTER_DOT_CLASS, HeaderTitle } from './HeaderTitle';
 import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 import { FilterSortToolbar, type SortOption } from './FilterSortToolbar';
 import { PageRail, PageTransition } from './PageRail';
+import { PageEdge, useOverscrollPaging } from './PageEdge';
 
 const DOCUMENT_SORT_OPTIONS: SortOption[] = [
   { value: 'none', label: 'Default order' },
@@ -119,9 +120,21 @@ export function DocumentsColumn({
         ? pageInfo.markedPage
         : undefined;
 
-  // 페이지를 바꾸면 목록 맨 위부터 보이게
   const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { listRef.current?.scrollTo({ top: 0 }); }, [query.page]);
+  // 페이지 끝 화살표 행 + 끝에서 더 굴리면 넘기기(PageEdge). 불러오는 동안은 멈춘다(한 번에 여러 장 넘어가지 않게)
+  const canPrevPage = query.page > 0;
+  const canNextPage = query.page < pageCount - 1;
+  const paging = useOverscrollPaging(listRef, {
+    canPrev: canPrevPage,
+    canNext: canNextPage,
+    onPrev: () => onQueryChange({ page: query.page - 1 }),
+    onNext: () => onQueryChange({ page: query.page + 1 }),
+    disabled: isLoading,
+  });
+  // 새 페이지를 받아 온 뒤 맨 위부터(이전 페이지로 넘겼으면 맨 아래부터)
+  useEffect(() => { paging.land(); }, [pageInfo?.page]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 화살표 행은 받아 온 페이지 기준 — 페이지 안에 함께 그려져 옛 페이지와 접히고 새 페이지와 펼쳐진다
+  const shownPage = pageInfo?.page ?? 0;
 
   // 컬럼 전체에 파일을 드롭하면 "문서 추가" 에디터를 열고 그 파일을 업로드한 것처럼 처리
   const { isDragOver: isColumnDragOver, dragHandlers } = useFileDrop((file) => {
@@ -249,6 +262,7 @@ export function DocumentsColumn({
           sortValue={query.sort}
           onSortChange={(value) => onQueryChange({ sort: value as DocumentSort })}
           sortOptions={DOCUMENT_SORT_OPTIONS}
+          onClose={() => setIsDocToolbarOpen(false)}
         />
       )}
 
@@ -277,6 +291,8 @@ export function DocumentsColumn({
             disabled={reduceMotion}
             className="flex flex-col gap-0.5"
           >
+          {/* 화살표 행도 페이지 안에 — 옛 페이지와 함께 접히고 새 페이지와 함께 펼쳐진다(먼저 튀어나오지 않게) */}
+          {shownPage > 0 && <PageEdge direction="prev" progress={paging.prevProgress} onClick={paging.goPrev} busy={isLoading} />}
           {documents.map((doc) => {
             const isEditing = editingId === `document:${doc.id}`;
             const isHighlighted = activeDatabaseName && activeCollectionName
@@ -334,6 +350,7 @@ export function DocumentsColumn({
               />
             );
           })}
+          {shownPage < pageCount - 1 && <PageEdge direction="next" progress={paging.nextProgress} onClick={paging.goNext} busy={isLoading} />}
           </PageTransition>
         )}
 

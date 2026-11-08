@@ -1,7 +1,7 @@
 // 컬럼 오른쪽(스크롤바 옆)에 세로로 붙는 페이지 이동 레일.
 // 목록을 어디까지 스크롤했든 항상 보이므로 맨 아래까지 내리지 않고도 페이지를 바꿀 수 있다.
 // 페이지가 1개뿐이면 그리지 않는다.
-import { useId, type ReactNode } from 'react';
+import { useId, useRef, type ReactNode } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '../../../utils/cn';
@@ -104,7 +104,9 @@ export function PageRail({ page, pageCount, onChange, markedPage, isBusy, classN
 
 // 페이지가 바뀔 때 현재 목록을 접고(축소) 새 페이지를 펼친다(확장).
 // mode="wait" — 접히는 게 끝난 뒤에 펼쳐지므로 두 페이지가 겹쳐 보이지 않는다.
-// overflow는 애니메이션 중에만 숨긴다(끝나면 visible) — 항목의 그림자·포커스 링이 잘리지 않게.
+// overflow는 애니메이션 중에만 숨기고 끝나면 직접 되돌린다 — height:'auto'로 가는 애니메이션에선
+// transitionEnd가 적용되지 않아 hidden이 남았다. hidden인 채면 항목의 그림자·포커스 링이 잘리고,
+// flex 안에서 줄어들 수 있게 돼(최소 높이 0) 목록이 스크롤되지 않고 컬럼 높이에 맞춰 잘렸다(shrink-0도 그래서)
 const PAGE_TRANSITION = { duration: 0.16, ease: [0.4, 0, 0.2, 1] as const };
 
 interface PageTransitionProps {
@@ -115,19 +117,33 @@ interface PageTransitionProps {
 }
 
 export function PageTransition({ pageKey, className, disabled, children }: PageTransitionProps) {
-  if (disabled) return <div className={className}>{children}</div>;
+  // 애니메이션을 꺼도 페이지가 바뀌면 목록을 새로 그린다(key) — 안쪽 AnimatePresence(initial={false})가
+  // 새로 시작되므로 행마다 따로 사라졌다 나타나지 않고, 문서 컬럼처럼 한 번에 바뀐다
+  if (disabled) return <div key={pageKey} className={cn('shrink-0', className)}>{children}</div>;
   return (
     <AnimatePresence mode="wait" initial={false}>
-      <m.div
-        key={pageKey}
-        className={className}
-        initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
-        animate={{ height: 'auto', opacity: 1, transitionEnd: { overflow: 'visible' } }}
-        exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
-        transition={PAGE_TRANSITION}
-      >
+      <PageBody key={pageKey} className={className}>
         {children}
-      </m.div>
+      </PageBody>
     </AnimatePresence>
+  );
+}
+
+function PageBody({ className, children }: { className?: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <m.div
+      ref={ref}
+      className={cn('shrink-0', className)}
+      initial={{ height: 0, opacity: 0, overflow: 'hidden' }}
+      animate={{ height: 'auto', opacity: 1 }}
+      exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
+      transition={PAGE_TRANSITION}
+      onAnimationComplete={() => {
+        if (ref.current) ref.current.style.overflow = 'visible';
+      }}
+    >
+      {children}
+    </m.div>
   );
 }

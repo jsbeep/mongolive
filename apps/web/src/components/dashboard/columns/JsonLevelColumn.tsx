@@ -37,6 +37,7 @@ import { HeaderIcon } from './HeaderIcon';
 import { FILTER_DOT_CLASS, HeaderTitle } from './HeaderTitle';
 import { DropOverlay } from './DropOverlay';
 import { PageRail, PageTransition } from './PageRail';
+import { PageEdge, useOverscrollPaging } from './PageEdge';
 import { getFieldType, resolveAtPath, getEntries } from '../../../utils/jsonTree';
 import { isPathChanged } from '../../../utils/changedPaths';
 import { useFileDrop } from '../../../hooks/useFileDrop';
@@ -238,7 +239,7 @@ export function JsonLevelColumn({
 
   const entryPageCount = Math.max(1, Math.ceil(displayEntries.length / PAGE_SIZE));
   // 필드가 지워져 페이지 수가 줄면 마지막 페이지로
-  const currentEntryPage = Math.min(entryPage, entryPageCount - 1);
+  const currentEntryPage = Math.max(0, Math.min(entryPage, entryPageCount - 1));
   const visibleEntries = displayEntries.slice(currentEntryPage * PAGE_SIZE, (currentEntryPage + 1) * PAGE_SIZE);
 
   // 다음 컬럼에 펼쳐져 있는 필드의 key — 그 필드가 다른 페이지에 있으면 그 페이지를 보여준다
@@ -259,8 +260,6 @@ export function JsonLevelColumn({
     if (activeChildIndex >= 0) setEntryPage(Math.floor(activeChildIndex / PAGE_SIZE));
   }, [activeChildKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 페이지를 넘기면 목록 맨 위부터(중첩 컬럼은 자체 스크롤이 없으니 head 컬럼 몫)
-  useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [currentEntryPage]);
 
   // ── 탐색 — goSibling 패턴 ─────────────────────────────────────────────────
 
@@ -466,6 +465,20 @@ export function JsonLevelColumn({
   // 그 헤더가 sticky breadcrumb 영역 위로 스크롤되어 지나가면(IntersectionObserver)
   // 그 단계의 라벨을 breadcrumb에 추가한다.
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 페이지 끝 화살표 행 + 끝에서 더 굴리면 넘기기(PageEdge) — 펼쳐 보기(인라인 체인)에선 끈다:
+  // 한 스크롤 안에 여러 단계가 쌓여 있어 '끝'이 어느 단계의 끝인지 모호하다(레일은 그대로)
+  const edgesOn = !isNested && !isInlineChain && !reorder;
+  const paging = useOverscrollPaging(scrollRef, {
+    canPrev: currentEntryPage > 0,
+    canNext: currentEntryPage < entryPageCount - 1,
+    onPrev: () => setEntryPage(currentEntryPage - 1),
+    onNext: () => setEntryPage(currentEntryPage + 1),
+    disabled: !edgesOn,
+  });
+  // 페이지를 넘기면 맨 위부터(이전 페이지로 넘겼으면 맨 아래부터). 중첩 컬럼은 자체 스크롤이 없으니 head 컬럼 몫
+  useEffect(() => { paging.land(); }, [currentEntryPage]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [passedChain, setPassedChain] = useState<Record<number, string | null>>({});
 
   useEffect(() => {
@@ -966,6 +979,7 @@ export function JsonLevelColumn({
           sortValue={fieldSortMode}
           onSortChange={setFieldSortMode}
           sortOptions={FIELD_SORT_OPTIONS}
+          onClose={() => setIsFieldToolbarOpen(false)}
         />
       )}
 
@@ -992,7 +1006,9 @@ export function JsonLevelColumn({
         ) : entries.length > 0 && !displayEntries.length ? (
           <p className="flex-1 flex items-center justify-center text-sm text-slate-400 py-10">No fields match the filter</p>
         ) : (
+          /* 화살표 행도 페이지 안에 — 옛 페이지와 함께 접히고 새 페이지와 함께 펼쳐진다(먼저 튀어나오지 않게) */
           <PageTransition pageKey={currentEntryPage} disabled={reduceMotion} className="flex flex-col gap-0.5">
+            {edgesOn && currentEntryPage > 0 && <PageEdge direction="prev" progress={paging.prevProgress} onClick={paging.goPrev} />}
             {canReorder || reorder ? (
               // 순서를 바꿀 수 있는 목록 — 평소엔 이 페이지 행만, 초안 동안엔 전체(같은 Reorder.Group 안이라
               // 잡은 행이 다시 그려지지 않아 끌기가 끊기지 않는다)
@@ -1030,6 +1046,7 @@ export function JsonLevelColumn({
                 {visibleEntries.map(({ key, value }) => renderField(key, value))}
               </AnimatePresence>
             )}
+            {edgesOn && currentEntryPage < entryPageCount - 1 && <PageEdge direction="next" progress={paging.nextProgress} onClick={paging.goNext} />}
           </PageTransition>
         )}
 
