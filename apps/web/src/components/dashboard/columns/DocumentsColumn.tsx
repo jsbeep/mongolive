@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileText, Tag, Check, X, ArrowLeft, Link, Filter } from 'lucide-react';
+import { FileText, Tag, Check, X, ArrowLeft, Link, Search, ArrowUpDown, ArrowDownAZ, ArrowDownZA, ArrowDownWideNarrow, ArrowDownNarrowWide, ClockArrowDown, ClockArrowUp } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { ActivePath, CollectionSummary, DocumentSort, DocumentSummary, JsonObject, MutationRequest } from '../../../types/explorer';
 import type { DocumentListQuery, DocumentPageInfo } from '../../../hooks/useExplorerState';
@@ -19,15 +19,20 @@ import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 import { FilterSortToolbar, type SortOption } from './FilterSortToolbar';
 import { PageRail, PageTransition } from './PageRail';
 import { PageEdge, useOverscrollPaging } from './PageEdge';
+import { QueryBar } from './QueryBar';
+import { closeSearchPanel, openSearchPanel, useSearchPanel } from '../../../services/queryPanel';
+import { useHeaderFold } from '../../../hooks/useHeaderFold';
+import { HeaderOverflowMenu } from './HeaderOverflowMenu';
+import { dataSourceKind } from '../../../services/api';
 
 const DOCUMENT_SORT_OPTIONS: SortOption[] = [
-  { value: 'none', label: 'Default order' },
-  { value: 'title-asc', label: 'Title A→Z' },
-  { value: 'title-desc', label: 'Title Z→A' },
-  { value: 'fields-desc', label: 'Most fields' },
-  { value: 'fields-asc', label: 'Fewest fields' },
-  { value: 'updated-desc', label: 'Recently updated' },
-  { value: 'updated-asc', label: 'Oldest updated' },
+  { value: 'none', label: 'Default order', icon: ArrowUpDown },
+  { value: 'title-asc', label: 'Title A→Z', icon: ArrowDownAZ },
+  { value: 'title-desc', label: 'Title Z→A', icon: ArrowDownZA },
+  { value: 'fields-desc', label: 'Most fields', icon: ArrowDownWideNarrow },
+  { value: 'fields-asc', label: 'Fewest fields', icon: ArrowDownNarrowWide },
+  { value: 'updated-desc', label: 'Recently updated', icon: ClockArrowDown },
+  { value: 'updated-asc', label: 'Oldest updated', icon: ClockArrowUp },
 ];
 
 // 검색어 입력이 멈춘 뒤 이만큼 기다렸다가 요청 — 글자마다 서버에 묻지 않도록
@@ -40,6 +45,8 @@ export interface DocumentListControls {
   page: DocumentPageInfo | null;
   query: DocumentListQuery;
   onQueryChange: (patch: Partial<DocumentListQuery>) => void;
+  // 사용자 쿼리(MongoDB filter) 적용/해제 — 실패하면 오류 메시지
+  onApplyMongoFilter: (filter: JsonObject | undefined, text: string) => Promise<string | null>;
 }
 
 interface DocumentsColumnProps {
@@ -92,11 +99,14 @@ export function DocumentsColumn({
   const [titleKeyInput, setTitleKeyInput] = useState('');
   const [isManagingRefs, setIsManagingRefs] = useState(false);
 
-  // 문서 검색/정렬 — 토글 가능한 보조 툴바 (헤더의 필터 아이콘). 거르기·정렬·페이지 자르기는
-  // 데이터 소스가 하고(현재 페이지만 받아오므로 브라우저에서 정렬하면 그 페이지 안에서만 섞인다),
-  // 여기서는 입력값만 넘긴다.
-  const [isDocToolbarOpen, setIsDocToolbarOpen] = useState(false);
-  const { page: pageInfo, query, onQueryChange } = documentList;
+  // 찾기 패널 — 머리의 찾기 버튼 하나로 연다. 위: 글자 필터·정렬(FilterSortToolbar), 아래: 쿼리(QueryBar).
+  // 거르기·정렬·페이지 자르기는 데이터 소스가 하고(현재 페이지만 받아오므로 브라우저에서 정렬하면 그 페이지
+  // 안에서만 섞인다) 여기서는 입력값만 넘긴다. 열림 상태는 breadcrumb 칩·단축키(/, q)도 쓰므로 모듈 저장소에 둔다.
+  const searchPanel = useSearchPanel();
+  const { page: pageInfo, query, onQueryChange, onApplyMongoFilter } = documentList;
+  const isQueryActive = !!query.mongoFilter;
+  // Mock은 MongoDB 매칭을 흉내 내지 않는다 — 쿼리는 서버 연결에서만
+  const canQuery = dataSourceKind === 'remote';
   const [filterInput, setFilterInput] = useState(query.filter);
   // 컬렉션이 바뀌어 검색어가 초기화되면 입력창도 맞춘다
   useEffect(() => { setFilterInput(query.filter); }, [query.filter]);
@@ -121,6 +131,15 @@ export function DocumentsColumn({
         : undefined;
 
   const listRef = useRef<HTMLDivElement>(null);
+  // 머리가 좁으면 제목 필드·참조를 ⋯ 메뉴로 접는다
+  const headerRef = useRef<HTMLDivElement>(null);
+  const foldableRef = useRef<HTMLDivElement>(null);
+  const fixedRef = useRef<HTMLButtonElement>(null);
+  const isHeaderFolded = useHeaderFold(headerRef, foldableRef, fixedRef);
+  const startTitleKeyEdit = () => {
+    setTitleKeyInput(currentTitleKey ?? 'name');
+    setIsEditingTitleKey(true);
+  };
   // 페이지 끝 화살표 행 + 끝에서 더 굴리면 넘기기(PageEdge). 불러오는 동안은 멈춘다(한 번에 여러 장 넘어가지 않게)
   const canPrevPage = query.page > 0;
   const canNextPage = query.page < pageCount - 1;
@@ -173,7 +192,7 @@ export function DocumentsColumn({
       <DropOverlay visible={isColumnDragOver} label="Drop a file to import as a document" />
 
       {/* 헤더 */}
-      <div className={styles.header}>
+      <div ref={headerRef} className={styles.header}>
         {isEditingTitleKey ? (
           <>
             <span className="text-[13px] font-semibold text-slate-700 truncate">Title Field</span>
@@ -206,64 +225,93 @@ export function DocumentsColumn({
           </>
         ) : (
           <>
-            <FileText size={15} className={styles.headerIcon} />
-            <HeaderTitle title={collectionLabel} total={totalAll} matched={isDocFilterActive ? totalMatched : undefined} />
-            <button
-              type="button"
-              className={cn(
-                'flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200/70 text-slate-500 hover:text-slate-700 transition-colors shrink-0',
-                !activeCollectionName && 'opacity-40 pointer-events-none',
+            {/* 왼쪽: 아이콘·제목·개수 — 머리 너비의 절반은 늘 이쪽(useHeaderFold) */}
+            <div className="flex min-w-[50%] flex-1 items-center gap-2">
+              <FileText size={15} className={cn(styles.headerIcon, 'shrink-0')} />
+              <HeaderTitle title={collectionLabel} total={totalAll} matched={isDocFilterActive || isQueryActive ? totalMatched : undefined} />
+            </div>
+            {/* 오른쪽: 제목 필드·참조(좁으면 ⋯ 메뉴로) + 찾기(늘 보임 — 걸린 조건의 점이 여기 붙는다) */}
+            <div className="flex shrink-0 items-center gap-2">
+              {isHeaderFolded ? (
+                <HeaderOverflowMenu
+                  items={[
+                    { icon: <Tag size={12} />, label: 'Title field', detail: currentTitleKey ?? 'name', disabled: !activeCollectionName, onSelect: startTitleKeyEdit },
+                    { icon: <Link size={12} />, label: 'References', detail: String(Object.keys(referenceFields).length), disabled: !activeCollectionName, onSelect: () => setIsManagingRefs(true) },
+                  ]}
+                />
+              ) : (
+                <div ref={foldableRef} className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className={cn(
+                      'flex min-w-0 items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200/70 text-slate-500 hover:text-slate-700 transition-colors shrink-0',
+                      !activeCollectionName && 'opacity-40 pointer-events-none',
+                    )}
+                    data-tt={`Title field${currentTitleKey ? ` "${currentTitleKey}"` : ''} — which field labels each document in this list`}
+                    onClick={startTitleKeyEdit}
+                  >
+                    <Tag size={12} className="shrink-0" />
+                    {/* 긴 필드 이름은 영문 8글자쯤에서 … (전체는 툴팁) */}
+                    <span className="max-w-[8ch] truncate text-[11px] font-mono">{currentTitleKey ?? 'name'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      'flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200/70 text-slate-500 hover:text-slate-700 transition-colors shrink-0',
+                      !activeCollectionName && 'opacity-40 pointer-events-none',
+                    )}
+                    data-tt="References — declare which fields link to another collection, then click them to jump"
+                    onClick={() => setIsManagingRefs(true)}
+                  >
+                    <Link size={12} />
+                    <span className="text-[11px] font-mono">{Object.keys(referenceFields).length}</span>
+                  </button>
+                </div>
               )}
-              data-tt="Title field — which field labels each document in this list"
-              onClick={() => {
-                setTitleKeyInput(currentTitleKey ?? 'name');
-                setIsEditingTitleKey(true);
-              }}
-            >
-              <Tag size={12} />
-              <span className="text-[11px] font-mono">{currentTitleKey ?? 'name'}</span>
-            </button>
-            <button
-              type="button"
-              className={cn(
-                'flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200/70 text-slate-500 hover:text-slate-700 transition-colors shrink-0',
-                !activeCollectionName && 'opacity-40 pointer-events-none',
-              )}
-              data-tt="References — declare which fields link to another collection, then click them to jump"
-              onClick={() => setIsManagingRefs(true)}
-            >
-              <Link size={12} />
-              <span className="text-[11px] font-mono">{Object.keys(referenceFields).length}</span>
-            </button>
-            <button
-              type="button"
-              className={cn(
-                'relative p-1.5 rounded-lg transition-colors shrink-0',
-                isDocToolbarOpen || isDocFilterActive ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600',
-              )}
-              data-tt="Filter / sort documents in this collection"
-              onClick={() => setIsDocToolbarOpen((v) => !v)}
-            >
-              {isDocFilterActive && !isDocToolbarOpen && (
-                <span className={FILTER_DOT_CLASS} />
-              )}
-              <Filter size={13} />
-            </button>
+              <button
+                ref={fixedRef}
+                type="button"
+                className={cn(
+                  'relative p-1.5 rounded-lg transition-colors shrink-0',
+                  searchPanel.open || isDocFilterActive || isQueryActive ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600',
+                )}
+                // '/' 단축키(useMillerKeyboard)가 data-tt가 "Filter"로 시작하는 버튼을 찾아 누른다
+                data-tt={canQuery ? 'Filter & query — / to filter, q to query' : 'Filter / sort documents in this collection'}
+                onClick={() => (searchPanel.open ? closeSearchPanel() : openSearchPanel('filter'))}
+              >
+                {(isDocFilterActive || isQueryActive) && !searchPanel.open && <span className={FILTER_DOT_CLASS} />}
+                <Search size={13} />
+              </button>
+            </div>
           </>
         )}
       </div>
 
-      {/* 문서 검색/정렬 툴바 */}
-      {isDocToolbarOpen && (
-        <FilterSortToolbar
-          filterText={filterInput}
-          onFilterTextChange={setFilterInput}
-          filterPlaceholder="Search title or preview…"
-          sortValue={query.sort}
-          onSortChange={(value) => onQueryChange({ sort: value as DocumentSort })}
-          sortOptions={DOCUMENT_SORT_OPTIONS}
-          onClose={() => setIsDocToolbarOpen(false)}
-        />
+      {/* 찾기 패널 — 위: 글자 필터·정렬, 아래: 쿼리(서버 연결에서만). 컬렉션이 바뀌면 쿼리 입력은 새로 그린다 */}
+      {searchPanel.open && activeCollectionName && (
+        <>
+          <FilterSortToolbar
+            filterText={filterInput}
+            onFilterTextChange={setFilterInput}
+            filterPlaceholder="Search title or preview…"
+            sortValue={query.sort}
+            onSortChange={(value) => onQueryChange({ sort: value as DocumentSort })}
+            sortOptions={DOCUMENT_SORT_OPTIONS}
+            onClose={closeSearchPanel}
+            autoFocus={false}
+            focusSignal={searchPanel.focus === 'filter' ? searchPanel.seq : undefined}
+          />
+          {canQuery && (
+            <QueryBar
+              key={`${activeDatabaseName}.${activeCollectionName}`}
+              appliedText={query.mongoFilter ? query.mongoFilterText : undefined}
+              isApplied={isQueryActive}
+              onRun={onApplyMongoFilter}
+              onClose={closeSearchPanel}
+              focusSignal={searchPanel.focus === 'query' ? searchPanel.seq : undefined}
+            />
+          )}
+        </>
       )}
 
       {/* 목록 + 오른쪽 페이지 레일 */}
@@ -399,7 +447,7 @@ export function DocumentsColumn({
         {totalAll > 0 && totalMatched === 0 && (
           <div className={styles.empty}>
             <FileText size={28} className="opacity-30" />
-            <span>No documents match the filter</span>
+            <span>{isQueryActive ? 'No documents match the query' : 'No documents match the filter'}</span>
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Link, X, Plus } from 'lucide-react';
 import type { CollectionSummary, MutationRequest } from '../../../types/explorer';
@@ -89,6 +89,18 @@ export function ReferenceFieldsManager({
 
   const availableSuggestions = (suggestedFieldKeys ?? []).filter((k) => !(k in referenceFields));
 
+  // Esc = 닫기(다른 모달과 같게). 입력 중이어도 — 추가 줄은 저장 전이라 잃을 게 적다
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -104,6 +116,9 @@ export function ReferenceFieldsManager({
 
           <motion.div
             className={styles.card}
+            role="dialog"
+            aria-modal="true"
+            aria-label="References"
             initial={{ scale: 0.94, opacity: 0, y: 8 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.94, opacity: 0, y: 8 }}

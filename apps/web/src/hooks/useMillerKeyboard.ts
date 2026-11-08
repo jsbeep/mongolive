@@ -3,12 +3,15 @@
 //   → / l / Enter  고른 행 펼치기 → 다음 컬럼 첫 행으로(펼칠 게 없는 필드에서 Enter = 편집)
 //   ← / h          앞 컬럼으로(그 컬럼에서 펼쳐 둔 행에)
 //   e / F2         편집          Delete  삭제(확인 창은 설정대로)
-//   /              그 컬럼의 필터 입력칸     ?  단축키 목록     Esc  커서 숨기기
+//   /              그 컬럼의 필터 입력칸     q  문서 목록의 쿼리 입력(서버 연결)
+//   ?              단축키 목록               Esc  커서 숨기기
 // 입력칸 안이거나 모달이 떠 있으면 아무것도 하지 않는다. 마우스로 행을 누르면 커서가 거기로 옮겨 간다.
 // 컬럼·행은 utils/keyboardNav의 표시(data-nav-col / data-nav-row)로 찾는다 — 각 컬럼은 키를 모른다.
 // 커서는 DOM 속성(data-kb-cursor)으로 그린다: 실시간 반영 등으로 행이 다시 그려지면 MutationObserver가 다시 붙인다.
 import { useEffect, useRef, type RefObject } from 'react';
 import { navActionsOf } from '../utils/keyboardNav';
+import { openSearchPanel } from '../services/queryPanel';
+import { dataSourceKind } from '../services/api';
 
 interface Cursor {
   col: number;
@@ -125,13 +128,20 @@ export function useMillerKeyboard(containerRef: RefObject<HTMLElement | null>, o
       if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
       if (document.querySelector('[aria-modal="true"]')) return;
       const key = e.key;
-      const handled = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Delete', 'F2', 'Escape', 'j', 'k', 'h', 'l', 'e', '/', '?'];
+      const handled = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Delete', 'F2', 'Escape', 'j', 'k', 'h', 'l', 'e', '/', 'q', '?'];
       if (!handled.includes(key)) return;
       if (!root()) return;
 
       if (key === '?') {
         e.preventDefault();
         showShortcutsRef.current();
+        return;
+      }
+      // 쿼리는 커서가 어느 컬럼에 있든 문서 목록(컬럼 1)의 것 — 문서 목록이 열려 있고 서버 연결일 때만
+      if (key === 'q') {
+        if (dataSourceKind !== 'remote' || !columnEl(1)) return;
+        e.preventDefault();
+        openSearchPanel('query');
         return;
       }
       if (key === 'Escape') {
@@ -153,6 +163,16 @@ export function useMillerKeyboard(containerRef: RefObject<HTMLElement | null>, o
       const c = cursorRef.current;
       if (!c) return;
       e.preventDefault();
+      // '/'는 이동 키가 아니라 커서가 숨어 있어도 바로 — 그 컬럼의 필터 입력칸으로(닫혀 있으면 필터 버튼을 눌러 연다).
+      // 그 컬럼에 필터가 없으면(컬렉션 목록) 문서 목록의 필터로
+      if (key === '/') {
+        const hasFilter = (el: HTMLElement | null) => !!el?.querySelector('input[type="text"], input:not([type]), button[data-tt^="Filter"]');
+        const colEl = hasFilter(columnEl(c.col)) ? columnEl(c.col) : columnEl(1);
+        const input = () => colEl?.querySelector<HTMLInputElement>('input[type="text"], input:not([type])');
+        if (!input()) colEl?.querySelector<HTMLButtonElement>('button[data-tt^="Filter"]')?.click();
+        setTimeout(() => input()?.focus(), 60);
+        return;
+      }
       // 처음 누른 키는 커서를 보여 주기만(어디 있는지 보고 나서 움직이게)
       if (!visibleRef.current) {
         visibleRef.current = true;
@@ -197,14 +217,6 @@ export function useMillerKeyboard(containerRef: RefObject<HTMLElement | null>, o
         case 'Delete':
           actions.remove?.();
           break;
-        case '/': {
-          // 그 컬럼의 필터 버튼을 눌러 입력칸을 열고 거기로
-          const colEl = columnEl(c.col);
-          const input = () => colEl?.querySelector<HTMLInputElement>('input[type="text"], input:not([type])');
-          if (!input()) colEl?.querySelector<HTMLButtonElement>('button[data-tt^="Filter"]')?.click();
-          setTimeout(() => input()?.focus(), 60);
-          break;
-        }
       }
       paint(true);
     };

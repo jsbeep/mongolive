@@ -1,9 +1,8 @@
+import { useEffect, useRef } from 'react';
 import { Search, X } from 'lucide-react';
+import { SortMenuButton, type SortOption } from './SortMenuButton';
 
-export interface SortOption {
-  value: string;
-  label: string;
-}
+export type { SortOption } from './SortMenuButton';
 
 interface FilterSortToolbarProps {
   filterText: string;
@@ -14,9 +13,13 @@ interface FilterSortToolbarProps {
   sortOptions: SortOption[];
   // Esc로 닫기 — 필터 버튼을 다시 누른 것과 같다(걸어 둔 필터는 그대로, 버튼의 초록 점으로 남는다)
   onClose: () => void;
+  // 열릴 때 입력칸이 커서를 잡나(기본 true). 문서 컬럼의 찾기 패널은 false로 두고 focusSignal로 보낸다
+  autoFocus?: boolean;
+  // 바뀔 때마다 입력칸으로 커서를 보낸다(찾기 버튼·'/' 단축키)
+  focusSignal?: number;
 }
 
-// 컬럼 헤더의 필터 아이콘을 토글하면 나타나는 보조 툴바 — 검색어 입력 + 정렬 기준 선택
+// 컬럼 헤더의 필터 아이콘을 토글하면 나타나는 보조 툴바 — 검색어 입력 + 정렬 기준 선택(아이콘 버튼 + 메뉴)
 export function FilterSortToolbar({
   filterText,
   onFilterTextChange,
@@ -25,7 +28,13 @@ export function FilterSortToolbar({
   onSortChange,
   sortOptions,
   onClose,
+  autoFocus = true,
+  focusSignal,
 }: FilterSortToolbarProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (focusSignal !== undefined) inputRef.current?.focus();
+  }, [focusSignal]);
   return (
     <div
       className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/60"
@@ -38,7 +47,8 @@ export function FilterSortToolbar({
       <div className="relative flex-1 min-w-0">
         <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
         <input
-          autoFocus
+          ref={inputRef}
+          autoFocus={autoFocus}
           type="text"
           value={filterText}
           onChange={(e) => onFilterTextChange(e.target.value)}
@@ -55,15 +65,7 @@ export function FilterSortToolbar({
           </button>
         )}
       </div>
-      <select
-        className="text-xs px-2 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 transition-all font-mono shrink-0"
-        value={sortValue}
-        onChange={(e) => onSortChange(e.target.value)}
-      >
-        {sortOptions.map((opt) => (
-          <option key={opt.value} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
+      <SortMenuButton value={sortValue} options={sortOptions} onChange={onSortChange} />
       {sortValue !== 'none' && (
         <button
           type="button"

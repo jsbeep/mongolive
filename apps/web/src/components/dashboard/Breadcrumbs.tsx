@@ -7,6 +7,7 @@ import {
   KeyRound, Calendar, Sigma, Binary, Hash, CornerDownLeft, CornerUpLeft,
   ToggleLeft, Ban, Box,
 } from 'lucide-react';
+import { openSearchPanel } from '../../services/queryPanel';
 import { ExplorerPathSegment, Document, JsonValue, type DatabaseSummary } from '../../types/explorer';
 import { getEntries, getFieldType, isExpandableType, type JsonFieldType } from '../../utils/jsonTree';
 import { cn } from '../../utils/cn';
@@ -34,6 +35,8 @@ const styles = {
   dropdownEmpty: 'px-3 py-4 text-xs text-slate-400 text-center',
   dropdownBack: 'relative flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer select-none transition-colors text-slate-500',
   dropdownDivider: 'h-px bg-slate-100 my-1',
+  // 쿼리가 걸린 컬렉션 칸 옆 칩
+  queryChip: 'inline-flex h-5 shrink-0 items-center rounded-md bg-emerald-100 px-1.5 font-mono text-[11px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-200/80',
 } as const;
 
 const TYPE_BADGE: Partial<Record<JsonFieldType, { icon: typeof KeyRound; label: string; bg: string; text: string; iconColor: string }>> = {
@@ -53,6 +56,8 @@ interface BreadcrumbsProps {
   databases: DatabaseSummary[];
   activeDatabase: string | null;
   onSelectDatabase: (name: string) => void;
+  // 문서 목록에 사용자 쿼리가 걸려 있으면 그 글자 — 컬렉션 칸 옆에 칩으로(누르면 쿼리 바)
+  queryText?: string;
 }
 
 const getIconForKind = (kind: ExplorerPathSegment['kind']) => {
@@ -70,7 +75,7 @@ const getIconForKind = (kind: ExplorerPathSegment['kind']) => {
   }
 };
 
-export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFieldPath, databases, activeDatabase, onSelectDatabase }: BreadcrumbsProps) {
+export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFieldPath, databases, activeDatabase, onSelectDatabase, queryText }: BreadcrumbsProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -328,6 +333,17 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFie
                     {IconComponent && <IconComponent className={styles.icon} />}
                     <span className="max-w-40 truncate">{segment.label}</span>
                   </button>
+                  )}
+                  {segment.kind === 'collection' && queryText && (
+                    <button
+                      type="button"
+                      className={styles.queryChip}
+                      data-tt={`Query: ${queryText}`}
+                      aria-label="Edit query"
+                      onClick={() => openSearchPanel('query')}
+                    >
+                      {'{…}'}
+                    </button>
                   )}
                   {(index < breadcrumbs.length - 1 || (isEditing && index === boundaryIndex)) && (
                     <ChevronRight className={styles.chevron} aria-hidden="true" strokeWidth={2.5} />

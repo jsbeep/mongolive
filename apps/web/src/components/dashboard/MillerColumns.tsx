@@ -54,6 +54,7 @@ type MillerColumnsProps = Pick<
   | 'documentPage'
   | 'documentQuery'
   | 'setDocumentQuery'
+  | 'applyMongoFilter'
   | 'openDocument'
   | 'isLoading'
   | 'changedPaths'
@@ -85,6 +86,7 @@ export function MillerColumns({
   documentPage,
   documentQuery,
   setDocumentQuery,
+  applyMongoFilter,
   openDocument,
   isLoading,
   changedPaths,
@@ -233,7 +235,7 @@ export function MillerColumns({
                   documentsPath={slot.documentsPath ?? null}
                   collections={collections}
                   documents={documents}
-                  documentList={{ page: documentPage, query: documentQuery, onQueryChange: (patch) => void setDocumentQuery(patch) }}
+                  documentList={{ page: documentPage, query: documentQuery, onQueryChange: (patch) => void setDocumentQuery(patch), onApplyMongoFilter: applyMongoFilter }}
                   activeCollectionName={activeCollectionName}
                   activeDocumentOid={activeDocumentOid}
                   activeDatabaseName={activeDatabaseName}
@@ -259,6 +261,7 @@ export function MillerColumns({
                   documentPage={documentPage}
                   documentQuery={documentQuery}
                   setDocumentQuery={setDocumentQuery}
+                  applyMongoFilter={applyMongoFilter}
                   openDocument={openDocument}
                   isLoading={isLoading}
                   changedPaths={changedPaths}
@@ -343,7 +346,7 @@ function ColumnContent({ col, visibleLength, slotIndex, jsonChainTail, ...rest }
       <DocumentsColumn
         path={col}
         documents={rest.documents}
-        documentList={{ page: rest.documentPage, query: rest.documentQuery, onQueryChange: (patch) => void rest.setDocumentQuery(patch) }}
+        documentList={{ page: rest.documentPage, query: rest.documentQuery, onQueryChange: (patch) => void rest.setDocumentQuery(patch), onApplyMongoFilter: rest.applyMongoFilter }}
         collections={rest.collections}
         activeDocumentOid={rest.activeDocumentOid}
         isLoading={rest.isLoading}

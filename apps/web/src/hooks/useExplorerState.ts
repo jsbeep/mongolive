@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../services/api';
+import { api, dataSourceKind } from '../services/api';
 import { useToast, type ToastMessage } from './useToast';
 import { useUniqueOidRegistry } from './useUniqueOidRegistry';
 import { CHANGE_FLASH_MS, type ChangeTone } from '../components/common/ChangeFlash';
@@ -30,6 +30,7 @@ import { getServerSettingsSnapshot } from '../services/serverSettings';
 import { getPreferences, LIVE_BATCH_MS } from '../services/preferences';
 import {
   writeBlockedReason,
+  validateQueryFilter,
   collectionKey,
   compareKey,
   idString,
@@ -44,6 +45,7 @@ import {
   type DocumentSort,
   type DocumentSummary,
   type ExplorerPathSegment,
+  type JsonObject,
   type JsonValue,
   type LiveChange,
   type LiveLogEntry,
@@ -109,6 +111,10 @@ export interface DocumentListQuery {
   page: number;
   filter: string;
   sort: DocumentSort;
+  // 사용자 쿼리(MongoDB filter, 서버 연결에서만) — 없으면 컬렉션 전체. 컬렉션을 다시 열면 비운다(기억하지 않음)
+  mongoFilter?: JsonObject;
+  // 그 쿼리를 사용자가 쓴 글자 그대로 — 입력창·breadcrumb 칩에 다시 보여 준다(서버엔 안 보낸다)
+  mongoFilterText?: string;
 }
 
 // markId = markedPage를 계산할 때 기준이 된 문서 id(그 사이 선택이 바뀌었으면 markedPage는 낡은 값)
@@ -116,10 +122,11 @@ export type DocumentPageInfo = Omit<DocumentPage, 'items'> & { markId?: string }
 
 const EMPTY_DOCUMENT_QUERY: DocumentListQuery = { page: 0, filter: '', sort: 'none' };
 
-// 컬렉션별 문서 목록 필터·정렬 기억(이 브라우저) — 컬렉션을 직접 고를 때만 꺼내 쓴다.
+// 컬렉션별 문서 목록 필터·정렬·쿼리 기억(이 브라우저) — 컬렉션을 직접 고를 때만 꺼내 쓴다.
 // 참조·변경 기록으로 이동할 때는 빈 조건으로 연다(저장된 필터에 걸려 가려던 문서가 안 보이면 안 되므로).
+// 쿼리는 서버 연결에서만 꺼내고, 허용 연산자 검사를 다시 통과해야 쓴다(손으로 고친 localStorage 대비).
 const COLLECTION_QUERY_KEY = 'mongolive.collectionQuery';
-type SavedQuery = Pick<DocumentListQuery, 'filter' | 'sort'>;
+type SavedQuery = Pick<DocumentListQuery, 'filter' | 'sort' | 'mongoFilter' | 'mongoFilterText'>;
 const SORTS = new Set<DocumentSort>(['none', 'title-asc', 'title-desc', 'fields-desc', 'fields-asc', 'updated-desc', 'updated-asc']);
 const readSavedQueries = (): Record<string, SavedQuery> => {
   try {
@@ -131,17 +138,22 @@ const readSavedQueries = (): Record<string, SavedQuery> => {
 };
 const savedQueryFor = (database: string, collection: string): DocumentListQuery => {
   const saved = readSavedQueries()[collectionKey(database, collection)];
+  const mongoFilter = dataSourceKind === 'remote' && saved?.mongoFilter && !validateQueryFilter(saved.mongoFilter)
+    ? saved.mongoFilter
+    : undefined;
   return {
     ...EMPTY_DOCUMENT_QUERY,
     filter: typeof saved?.filter === 'string' ? saved.filter : '',
     sort: SORTS.has(saved?.sort as DocumentSort) ? saved!.sort : 'none',
+    mongoFilter,
+    mongoFilterText: mongoFilter && typeof saved?.mongoFilterText === 'string' ? saved.mongoFilterText : undefined,
   };
 };
 const rememberQuery = (database: string, collection: string, query: DocumentListQuery) => {
   const all = readSavedQueries();
   const key = collectionKey(database, collection);
-  if (!query.filter && query.sort === 'none') delete all[key];
-  else all[key] = { filter: query.filter, sort: query.sort };
+  if (!query.filter && query.sort === 'none' && !query.mongoFilter) delete all[key];
+  else all[key] = { filter: query.filter, sort: query.sort, mongoFilter: query.mongoFilter, mongoFilterText: query.mongoFilterText };
   try {
     localStorage.setItem(COLLECTION_QUERY_KEY, JSON.stringify(all));
   } catch {
@@ -187,6 +199,8 @@ export interface UseExplorerStateResult {
   selectDocument: (oid: string, title: string) => Promise<void>;
   // 문서 목록 검색어/정렬/페이지 변경. 검색어나 정렬이 바뀌면 첫 페이지로 간다.
   setDocumentQuery: (patch: Partial<DocumentListQuery>) => Promise<void>;
+  // 사용자 쿼리 적용(filter 없음 = 해제). 첫 페이지부터 다시 받는다. 실패하면 이전 결과·쿼리를 그대로 두고 오류 메시지를 돌려준다
+  applyMongoFilter: (filter: JsonObject | undefined, text?: string) => Promise<string | null>;
   pushJsonPath: (path: ActivePath) => void;
   popToIndex: (index: number) => void;
   pushFieldPath: (segments: string[]) => void;
@@ -261,7 +275,8 @@ export function useExplorerState(): UseExplorerStateResult {
     const seq = ++documentRequestSeq.current;
     // 선택된 문서가 몇 페이지에 있는지도 같이 묻는다(레일 표시용) — 참조 이동이면 그 대상이 곧 선택될 문서
     const markId = aroundId ?? activeDocumentOidRef.current ?? undefined;
-    const page = await api.getDocuments(collectionKey(database, collection), { ...query, aroundId, markId });
+    const { page: pageIndex, filter, sort, mongoFilter } = query;
+    const page = await api.getDocuments(collectionKey(database, collection), { page: pageIndex, filter, sort, mongoFilter, aroundId, markId });
     if (seq !== documentRequestSeq.current) return false;
     const { items, ...info } = page;
     setDocuments(items);
@@ -442,8 +457,19 @@ export function useExplorerState(): UseExplorerStateResult {
     try {
       // DB로 한정해서 조회한다 — 이름만 넘기면 findCollection이 전체 DB를 훑어
       // 다른 DB의 동명 컬렉션(users 등)을 먼저 집어온다
-      // 이 컬렉션에서 마지막으로 쓴 필터·정렬로 연다
-      await loadDocuments(activeDatabaseRef.current ?? '', name, savedQueryFor(activeDatabaseRef.current ?? '', name));
+      // 이 컬렉션에서 마지막으로 쓴 필터·정렬·쿼리로 연다. 저장된 쿼리가 이제 안 먹히면(필드 타입이 바뀌어 오류 등)
+      // 컬렉션이 안 열리면 안 되므로 쿼리 없이 다시 열고 그 쿼리는 잊는다
+      const db = activeDatabaseRef.current ?? '';
+      const saved = savedQueryFor(db, name);
+      try {
+        await loadDocuments(db, name, saved);
+      } catch (e) {
+        if (!saved.mongoFilter) throw e;
+        const withoutQuery = { ...saved, mongoFilter: undefined, mongoFilterText: undefined };
+        rememberQuery(db, name, withoutQuery);
+        await loadDocuments(db, name, withoutQuery);
+        showToast(`Saved query was dropped: ${e instanceof Error ? e.message : 'it failed'}`, 'error');
+      }
       activeCollectionRef.current = name;
       activeDocumentOidRef.current = null;
       setOpenDocument(null);
@@ -1268,6 +1294,21 @@ export function useExplorerState(): UseExplorerStateResult {
     }
   }, [applyDocumentQuery, loadDocuments, showToast]);
 
+  const applyMongoFilter = useCallback(async (mongoFilter: JsonObject | undefined, text?: string): Promise<string | null> => {
+    const db = activeDatabaseRef.current;
+    const col = activeCollectionRef.current;
+    if (!db || !col) return 'Open a collection first';
+    const next: DocumentListQuery = { ...documentQueryRef.current, page: 0, mongoFilter, mongoFilterText: mongoFilter ? text : undefined };
+    try {
+      // loadDocuments는 응답이 와야 쿼리 상태를 바꾼다 — 실패하면 이전 쿼리와 목록이 그대로 남는다(기억도 안 한다)
+      await loadDocuments(db, col, next);
+      rememberQuery(db, col, next);
+      return null;
+    } catch (e) {
+      return e instanceof Error ? e.message : 'Query failed';
+    }
+  }, [loadDocuments]);
+
   return {
     connectionStatus,
     activeDatabase,
@@ -1296,6 +1337,7 @@ export function useExplorerState(): UseExplorerStateResult {
     openCollection,
     selectDocument,
     setDocumentQuery,
+    applyMongoFilter,
     pushJsonPath,
     popToIndex,
     pushFieldPath,

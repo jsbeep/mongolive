@@ -68,6 +68,7 @@ export default function ExplorerPage() {
     documentPage,
     documentQuery,
     setDocumentQuery,
+    applyMongoFilter,
     openDocument,
     isLoading,
     changedPaths,
@@ -218,6 +219,7 @@ export default function ExplorerPage() {
               databases={databases}
               activeDatabase={activeDatabase}
               onSelectDatabase={(name) => void selectDatabase(name)}
+              queryText={documentQuery.mongoFilter ? (documentQuery.mongoFilterText || '{…}') : undefined}
             />
             {/* 강조 색: 내 저장 = 연초록, 밖에서 온 변경 = 하늘색 (ChangeFlash가 꺼내 쓴다) */}
             <ChangeToneContext.Provider value={changeTone}>
@@ -229,6 +231,7 @@ export default function ExplorerPage() {
                 documentPage={documentPage}
                 documentQuery={documentQuery}
                 setDocumentQuery={setDocumentQuery}
+                applyMongoFilter={applyMongoFilter}
                 openDocument={openDocument}
                 isLoading={isLoading}
                 changedPaths={changedPaths}

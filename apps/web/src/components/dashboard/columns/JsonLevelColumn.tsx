@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { nextPathId } from '../../../hooks/useExplorerState';
-import { Link, Hash, ToggleLeft, KeyRound, ChevronRight, Calendar, Sigma, Binary, Filter, Box, SquareTerminal, Check, X } from 'lucide-react';
+import { Link, Hash, ToggleLeft, KeyRound, ChevronRight, Calendar, Sigma, Binary, Filter, Box, SquareTerminal, Check, X, ArrowUpDown, ArrowDownAZ, ArrowDownZA, Shapes } from 'lucide-react';
 import { AnimatePresence, Reorder, m } from 'framer-motion';
 import { ReorderRow } from './ReorderRow';
 import { SPRING_SNAPPY } from '../../../utils/motionPresets';
@@ -48,10 +48,10 @@ import { FilterSortToolbar, type SortOption } from './FilterSortToolbar';
 const REORDER_MAX = 200;
 
 const FIELD_SORT_OPTIONS: SortOption[] = [
-  { value: 'none', label: 'Default order' },
-  { value: 'key-asc', label: 'Key A→Z' },
-  { value: 'key-desc', label: 'Key Z→A' },
-  { value: 'type', label: 'Type' },
+  { value: 'none', label: 'Default order', icon: ArrowUpDown },
+  { value: 'key-asc', label: 'Key A→Z', icon: ArrowDownAZ },
+  { value: 'key-desc', label: 'Key Z→A', icon: ArrowDownZA },
+  { value: 'type', label: 'Type', icon: Shapes },
 ];
 
 
