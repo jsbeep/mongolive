@@ -2,6 +2,7 @@
 //   GET /api/databases
 //   GET /api/databases/:db/collections
 //   GET /api/databases/:db/collections/:col/documents
+//   POST /api/databases/:db/collections/:col/documents   (본문 = DocumentQuery + mongoFilter, 사용자 쿼리)
 //   GET /api/databases/:db/collections/:col/documents/:id
 import { Router } from 'express';
 import {
@@ -15,16 +16,22 @@ import {
   type DocumentQuery,
   type DocumentSort,
   type DocumentSummary,
+  isPlainObject,
+  validateQueryFilter,
 } from '@mongolive/shared';
-import type { Db } from 'mongodb';
+import type { Db, Filter, Document as BsonDocument } from 'mongodb';
 import { getClient } from '../db';
 import { emptyDatabases } from '../emptyDatabases';
 import { getCollectionMeta } from '../meta';
+import { toQueryHttpError, toValueHttpError } from '../queryErrors';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES, HttpError, isHiddenCollection } from '../names';
 import { fromWire, READ_OPTIONS, toWire } from '../wire';
 
 // FK 후보 목록(find-by-field, field-values) 상한 — 실수로 거대한 컬렉션을 대상으로 잡아도 버티게
 export const DOCUMENT_LIST_LIMIT = 5000;
+
+// 사용자 쿼리 시간 제한 — 넘으면 MongoDB가 멈추고 오류를 돌려준다(느린 정규식·인덱스 없는 큰 컬렉션)
+export const QUERY_MAX_TIME_MS = 5000;
 
 export const readRouter = Router();
 
@@ -96,9 +103,10 @@ readRouter.get('/databases/:db/collections', async (req, res) => {
 
 const SORTS: readonly DocumentSort[] = ['none', 'title-asc', 'title-desc', 'fields-desc', 'fields-asc', 'updated-desc', 'updated-asc'];
 
-// 쿼리스트링 → DocumentQuery. 이상한 값은 버리고 기본값으로(queryDocuments가 범위도 다시 자른다)
+// 쿼리스트링(GET) 또는 본문(POST) → DocumentQuery. 이상한 값은 버리고 기본값으로(queryDocuments가 범위도 다시 자른다)
 const parseDocumentQuery = (q: Record<string, unknown>): DocumentQuery => {
-  const int = (v: unknown) => (typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : undefined);
+  const int = (v: unknown) =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : undefined;
   const text = (v: unknown) => (typeof v === 'string' ? v : undefined);
   const sort = text(q.sort);
   return {
@@ -112,19 +120,49 @@ const parseDocumentQuery = (q: Record<string, unknown>): DocumentQuery => {
 };
 
 // 문서 목록 한 페이지. 필터가 '제목/미리보기'라는 계산된 값에 걸리고 정렬도 그렇기 때문에
-// 컬렉션 전체를 요약한 뒤 공유 함수(queryDocuments)로 거르고 자른다 — Mock과 결과가 같다.
+// 컬렉션 전체(쿼리가 있으면 쿼리 결과 전체)를 요약한 뒤 공유 함수(queryDocuments)로 거르고 자른다 — Mock과 결과가 같다.
 // 목표 규모(~5MB)에선 충분히 빠르다. 훨씬 커지면 여기를 MongoDB 쿼리(skip/limit)로 바꿔야 한다.
-readRouter.get('/databases/:db/collections/:col/documents', async (req, res) => {
-  const db = (await getClient()).db(checkDatabaseName(req.params.db));
-  const collection = db.collection(checkCollectionName(req.params.col));
+const listDocuments = async (dbName: string, colName: string, query: DocumentQuery, mongoFilter?: Filter<BsonDocument>) => {
+  const db = (await getClient()).db(checkDatabaseName(dbName));
+  const collection = db.collection(checkCollectionName(colName));
 
   const meta = await getCollectionMeta(db.databaseName, collection.collectionName);
-  const raw = await collection.find({}, READ_OPTIONS).toArray();
+  const [raw, collectionTotal] = await Promise.all([
+    collection.find(mongoFilter ?? {}, mongoFilter ? { ...READ_OPTIONS, maxTimeMS: QUERY_MAX_TIME_MS } : READ_OPTIONS).toArray(),
+    // 쿼리가 있으면 '전체 몇 개 중'의 전체는 따로 — 세지 않고 메타데이터에서 읽는다(빠름)
+    mongoFilter ? collection.estimatedDocumentCount({ maxTimeMS: QUERY_MAX_TIME_MS }) : undefined,
+  ]);
   const summaries: DocumentSummary[] = raw.map((bson) => {
     const document = toWire<Document>(bson);
     return summarizeDocument(document, oidTimestampMs(document._id) ?? 0, meta.titleKey, meta.primaryKey);
   });
-  res.json(queryDocuments(summaries, parseDocumentQuery(req.query as Record<string, unknown>)));
+  const page = queryDocuments(summaries, query);
+  return collectionTotal === undefined ? page : { ...page, totalUnfiltered: Math.max(collectionTotal, page.totalUnfiltered) };
+};
+
+readRouter.get('/databases/:db/collections/:col/documents', async (req, res) => {
+  res.json(await listDocuments(req.params.db, req.params.col, parseDocumentQuery(req.query as Record<string, unknown>)));
+});
+
+// 사용자 쿼리 — 쿼리가 길 수 있고(주소 길이 제한) 값이 접속 기록에 남지 않게 POST 본문으로 받는다
+readRouter.post('/databases/:db/collections/:col/documents', async (req, res) => {
+  const body: Record<string, unknown> = isPlainObject(req.body) ? req.body : {};
+  const mongoFilter = body.mongoFilter ?? {};
+  const invalid = validateQueryFilter(mongoFilter);
+  if (invalid) throw new HttpError(400, `Invalid query: ${invalid.message}`, { path: invalid.path });
+
+  // 검사(위) → 변환 순서 — 검사는 Canonical EJSON 그대로 봐야 연산자와 값({ $oid })을 가린다
+  let filter: Filter<BsonDocument>;
+  try {
+    filter = fromWire(mongoFilter as never) as Filter<BsonDocument>;
+  } catch (e) {
+    throw toValueHttpError(e);
+  }
+  try {
+    res.json(await listDocuments(req.params.db, req.params.col, parseDocumentQuery(body), filter));
+  } catch (e) {
+    throw toQueryHttpError(e, QUERY_MAX_TIME_MS);
+  }
 });
 
 readRouter.get('/databases/:db/collections/:col/documents/:id', async (req, res) => {

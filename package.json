@@ -11,6 +11,7 @@
     "build:web:remote": "VITE_DATA_SOURCE=remote pnpm --filter @mongolive/web build",
     "start": "pnpm --filter @mongolive/server start",
     "set-password": "pnpm --filter @mongolive/server set-password",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --if-present test"
   }
 }

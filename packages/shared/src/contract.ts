@@ -77,6 +77,9 @@ export interface DocumentQuery {
   aroundId?: string;
   // 이 id의 문서가 몇 페이지에 있는지 알려 달라(응답의 markedPage) — 현재 선택된 문서의 페이지를 레일에 표시
   markId?: string;
+  // 사용자가 쓴 쿼리(MongoDB find의 filter, Canonical EJSON). 서버 연결에서만 된다 —
+  // validateQueryFilter(queryFilter.ts)를 통과해야 하고, filter(글자 검색)는 이 결과에 한 번 더 걸린다
+  mongoFilter?: EjsonObject;
 }
 
 export interface DocumentPage {
@@ -85,7 +88,7 @@ export interface DocumentPage {
   pageSize: number;
   // 필터 적용 후 개수
   total: number;
-  // 필터 적용 전 컬렉션 전체 개수
+  // 필터 적용 전 컬렉션 전체 개수(쿼리가 있으면 컬렉션 메타데이터의 추정치)
   totalUnfiltered: number;
   // markId 문서가 있는 페이지(필터 결과에 없으면 없음)
   markedPage?: number;

@@ -206,6 +206,10 @@ export const createRemoteDataSource = (): DataSource => {
     getCollections: (database) => request<CollectionSummary[]>(`/databases/${enc(database)}/collections`),
     getDocuments(collectionId, query: DocumentQuery = {}) {
       const [database, collection] = splitCollectionId(collectionId);
+      // 사용자 쿼리가 있으면 POST 본문으로(주소 길이 제한·접속 기록), 없으면 지금처럼 GET
+      if (query.mongoFilter) {
+        return request<DocumentPage>(`${collectionPath(database, collection)}/documents`, { method: 'POST', body: JSON.stringify(query) });
+      }
       const params = new URLSearchParams();
       for (const [key, value] of Object.entries(query)) {
         if (value !== undefined && value !== '') params.set(key, String(value));

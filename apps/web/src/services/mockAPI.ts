@@ -120,6 +120,11 @@ export const getDocuments = async (collectionId: string, query?: DocumentQuery):
     return rejectWith('Collection not found');
   }
 
+  // 사용자 쿼리(MongoDB filter)는 서버 연결에서만 — Mock은 MongoDB 매칭 규칙을 흉내 내지 않는다
+  if (query?.mongoFilter) {
+    return rejectWith('Queries need a server connection (not available in demo mode)');
+  }
+
   const summaries = location.collection.documents.map((document, index) =>
     summarizeDocument(document, location.collection.updatedAt, location.collection.titleKey, location.collection.primaryKey, index),
   );

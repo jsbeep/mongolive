@@ -56,7 +56,7 @@ const singleKey = (value: Record<string, unknown>): string | undefined => {
   return undefined;
 };
 
-const isWrapperObject = (value: Record<string, unknown>): boolean => {
+export const isWrapperObject = (value: Record<string, unknown>): boolean => {
   const key = singleKey(value);
   return key !== undefined && WRAPPER_KEYS.has(key);
 };
