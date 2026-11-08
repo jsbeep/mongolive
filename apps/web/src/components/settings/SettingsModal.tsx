@@ -6,15 +6,16 @@
 //   Data        — 샘플 데이터 불러오기
 //   Diagnostics — 서버·MongoDB·changeStream·권한 (GET /api/diagnostics)
 //   Security    — 보안 설정(.env)을 읽기만. 화면에서 바꿀 수 있으면 세션 하나만 탈취돼도 인증을 끌 수 있어서
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, m } from 'framer-motion';
-import { ArrowRight, ChevronRight, CircleAlert, Keyboard, CircleCheck, Database, Link, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { ArrowRight, ChevronRight, CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Link, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, Diagnostics, MutationRequest } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
-import { setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type UndoDepth } from '../../services/preferences';
+import { sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type UndoDepth } from '../../services/preferences';
 import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../utils/motionPresets';
 import { saveServerSettings, useServerSettings } from '../../services/serverSettings';
+import { applyBackup, buildBackup, downloadBackup, parseBackup, type SettingsBackup } from '../../services/settingsBackup';
 import { buildForumEjsonSample, buildForumJsonSample, FORUM_EJSON_DATABASE_NAME, FORUM_JSON_DATABASE_NAME } from '../../data/sampleData';
 import { formatDate, formatOid, offsetLabel } from '../../utils/formatValue';
 import { cn } from '../../utils/cn';
@@ -111,6 +112,67 @@ function Status({ ok, warn, children }: { ok: boolean; warn?: boolean; children:
 
 // ── Display ──────────────────────────────────────────────────────────────────
 
+// 고정폭 글꼴 — 이 컴퓨터에 설치된 것만 쓴다(내려받지 않음)
+const FONT_PRESETS = ['', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'D2Coding', 'Consolas'];
+
+// 설치돼 있나 — 같은 글자를 '그 글꼴, 기본'과 '기본'으로 그려 폭이 다르면 있는 것. 판단 못 하면 null
+const isFontInstalled = (name: string): boolean | null => {
+  const ctx = document.createElement('canvas').getContext('2d');
+  if (!ctx) return null;
+  const text = 'mmmmmmmmmmlli10OOWW';
+  return ['monospace', 'serif', 'sans-serif'].some((base) => {
+    ctx.font = `72px ${base}`;
+    const fallback = ctx.measureText(text).width;
+    ctx.font = `72px "${name}", ${base}`;
+    return ctx.measureText(text).width !== fallback;
+  });
+};
+
+function MonoFontPicker() {
+  const prefs = usePreferences();
+  const [custom, setCustom] = useState(FONT_PRESETS.includes(prefs.monoFont) ? '' : prefs.monoFont);
+  const installed = prefs.monoFont ? isFontInstalled(prefs.monoFont) : true;
+  return (
+    <div className={styles.group}>
+      <p className={styles.groupTitle}>Monospace font</p>
+      <p className={styles.groupHint}>Used for keys, values, ids and code. Only fonts installed on this computer — nothing is downloaded. Saved in this browser.</p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {FONT_PRESETS.map((name) => (
+          <button
+            key={name || 'default'}
+            type="button"
+            className={cn('rounded-md px-2.5 py-1.5 text-xs transition-colors', prefs.monoFont === name ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}
+            style={name ? { fontFamily: `"${name}", monospace` } : { fontFamily: 'var(--font-mono)' }}
+            onClick={() => {
+              setCustom('');
+              setPreference('monoFont', name);
+            }}
+          >
+            {name || 'Default'}
+          </button>
+        ))}
+        <input
+          className="w-44 rounded-md bg-slate-100 px-2.5 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400/60"
+          placeholder="Other font name…"
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') setPreference('monoFont', sanitizeFontName(custom));
+          }}
+          onBlur={() => {
+            if (custom.trim()) setPreference('monoFont', sanitizeFontName(custom));
+          }}
+          aria-label="Other monospace font"
+        />
+      </div>
+      <p className={cn(styles.preview, 'font-mono')}>{'{ "_id": ObjectId("6720a1"), "count": 42 }  0O 1lI'}</p>
+      {installed === false && (
+        <p className="mt-1.5 text-[11px] text-amber-700">"{prefs.monoFont}" doesn't seem to be installed on this computer — the default font is shown instead.</p>
+      )}
+    </div>
+  );
+}
+
 // 예시 값 — 지금 시각, 그리고 지금 만든 것 같은 ObjectId
 const SAMPLE_OID = `${Math.floor(Date.now() / 1000).toString(16).padStart(8, '0')}a1b2c3d4e5f60718`;
 
@@ -153,6 +215,7 @@ function DisplaySection() {
         />
         <p className={styles.preview}>{formatOid(SAMPLE_OID, prefs.oidDisplay)}</p>
       </div>
+      <MonoFontPicker />
       <div className={styles.group}>
         <p className={styles.groupTitle}>Animations</p>
         <p className={styles.groupHint}>
@@ -548,6 +611,97 @@ const SAMPLES = [
   { kind: 'json' as const, name: FORUM_JSON_DATABASE_NAME, label: 'JSON sample', hint: 'Firebase / HN API style — plain ids, references declared as links', build: buildForumJsonSample },
 ];
 
+// 설정 내보내기/가져오기 — 이 브라우저 설정 + (고르면) 서버 Safety 설정. services/settingsBackup
+function SettingsBackupGroup() {
+  const server = useServerSettings();
+  const prefs = usePreferences();
+  const [withServer, setWithServer] = useState(true);
+  const [pending, setPending] = useState<SettingsBackup | null>(null);
+  const [applyServer, setApplyServer] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const onFile = async (file: File | undefined) => {
+    setError(null);
+    setPending(null);
+    if (!file) return;
+    try {
+      setPending(parseBackup(await file.text()));
+      setApplyServer(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not read the file');
+    } finally {
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const localCount = pending ? Object.keys(pending.local).length : 0;
+  return (
+    <div className={styles.group}>
+      <p className={styles.groupTitle}>Settings backup</p>
+      <p className={styles.groupHint}>
+        Move your settings to another browser or keep a copy: display, safety, realtime, animations and font, sidebar layout, change-log filters and per-collection filters. Security settings (.env) and the password are never included.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className={styles.btn} onClick={() => downloadBackup(buildBackup(withServer ? server : null))}>
+          <Download size={13} />
+          Export…
+        </button>
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+          <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600" checked={withServer} onChange={(e) => setWithServer(e.target.checked)} />
+          Include the server's Safety settings (read-only, protected)
+        </label>
+      </div>
+      <div className="mt-3">
+        <button type="button" className={styles.btn} onClick={() => fileRef.current?.click()}>
+          <Upload size={13} />
+          Import…
+        </button>
+        <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
+      </div>
+      {error && <p className={cn(styles.callout, 'bg-rose-50 text-rose-700')}>{error}</p>}
+      {pending && (
+        <div className={cn(styles.callout, 'bg-slate-50 text-slate-700')}>
+          {/* 내보낸 시각은 Display의 날짜 형식으로(파일엔 UTC로 들어 있다) */}
+          <p className="font-semibold">Ready to import{pending.exportedAt && !Number.isNaN(Date.parse(pending.exportedAt)) ? ` — exported ${formatDate(Date.parse(pending.exportedAt), prefs.dateDisplay, false)}` : ''}</p>
+          <p className="mt-1">{localCount} browser setting{localCount === 1 ? '' : 's'} will replace yours. The page reloads afterwards.</p>
+          {pending.server && (
+            <label className="mt-2 flex cursor-pointer items-start gap-2">
+              <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-amber-600" checked={applyServer} onChange={(e) => setApplyServer(e.target.checked)} />
+              <span>
+                Also apply the server's Safety settings — read-only {pending.server.readOnly ? 'on' : 'off'}, {pending.server.protected.length} protected.{' '}
+                <span className="text-amber-700">This changes it for every browser.</span>
+              </span>
+            </label>
+          )}
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              className={styles.btnPrimary}
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setError(null);
+                try {
+                  await applyBackup(pending, applyServer);
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : 'Could not apply');
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy && <Loader2 size={13} className="animate-spin" />}
+              Import and reload
+            </button>
+            <button type="button" className={styles.btn} onClick={() => setPending(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 샘플 DB 이름이 시그니처 — 이미 있으면 다시 넣지 않고 '열기'로(복사본이 쌓이지 않게)
 function DataSection({ databases, onMutate, onOpenDatabase }: Pick<SettingsModalProps, 'databases' | 'onMutate' | 'onOpenDatabase'>) {
   const [loading, setLoading] = useState<'ejson' | 'json' | null>(null);
@@ -566,6 +720,7 @@ function DataSection({ databases, onMutate, onOpenDatabase }: Pick<SettingsModal
     }
   };
   return (
+    <>
     <div className={styles.group}>
       <p className={styles.groupTitle}>Sample data</p>
       <p className={styles.groupHint}>
@@ -582,12 +737,12 @@ function DataSection({ databases, onMutate, onOpenDatabase }: Pick<SettingsModal
           return (
             <div key={sample.kind} className="flex items-center gap-3">
               {exists ? (
-                <button type="button" className={cn(styles.btn, 'w-36 justify-center')} onClick={() => onOpenDatabase(sample.name)} data-tt={`Already added as "${sample.name}" — open it`}>
+                <button type="button" className={cn(styles.btn, 'w-40 shrink-0 justify-center whitespace-nowrap')} onClick={() => onOpenDatabase(sample.name)} data-tt={`Already added as "${sample.name}" — open it`}>
                   <CircleCheck size={14} className="text-emerald-500" />
                   Open
                 </button>
               ) : (
-                <button type="button" className={cn(styles.btnPrimary, 'w-36 justify-center')} disabled={loading !== null} onClick={() => void load(sample)}>
+                <button type="button" className={cn(styles.btnPrimary, 'w-40 shrink-0 justify-center whitespace-nowrap')} disabled={loading !== null} onClick={() => void load(sample)}>
                   {loading === sample.kind ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
                   {sample.label}
                 </button>
@@ -601,6 +756,8 @@ function DataSection({ databases, onMutate, onOpenDatabase }: Pick<SettingsModal
         })}
       </div>
     </div>
+    <SettingsBackupGroup />
+    </>
   );
 }
 

@@ -4,6 +4,11 @@
 
 * { box-sizing: border-box; }
 
+/* 고정폭 글꼴 — 설정 › Display › Monospace font가 바꾼다(App.tsx). 기본은 Tailwind의 font-mono와 같은 목록 */
+:root {
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
 /* Custom scrollbar for column lists */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

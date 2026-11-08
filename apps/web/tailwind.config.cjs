@@ -20,6 +20,10 @@ module.exports = {
           warning: '#f59e0b'
         }
       },
+      // font-mono는 CSS 변수를 따른다 — 설정 › Display › Monospace font가 바꾼다(src/index.css에 기본값)
+      fontFamily: {
+        mono: ['var(--font-mono)'],
+      },
       boxShadow: {
         soft: '0 1px 10px rgba(15, 23, 42, 0.04)',
         panel: '0 1px 18px rgba(188, 194, 195, 0.16)',

@@ -20,6 +20,12 @@ export const LIVE_BATCH_MS: Record<LiveBatch, number> = { immediate: 150, relaxe
 //             on = 늘 켬 / off = 늘 끔(가장 빠름 — 움직임 없이 바로 바뀐다)
 export type Animations = 'auto' | 'on' | 'off';
 
+// 고정폭 글꼴 — 이 컴퓨터에 설치된 글꼴 이름(빈 문자열 = 기본 목록). 내려받지 않는다(오프라인에서도 같게)
+export const DEFAULT_MONO_STACK = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+// CSS에 그대로 들어가므로 글자·숫자·공백·하이픈만(따옴표·세미콜론 등으로 다른 CSS가 끼어들지 못하게)
+export const sanitizeFontName = (name: string): string => name.replace(/[^\p{L}\p{N} \-]/gu, '').trim().slice(0, 60);
+export const monoFontStack = (name: string): string => (name ? `"${sanitizeFontName(name)}", ${DEFAULT_MONO_STACK}` : DEFAULT_MONO_STACK);
+
 export interface Preferences {
   dateDisplay: DateDisplay;
   // 밀리초까지 보일지(기본 끔). 보이기만의 문제 — 꺼도 툴팁엔 밀리초가 나오고, 저장 값의 밀리초는 그대로 지킨다
@@ -32,10 +38,11 @@ export interface Preferences {
   undoDepth: UndoDepth;
   liveBatch: LiveBatch;
   animations: Animations;
+  monoFont: string;
 }
 
 const KEY = 'mongolive.preferences';
-const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate', animations: 'auto' };
+const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate', animations: 'auto', monoFont: '' };
 
 const load = (): Preferences => {
   try {
@@ -49,6 +56,7 @@ const load = (): Preferences => {
       undoDepth: (UNDO_DEPTHS as readonly number[]).includes(saved.undoDepth as number) ? (saved.undoDepth as UndoDepth) : DEFAULTS.undoDepth,
       liveBatch: saved.liveBatch === 'relaxed' || saved.liveBatch === 'immediate' ? saved.liveBatch : DEFAULTS.liveBatch,
       animations: saved.animations === 'on' || saved.animations === 'off' || saved.animations === 'auto' ? saved.animations : DEFAULTS.animations,
+      monoFont: typeof saved.monoFont === 'string' ? sanitizeFontName(saved.monoFont) : DEFAULTS.monoFont,
     };
   } catch {
     return DEFAULTS;
