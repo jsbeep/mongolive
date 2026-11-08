@@ -9,7 +9,17 @@ import { monoFontStack, usePreferences } from "./services/preferences";
 const REDUCED_MOTION = { auto: "user", on: "never", off: "always" } as const;
 
 export default function App() {
-  const { animations, monoFont } = usePreferences();
+  const { animations, monoFont, theme } = usePreferences();
+  // 설정 › Display › Theme — <html class="dark">면 색 변수가 다크 값으로 바뀐다(tailwind.config.cjs).
+  // system이면 OS 설정을 따르고, OS에서 바꾸면 바로 따라간다. 첫 화면은 index.html의 스크립트가 먼저 맞춰 둔다(깜빡임 방지)
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => document.documentElement.classList.toggle("dark", theme === "dark" || (theme === "system" && query.matches));
+    apply();
+    if (theme !== "system") return;
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, [theme]);
   // 설정 › Display › Monospace font — 앱 전체의 font-mono가 이 변수를 따른다(tailwind.config, index.css)
   useEffect(() => {
     document.documentElement.style.setProperty("--font-mono", monoFontStack(monoFont));

@@ -7,7 +7,7 @@ import type { FieldReferenceCandidate } from '../../types/explorer';
 
 const styles = {
   backdrop: 'fixed inset-0 flex items-center justify-center p-4 inherit',
-  overlay: 'absolute inset-0 bg-slate-900/40 backdrop-blur-sm',
+  overlay: 'absolute inset-0 bg-black/40 backdrop-blur-sm',
   card: 'relative z-[10] w-full max-w-sm bg-white rounded-2xl shadow-elevated p-6 flex flex-col gap-4',
   iconWrap: 'w-12 h-12 rounded-2xl bg-cyan-50 flex items-center justify-center',
   title: 'text-base font-semibold text-slate-900',

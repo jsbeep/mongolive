@@ -351,7 +351,7 @@ export function Sidebar({ sidebar, ...tree }: SidebarProps) {
           <>
             <m.div
               key="backdrop"
-              className="absolute inset-0 z-[100] rounded-2xl bg-slate-900/5"
+              className="absolute inset-0 z-[100] rounded-2xl bg-black/5"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}

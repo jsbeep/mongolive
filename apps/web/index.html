@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <title>MongoLive</title>
+    <!-- 테마를 React보다 먼저 맞춘다 — 안 그러면 다크 테마에서 첫 순간 흰 화면이 번쩍인다(App.tsx가 이어서 관리) -->
+    <script>
+      try {
+        var t = (JSON.parse(localStorage.getItem('mongolive.preferences') || '{}').theme) || 'system';
+        if (t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark');
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -19,6 +19,8 @@ export const LIVE_BATCH_MS: Record<LiveBatch, number> = { immediate: 150, relaxe
 // 애니메이션: auto = 보는 컬렉션이 크면(ANIMATION_DISABLE_THRESHOLD_MB) 컬럼 애니메이션을 끄고, OS의 '동작 줄이기'를 따른다
 //             on = 늘 켬 / off = 늘 끔(가장 빠름 — 움직임 없이 바로 바뀐다)
 export type Animations = 'auto' | 'on' | 'off';
+// 테마: system = OS 설정을 따른다
+export type Theme = 'system' | 'light' | 'dark';
 
 // 고정폭 글꼴 — 이 컴퓨터에 설치된 글꼴 이름(빈 문자열 = 기본 목록). 내려받지 않는다(오프라인에서도 같게)
 export const DEFAULT_MONO_STACK = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
@@ -39,10 +41,11 @@ export interface Preferences {
   liveBatch: LiveBatch;
   animations: Animations;
   monoFont: string;
+  theme: Theme;
 }
 
 const KEY = 'mongolive.preferences';
-const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate', animations: 'auto', monoFont: '' };
+const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate', animations: 'auto', monoFont: '', theme: 'system' };
 
 const load = (): Preferences => {
   try {
@@ -57,6 +60,7 @@ const load = (): Preferences => {
       liveBatch: saved.liveBatch === 'relaxed' || saved.liveBatch === 'immediate' ? saved.liveBatch : DEFAULTS.liveBatch,
       animations: saved.animations === 'on' || saved.animations === 'off' || saved.animations === 'auto' ? saved.animations : DEFAULTS.animations,
       monoFont: typeof saved.monoFont === 'string' ? sanitizeFontName(saved.monoFont) : DEFAULTS.monoFont,
+      theme: saved.theme === 'light' || saved.theme === 'dark' || saved.theme === 'system' ? saved.theme : DEFAULTS.theme,
     };
   } catch {
     return DEFAULTS;

@@ -7,7 +7,7 @@ import type { CollectionSummary, MutationRequest } from '../../../types/explorer
 
 const styles = {
   backdrop: 'fixed inset-0 flex items-center justify-center p-4 inherit',
-  overlay: 'absolute inset-0 bg-slate-900/40 backdrop-blur-sm',
+  overlay: 'absolute inset-0 bg-black/40 backdrop-blur-sm',
   card: 'relative z-[10] w-full max-w-lg bg-white rounded-2xl shadow-elevated p-6 flex flex-col gap-4',
   header: 'flex items-center gap-2',
   iconWrap: 'w-10 h-10 rounded-2xl bg-cyan-50 flex items-center justify-center shrink-0',

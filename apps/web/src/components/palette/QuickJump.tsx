@@ -83,7 +83,7 @@ const best = (query: string, ...texts: string[]): number | null => {
 };
 
 const styles = {
-  backdrop: 'fixed inset-0 z-[1000] flex justify-center bg-slate-900/20 px-4 pt-[12vh] backdrop-blur-[2px]',
+  backdrop: 'fixed inset-0 z-[1000] flex justify-center bg-black/20 px-4 pt-[12vh] backdrop-blur-[2px]',
   panel: 'flex h-fit max-h-[70vh] w-[min(600px,100%)] flex-col overflow-hidden rounded-2xl bg-white shadow-elevated ring-1 ring-slate-200/70',
   inputRow: 'flex h-14 shrink-0 items-center gap-3 border-b border-slate-100 px-4',
   input: 'min-w-0 flex-1 bg-transparent text-[15px] text-slate-800 placeholder:text-slate-400 focus:outline-none',

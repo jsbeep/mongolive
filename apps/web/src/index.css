@@ -9,11 +9,40 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
+/* 테마(설정 › Display › Theme) — 색 단계는 tailwind.config.cjs가 변수로 만들고, 여기는 그 밖의 것들.
+   다크는 Nord 팔레트: Polar Night 바탕(#2e3440) + Frost 강조(#88c0d0 / #8fbcbb) */
+:root {
+  color-scheme: light;
+  --shadow-soft: 0 1px 10px rgba(15, 23, 42, 0.04);
+  --shadow-panel: 0 1px 18px rgba(188, 194, 195, 0.16);
+  --shadow-elevated: 0 14px 30px rgba(15, 23, 42, 0.1);
+  --bg-grid-fade: radial-gradient(circle at center, rgba(34, 197, 94, 0.12), transparent 42%), linear-gradient(180deg, #f0f4f8, rgba(243, 247, 251, 1));
+  --scrollbar: #d1d5db;
+  --scrollbar-hover: #9ca3af;
+  /* 키보드 탐색 커서 링(hooks/useMillerKeyboard) */
+  --kb-cursor: rgb(16 185 129 / 0.6);
+}
+:root.dark {
+  /* 입력칸·날짜 선택기·체크박스 같은 브라우저 기본 요소도 어둡게 */
+  color-scheme: dark;
+  /* 어두운 바탕에선 검은 그림자가 안 보이므로, Snow Storm(#eceff4) 빛을 은은하게 번지게 한다 */
+  --shadow-soft: 0 0 10px rgba(236, 239, 244, 0.04);
+  --shadow-panel: 0 0 18px rgba(236, 239, 244, 0.05);
+  --shadow-elevated: 0 6px 32px rgba(236, 239, 244, 0.08);
+  --bg-grid-fade: radial-gradient(circle at center, rgba(136, 192, 208, 0.05), transparent 42%), linear-gradient(180deg, #252a33, #282d37);
+  --scrollbar: #4c566a;
+  --scrollbar-hover: #616e88;
+  --kb-cursor: rgb(136 192 208 / 0.7);
+}
+body {
+  background: var(--bg-grid-fade);
+}
+
 /* Custom scrollbar for column lists */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 9999px; }
-::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 
 /* 기능 설명 툴팁은 data-tt 속성 + TooltipLayer(body portal)로 처리한다.
    ::after로 하면 컬럼의 z-index/overflow에 가리거나 잘려서 CSS만으로는 안 된다 —
@@ -21,5 +50,5 @@
 /* 밀러 컬럼 키보드 탐색의 커서(hooks/useMillerKeyboard가 행에 data-kb-cursor를 붙인다).
    행의 배경·강조와 겹치지 않게 테두리 안쪽 링으로만 그린다 */
 [data-kb-cursor] {
-  box-shadow: inset 0 0 0 2px rgb(16 185 129 / 0.6);
+  box-shadow: inset 0 0 0 2px var(--kb-cursor);
 }

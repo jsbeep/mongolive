@@ -19,7 +19,7 @@ const showSlot = (slot: ExpectedValue): string => (slot.exists ? show(slot.value
 
 const styles = {
   backdrop: 'fixed inset-0 flex items-center justify-center p-4',
-  overlay: 'absolute inset-0 bg-slate-900/40 backdrop-blur-sm',
+  overlay: 'absolute inset-0 bg-black/40 backdrop-blur-sm',
   card: 'relative z-[10] w-full max-w-md bg-white rounded-2xl shadow-elevated p-6 flex flex-col gap-5',
   iconWrap: 'w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center',
   title: 'text-base font-semibold text-slate-900',
