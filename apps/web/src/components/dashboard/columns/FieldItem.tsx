@@ -63,7 +63,7 @@ export function FieldItem({
         // isolate: 변경 강조 막(ChangeFlash)이 배경 위·글자 아래에 깔리도록
         'relative isolate flex items-center gap-3 px-4 py-3.5 rounded-2xl',
         onClick ? 'cursor-pointer hover:bg-slate-50/80 active:bg-slate-100/60' : 'cursor-default',
-        isActive && 'bg-emerald-50/70',
+        isActive && 'bg-selected',
       )}
       {...hoverHandlers}
       onClick={onClick ?? undefined}

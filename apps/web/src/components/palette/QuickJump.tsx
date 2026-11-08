@@ -92,7 +92,7 @@ const styles = {
   // 고른 줄/아닌 줄 배경은 둘 중 하나만(cn은 겹침을 정리해 주지 않는다)
   row: 'flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13px]',
   rowIdle: 'text-slate-700',
-  rowOn: 'bg-emerald-50 text-slate-900',
+  rowOn: 'bg-selected text-slate-900',
   meta: 'ml-auto shrink-0 pl-3 font-mono text-[11px] text-slate-400',
   empty: 'px-3 py-8 text-center text-xs text-slate-400',
   foot: 'flex shrink-0 items-center gap-3 border-t border-slate-100 px-4 py-2 text-[11px] text-slate-400',

@@ -26,7 +26,7 @@ const styles = {
   pathInput: 'h-7 min-w-[140px] rounded-lg bg-slate-100/80 px-2.5 text-[13px] font-mono font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 focus:bg-white transition-all',
   dropdownPanel: 'fixed z-[101] max-h-[320px] min-w-[220px] overflow-y-auto rounded-2xl bg-white shadow-elevated ring-1 ring-slate-100 p-1.5 flex flex-col gap-0.5',
   dropdownItem: 'relative flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer select-none transition-colors',
-  dropdownItemActive: 'bg-emerald-100',
+  dropdownItemActive: 'bg-selected',
   dropdownKey: 'flex-1 min-w-0 truncate text-[13px] font-mono font-medium text-slate-700',
   typeBadge: 'flex items-center justify-center gap-1 text-[11px] font-mono pl-1.5 pr-2 py-0.5 rounded-lg font-semibold shrink-0',
   countBadge: 'text-[11px] font-mono px-2 py-0.5 rounded-lg bg-slate-100 text-slate-400 font-medium shrink-0',

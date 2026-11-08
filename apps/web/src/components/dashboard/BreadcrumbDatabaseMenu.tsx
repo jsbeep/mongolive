@@ -27,7 +27,7 @@ const styles = {
   panel: 'fixed z-[101] flex max-h-[360px] min-w-[240px] flex-col gap-0.5 overflow-y-auto rounded-xl bg-white p-1.5 shadow-elevated ring-1 ring-slate-100',
   item: 'flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors',
   itemIdle: 'text-slate-700 hover:bg-slate-50',
-  itemActive: 'bg-emerald-50 font-semibold text-emerald-700',
+  itemActive: 'bg-selected font-semibold text-emerald-700',
   meta: 'ml-auto shrink-0 pl-3 font-mono text-[11px] text-slate-400',
   empty: 'px-3 py-4 text-center text-xs text-slate-400',
 } as const;

@@ -37,7 +37,7 @@ const styles = {
   row: 'group flex h-7 w-full shrink-0 items-center gap-1.5 rounded-md pr-1 text-left text-[13px] transition-colors',
   rowIdle: 'text-slate-600 hover:bg-slate-100',
   rowActiveDb: 'font-semibold text-slate-900 hover:bg-slate-100',
-  rowActiveCol: 'bg-emerald-50 font-medium text-emerald-700',
+  rowActiveCol: 'bg-selected font-medium text-emerald-700',
   chevronBtn: 'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 hover:text-slate-700',
   label: 'min-w-0 flex-1 truncate',
   count: 'shrink-0 font-mono text-[11px] tabular-nums text-slate-400',

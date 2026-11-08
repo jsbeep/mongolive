@@ -75,7 +75,7 @@ const styles = {
   rowValue: 'min-w-0 flex-1 break-words font-mono text-xs text-slate-800',
   callout: 'mt-3 rounded-lg px-4 py-3 text-xs leading-relaxed',
   // 테마와 상관없이 어두운 터미널 모양(black/짙은 남색 고정 — slate는 다크에서 뒤집힌다)
-  code: 'mt-2 block whitespace-pre rounded-md bg-[#2e3440] px-3 py-2 font-mono text-[11px] leading-relaxed text-[#d8dee9]',
+  code: 'mt-2 block whitespace-pre rounded-md bg-[#1e1e1e] px-3 py-2 font-mono text-[11px] leading-relaxed text-[#dadada]',
   btn: 'inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50',
   btnPrimary: 'inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-60',
 } as const;
@@ -184,7 +184,7 @@ function DisplaySection() {
     <>
       <div className={styles.group}>
         <p className={styles.groupTitle}>Theme</p>
-        <p className={styles.groupHint}>System follows your computer's light/dark setting and switches with it. Dark uses the Nord palette — polar-night background with frost accents. Saved in this browser.</p>
+        <p className={styles.groupHint}>System follows your computer's light/dark setting and switches with it. Dark is a neutral, Obsidian-style gray with an olive-green accent. Saved in this browser.</p>
         <Segment<Theme>
           value={prefs.theme}
           onChange={(v) => setPreference('theme', v)}

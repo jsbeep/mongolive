@@ -10,7 +10,7 @@
 }
 
 /* 테마(설정 › Display › Theme) — 색 단계는 tailwind.config.cjs가 변수로 만들고, 여기는 그 밖의 것들.
-   다크는 Nord 팔레트: Polar Night 바탕(#2e3440) + Frost 강조(#88c0d0 / #8fbcbb) */
+   다크는 Obsidian 기본 다크 테마 느낌: 무채색 바탕(#1e1e1e / 카드 #262626) + 올리브 강조(#97b597) */
 :root {
   color-scheme: light;
   --shadow-soft: 0 1px 10px rgba(15, 23, 42, 0.04);
@@ -25,14 +25,14 @@
 :root.dark {
   /* 입력칸·날짜 선택기·체크박스 같은 브라우저 기본 요소도 어둡게 */
   color-scheme: dark;
-  /* 어두운 바탕에선 검은 그림자가 안 보이므로, Snow Storm(#eceff4) 빛을 은은하게 번지게 한다 */
-  --shadow-soft: 0 0 10px rgba(236, 239, 244, 0.04);
-  --shadow-panel: 0 0 18px rgba(236, 239, 244, 0.05);
-  --shadow-elevated: 0 6px 32px rgba(236, 239, 244, 0.08);
-  --bg-grid-fade: radial-gradient(circle at center, rgba(136, 192, 208, 0.05), transparent 42%), linear-gradient(180deg, #252a33, #282d37);
-  --scrollbar: #4c566a;
-  --scrollbar-hover: #616e88;
-  --kb-cursor: rgb(136 192 208 / 0.7);
+  /* 어두운 바탕에선 검은 그림자가 안 보이므로, 흰 빛을 은은하게 번지게 한다 */
+  --shadow-soft: 0 0 10px rgba(255, 255, 255, 0.03);
+  --shadow-panel: 0 0 18px rgba(255, 255, 255, 0.04);
+  --shadow-elevated: 0 6px 32px rgba(255, 255, 255, 0.07);
+  --bg-grid-fade: radial-gradient(circle at center, rgba(151, 181, 151, 0.04), transparent 42%), linear-gradient(180deg, #1b1b1b, #1e1e1e);
+  --scrollbar: #454545;
+  --scrollbar-hover: #5c5c5c;
+  --kb-cursor: rgb(151 181 151 / 0.7);
 }
 body {
   background: var(--bg-grid-fade);

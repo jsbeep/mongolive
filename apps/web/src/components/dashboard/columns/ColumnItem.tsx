@@ -58,7 +58,7 @@ export function ColumnItem({
         // isolate: 변경 강조 막(ChangeFlash)이 배경 위·글자 아래에 깔리도록
         'relative isolate flex items-center gap-3 px-4 py-3.5 rounded-2xl cursor-pointer select-none transition-colors',
         isActive
-          ? 'bg-emerald-50/80'
+          ? 'bg-selected'
           : 'hover:bg-slate-50/80 active:bg-slate-100/50',
       )}
       {...hoverHandlers}
