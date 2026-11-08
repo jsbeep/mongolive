@@ -3,7 +3,7 @@
 //   오른쪽: Tree/Columns · 컬럼 수 − n + · 설정 · 로그아웃 · 알림 센터(종)
 // 바는 예전 헤더처럼 둥근 카드, 항목은 테두리 없이 hover 배경만 있는 덜 둥근 네모.
 import { useState } from 'react';
-import { Bell, BellDot, Circle, Columns3, ListTree, Lock, LogOut, Minus, Plus, RefreshCw, Settings } from 'lucide-react';
+import { Bell, BellDot, Circle, Columns3, ListTree, Lock, LogOut, Minus, Plus, RefreshCw, Search, Settings } from 'lucide-react';
 import { useServerSettings } from '../../services/serverSettings';
 import { m } from 'framer-motion';
 import { MIN_VISIBLE_COLUMNS, MAX_VISIBLE_COLUMNS, type UseExplorerStateResult } from '../../hooks/useExplorerState';
@@ -25,6 +25,8 @@ interface StatusBarProps {
   onOpenSettings: () => void;
   // Read-only 배지 → 설정 창 › Safety
   onOpenSafety: () => void;
+  // 빠른 이동(Ctrl+K) — 단축키를 모르는 사람도 찾을 수 있게 버튼으로도
+  onOpenQuickJump: () => void;
 }
 
 const styles = {
@@ -52,6 +54,7 @@ export function StatusBar({
   onOpenSystem,
   onOpenSettings,
   onOpenSafety,
+  onOpenQuickJump,
 }: StatusBarProps) {
   const safety = useServerSettings();
   const auth = useAuth();
@@ -111,6 +114,11 @@ export function StatusBar({
       <div className="flex-1" />
 
       <div className={styles.group}>
+        <button type="button" className={cn(styles.item, styles.itemIdle)} onClick={onOpenQuickJump} data-tt="Quick jump — databases, collections, ObjectIds, commands">
+          <Search size={16} />
+          <span className="text-slate-400">{navigator.platform.toLowerCase().includes('mac') ? '⌘K' : 'Ctrl+K'}</span>
+        </button>
+        <span className={styles.sep} aria-hidden="true" />
         <button
           type="button"
           className={cn(styles.item, isTreeMode ? styles.itemOn : styles.itemIdle)}

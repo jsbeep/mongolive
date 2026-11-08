@@ -622,7 +622,8 @@ export const getReferenceInfo = async (oid: string): Promise<ReferenceInfo | nul
     return null;
   }
 
-  const summary = summarizeDocument(location.document, location.collection.updatedAt);
+  // 서버(routes/refs)처럼 컬렉션의 제목 키를 따른다 — 없으면 제목 대신 _id가 나온다
+  const summary = summarizeDocument(location.document, location.collection.updatedAt, location.collection.titleKey, location.collection.primaryKey);
   return {
     databaseName: location.databaseName,
     collectionName: location.collectionName,

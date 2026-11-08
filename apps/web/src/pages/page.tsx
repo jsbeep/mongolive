@@ -11,6 +11,10 @@ import { Sidebar } from '../components/layout/Sidebar';
 import { NotificationCenter, type NotificationTab } from '../components/notifications/NotificationCenter';
 import { Toast } from '../components/notifications/Toast';
 import { SettingsModal, type SettingsSection } from '../components/settings/SettingsModal';
+import { QuickJump, type QuickCommand } from '../components/palette/QuickJump';
+import { Bell, ListTree, Lock, PanelLeft, RefreshCw, Settings, Undo2 } from 'lucide-react';
+import { getServerSettingsSnapshot, saveServerSettings } from '../services/serverSettings';
+import { MIN_VISIBLE_COLUMNS } from '../hooks/useExplorerState';
 import { startServerSettingsSync } from '../services/serverSettings';
 import { useActivityLog } from '../hooks/useActivityLog';
 import { useSidebar } from '../hooks/useSidebar';
@@ -37,6 +41,7 @@ export default function ExplorerPage() {
   const [centerOpen, setCenterOpen] = useState(false);
   const [centerTab, setCenterTab] = useState<NotificationTab>('changes');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
   const openSettings = (section?: SettingsSection) => {
     setCenterOpen(false);
@@ -104,6 +109,40 @@ export default function ExplorerPage() {
   // 지금 열린 문서(알림 센터의 '이 문서' 범위) — 참조를 따라 연 문서 말고, 이 컬렉션에서 고른 문서
   const documentPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'json');
   const activeDocumentId = documentPath?.kind === 'normal' ? documentPath.documentOid ?? null : null;
+
+  // Ctrl+K(⌘K) = 빠른 이동. 입력칸 안에서도 연다(주소창 검색으로 새지 않게 막는다). 다른 모달이 떠 있으면 무시, 열려 있으면 닫는다
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'k') return;
+      const modal = document.querySelector('[aria-modal="true"]');
+      if (modal && modal.getAttribute('aria-label') !== 'Quick jump') return;
+      e.preventDefault();
+      setCenterOpen(false);
+      setQuickOpen((v) => !v);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // 빠른 이동의 명령 목록
+  const isTreeMode = maxVisibleColumns === MIN_VISIBLE_COLUMNS;
+  const quickCommands: QuickCommand[] = [
+    { id: 'settings', label: 'Open settings', icon: Settings, run: () => openSettings() },
+    { id: 'notifications', label: 'Show notifications', icon: Bell, run: () => setCenterOpen(true) },
+    { id: 'resync', label: "Re-sync what's on screen", icon: RefreshCw, run: () => void refresh() },
+    { id: 'undo', label: 'Undo last edit', icon: Undo2, hint: 'Ctrl+Z', run: () => void undo() },
+    { id: 'tree', label: isTreeMode ? 'Switch to column mode' : 'Switch to tree mode', icon: ListTree, run: () => setMaxVisibleColumns(isTreeMode ? 3 : MIN_VISIBLE_COLUMNS) },
+    { id: 'sidebar', label: sidebar.mode === 'full' ? 'Collapse sidebar to icons' : 'Expand sidebar', icon: PanelLeft, run: () => sidebar.setMode(sidebar.mode === 'full' ? 'rail' : 'full') },
+    {
+      id: 'readonly',
+      label: getServerSettingsSnapshot().readOnly ? 'Turn read-only mode off' : 'Turn read-only mode on',
+      icon: Lock,
+      run: () => {
+        const current = getServerSettingsSnapshot();
+        void saveServerSettings({ ...current, readOnly: !current.readOnly });
+      },
+    },
+  ];
 
   // Ctrl+Z(⌘Z) = 마지막 문서·필드 편집 되돌리기(한 단계). 입력칸 안에선 브라우저의 글자 되돌리기를 그대로 두고,
   // 모달(설정·충돌·삭제 확인)이 떠 있을 때도 건드리지 않는다
@@ -200,6 +239,7 @@ export default function ExplorerPage() {
           onToggleCenter={() => setCenterOpen((v) => !v)}
           onOpenSettings={() => openSettings()}
           onOpenSafety={() => openSettings('safety')}
+          onOpenQuickJump={() => setQuickOpen(true)}
           onOpenSystem={() => {
             // 연결 상태를 누르면 연결 기록(System 탭) — 이미 그 탭이 열려 있으면 닫는다
             if (centerOpen && centerTab === 'system') setCenterOpen(false);
@@ -240,6 +280,18 @@ export default function ExplorerPage() {
         pending={referenceCandidates}
         onSelect={(candidate) => void resolveReferenceCandidate(candidate)}
         onCancel={dismissReferenceCandidates}
+      />
+
+      {/* 빠른 이동 — Ctrl+K(⌘K) 또는 상태바의 돋보기 */}
+      <QuickJump
+        open={quickOpen}
+        onClose={() => setQuickOpen(false)}
+        databases={databases}
+        activeDatabase={activeDatabase}
+        commands={quickCommands}
+        onOpenDatabase={(name) => void selectDatabase(name)}
+        onOpenCollection={(database, collection, label) => void openCollection(database, collection, label)}
+        onOpenObjectId={(oid) => void navigateToReference(oid)}
       />
 
       {/* 설정 창 — 상태바의 톱니바퀴 */}
