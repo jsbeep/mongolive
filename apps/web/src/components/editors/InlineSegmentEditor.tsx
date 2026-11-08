@@ -523,6 +523,8 @@ export function InlineSegmentEditor({
   return (
     <motion.div
       ref={containerRef}
+      // 키보드 탐색에서도 '행 하나'로 센다 — 안 그러면 편집하는 동안 이 자리가 빠져 커서가 다음 행으로 밀려 보인다(동작은 없음)
+      data-nav-row=""
       layout="position"
       initial={{ opacity: 0, y: -10, }}
       animate={{ opacity: 1, y: 0 }}

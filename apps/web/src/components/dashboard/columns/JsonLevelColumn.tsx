@@ -722,6 +722,7 @@ export function JsonLevelColumn({
             onEdit={() => onSetEditingId(editorId)}
             onClick={handleClick}
             copyPath={[...projectionPath, fieldKey].join('.')}
+            onDelete={() => setDeleteTarget({ fieldKey, value })}
           >
             {valueContent}
           </FieldItem>
@@ -756,6 +757,7 @@ export function JsonLevelColumn({
         onEdit={() => onSetEditingId(editorId)}
         onClick={handleClick}
         copyPath={[...projectionPath, fieldKey].join('.')}
+        onDelete={() => setDeleteTarget({ fieldKey, value })}
       >
         {valueContent}
       </FieldItem>
@@ -765,7 +767,8 @@ export function JsonLevelColumn({
   // ── 렌더 ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className={cn('relative flex flex-col min-h-0', !isNested && 'flex-1')} {...(canEditHere ? dragHandlers : {})}>
+    // data-nav-col: 키보드 탐색의 컬럼 번호 = 경로 번호(utils/keyboardNav)
+    <div data-nav-col={myIndex} className={cn('relative flex flex-col min-h-0', !isNested && 'flex-1')} {...(canEditHere ? dragHandlers : {})}>
       <DropOverlay visible={isColumnDragOver} label={canAddField ? 'Drop a file to import as a field' : 'Fields cannot be added here'} />
       {/* Ref 강조 — 상단 컬러 바 */}
       {chainColor && (

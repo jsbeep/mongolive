@@ -19,6 +19,7 @@ import { startServerSettingsSync } from '../services/serverSettings';
 import { useActivityLog } from '../hooks/useActivityLog';
 import { useSidebar } from '../hooks/useSidebar';
 import { useSystemLog } from '../hooks/useSystemLog';
+import { useMillerKeyboard } from '../hooks/useMillerKeyboard';
 
 // ── 스타일 ────────────────────────────────────────────────────────────────────
 
@@ -110,6 +111,10 @@ export default function ExplorerPage() {
   const documentPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'json');
   const activeDocumentId = documentPath?.kind === 'normal' ? documentPath.documentOid ?? null : null;
 
+  // 밀러 컬럼 키보드 탐색(↑↓←→ / hjkl, Enter, e, Delete, /) — ?는 단축키 목록(설정 › Keyboard)
+  const columnsRef = useRef<HTMLDivElement>(null);
+  useMillerKeyboard(columnsRef, () => openSettings('keyboard'));
+
   // Ctrl+K(⌘K) = 빠른 이동. 입력칸 안에서도 연다(주소창 검색으로 새지 않게 막는다). 다른 모달이 떠 있으면 무시, 열려 있으면 닫는다
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -183,7 +188,7 @@ export default function ExplorerPage() {
           />
 
           {/* Miller Columns */}
-          <div className={styles.columns}>
+          <div ref={columnsRef} className={styles.columns}>
             {/* 브레드크럼 — 첫 칸(DB)은 DB 고르기 드롭다운 */}
             <Breadcrumbs
               breadcrumbs={breadcrumbs}

@@ -4,6 +4,7 @@ import { cn } from '../../../utils/cn';
 import { SPRING_HOVER } from '../../../utils/motionPresets';
 import { useHover } from '../../../hooks/useHover';
 import { ChangeFlash } from '../../common/ChangeFlash';
+import { useNavRow } from '../../../utils/keyboardNav';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,8 @@ export function ColumnItem({
 }: ColumnItemProps) {
   const { hovered, hoverHandlers } = useHover();
   const hasActions = !!(onEdit || onDelete);
+  // 키보드 탐색(utils/keyboardNav): Enter/→ 열기, e 편집, Delete 삭제 — 편집·삭제는 화면 버튼과 같은 조건(안전장치 포함)
+  const navRef = useNavRow({ open: onSelect, edit: onEdit, remove: onDelete });
 
   if (isLoading) {
     return <div className="h-[58px] rounded-2xl bg-slate-100/80 animate-pulse" />;
@@ -47,6 +50,9 @@ export function ColumnItem({
 
   return (
     <m.div
+      ref={navRef}
+      data-nav-row=""
+      data-nav-active={isActive ? '' : undefined}
       layout={!reduceMotion}
       className={cn(
         // isolate: 변경 강조 막(ChangeFlash)이 배경 위·글자 아래에 깔리도록

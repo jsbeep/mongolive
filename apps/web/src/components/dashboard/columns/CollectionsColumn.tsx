@@ -78,7 +78,8 @@ export function CollectionsColumn({
   };
 
   return (
-    <div className={styles.container} {...(canEditDb ? dragHandlers : {})}>
+    // data-nav-col: 키보드 탐색의 컬럼 번호 = 경로 번호(컬렉션은 늘 0)
+    <div data-nav-col={0} className={styles.container} {...(canEditDb ? dragHandlers : {})}>
       <DropOverlay visible={isColumnDragOver} label="Drop a file to import as a collection" />
 
       {/* 헤더 */}

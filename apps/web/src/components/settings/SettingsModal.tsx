@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, m } from 'framer-motion';
-import { ArrowRight, ChevronRight, CircleAlert, CircleCheck, Database, Link, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { ArrowRight, ChevronRight, CircleAlert, Keyboard, CircleCheck, Database, Link, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, Diagnostics, MutationRequest } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
 import { setPreference, usePreferences, UNDO_DEPTHS, type DateDisplay, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type UndoDepth } from '../../services/preferences';
@@ -18,7 +18,7 @@ import { buildForumEjsonSample, buildForumJsonSample, FORUM_EJSON_DATABASE_NAME,
 import { formatDate, formatOid, offsetLabel } from '../../utils/formatValue';
 import { cn } from '../../utils/cn';
 
-export type SettingsSection = 'display' | 'safety' | 'realtime' | 'references' | 'data' | 'diagnostics' | 'security';
+export type SettingsSection = 'display' | 'safety' | 'realtime' | 'references' | 'keyboard' | 'data' | 'diagnostics' | 'security';
 type Section = SettingsSection;
 
 const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
@@ -26,6 +26,7 @@ const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: 'safety', label: 'Safety', icon: ShieldCheck },
   { id: 'realtime', label: 'Realtime', icon: Radio },
   { id: 'references', label: 'References', icon: Link },
+  { id: 'keyboard', label: 'Keyboard', icon: Keyboard },
   { id: 'data', label: 'Data', icon: Database },
   { id: 'diagnostics', label: 'Diagnostics', icon: Stethoscope },
   { id: 'security', label: 'Security', icon: Shield },
@@ -470,6 +471,59 @@ function ReferencesSection({ databases, onMutate, onOpenCollection }: Pick<Setti
   );
 }
 
+// ── Keyboard ─────────────────────────────────────────────────────────────────
+
+const isMac = typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac');
+const MOD = isMac ? '⌘' : 'Ctrl';
+
+const SHORTCUTS: { title: string; rows: [keys: string[], what: string][] }[] = [
+  {
+    title: 'Anywhere',
+    rows: [
+      [[MOD, 'K'], 'Quick jump — databases, collections, ObjectIds, commands'],
+      [[MOD, 'Z'], 'Undo your last document or field edit (again for the one before)'],
+      [['?'], 'This list'],
+    ],
+  },
+  {
+    title: 'In the columns',
+    rows: [
+      [['↑', '↓'], 'Move within a column (also k / j)'],
+      [['→', 'Enter'], 'Open the row into the next column (also l)'],
+      [['←'], 'Back to the previous column (also h)'],
+      [['e'], 'Edit the row (also F2; Enter on a field that has nothing to open)'],
+      [['Delete'], 'Delete the row — asks first, per Safety'],
+      [['/'], "Filter this column"],
+      [['Esc'], 'Hide the keyboard cursor'],
+    ],
+  },
+];
+
+function KeyboardSection() {
+  return (
+    <>
+      <p className={cn(styles.groupHint, 'mb-4')}>
+        The first arrow key shows a cursor in the columns; clicking a row moves it there. Keys do nothing while you're typing in a box or a dialog is open.
+      </p>
+      {SHORTCUTS.map((group) => (
+        <div key={group.title} className={styles.group}>
+          <p className={styles.groupTitle}>{group.title}</p>
+          {group.rows.map(([keys, what]) => (
+            <div key={what} className={styles.row}>
+              <span className="flex w-40 shrink-0 flex-wrap items-center gap-1">
+                {keys.map((k) => (
+                  <kbd key={k} className="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">{k}</kbd>
+                ))}
+              </span>
+              <span className="text-xs text-slate-700">{what}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </>
+  );
+}
+
 // ── Data ─────────────────────────────────────────────────────────────────────
 
 const SAMPLES = [
@@ -746,6 +800,7 @@ export function SettingsModal({ open, initialSection, onClose, databases, onMuta
                 {section === 'display' && <DisplaySection />}
                 {section === 'safety' && <SafetySection databases={databases} />}
                 {section === 'realtime' && <RealtimeSection />}
+                {section === 'keyboard' && <KeyboardSection />}
                 {section === 'references' && (
                   <ReferencesSection
                     databases={databases}

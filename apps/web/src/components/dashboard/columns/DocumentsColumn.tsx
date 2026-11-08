@@ -154,7 +154,8 @@ export function DocumentsColumn({
   const canEditHere = canEditIn(useServerSettings(), activeDatabaseName, activeCollectionName);
 
   return (
-    <div className={styles.container} {...(canEditHere ? dragHandlers : {})}>
+    // data-nav-col: 키보드 탐색의 컬럼 번호 = 경로 번호(문서 목록은 늘 1)
+    <div data-nav-col={1} className={styles.container} {...(canEditHere ? dragHandlers : {})}>
       <DropOverlay visible={isColumnDragOver} label="Drop a file to import as a document" />
 
       {/* 헤더 */}

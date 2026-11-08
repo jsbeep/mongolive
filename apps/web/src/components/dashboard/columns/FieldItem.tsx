@@ -7,6 +7,7 @@ import { cn } from '../../../utils/cn';
 import { SPRING_SNAPPY, SPRING_HOVER } from '../../../utils/motionPresets';
 import { useHover } from '../../../hooks/useHover';
 import { ChangeFlash } from '../../common/ChangeFlash';
+import { useNavRow } from '../../../utils/keyboardNav';
 
 export interface FieldItemProps {
   fieldKey: string;
@@ -24,18 +25,29 @@ export interface FieldItemProps {
   onClick: (() => void) | null;
   // 이 필드의 문서 안 경로("a.b.0") — 있으면 올렸을 때 경로 복사 버튼(편집 가능 여부와 상관없이)
   copyPath?: string;
+  // 키보드 Delete용(화면에선 편집기 안의 삭제 버튼으로 지운다)
+  onDelete?: () => void;
   children: ReactNode;
 }
 
 export function FieldItem({
   fieldKey, isId, isExpandable, isEditable, isHighlighted, isActive = false, reduceMotion = false,
   reserveEditWidth = false,
-  onEdit, onClick, children, copyPath,
+  onEdit, onClick, children, copyPath, onDelete,
 }: FieldItemProps) {
   const { hovered, hoverHandlers } = useHover();
+  // 키보드 탐색(utils/keyboardNav): 펼칠 수 있으면 열기, 편집·삭제는 편집할 수 있을 때만(_id·안전장치)
+  const navRef = useNavRow({
+    open: onClick ?? undefined,
+    edit: isEditable ? onEdit : undefined,
+    remove: isEditable ? onDelete : undefined,
+  });
 
   return (
     <m.div
+      ref={navRef}
+      data-nav-row=""
+      data-nav-active={isActive ? '' : undefined}
       layout={!reduceMotion}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
