@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useExplorerState } from '../hooks/useExplorerState';
 import { StatusBar } from '../components/layout/StatusBar';
 import { Breadcrumbs } from '../components/dashboard/Breadcrumbs';
@@ -20,6 +20,11 @@ import { useActivityLog } from '../hooks/useActivityLog';
 import { useSidebar } from '../hooks/useSidebar';
 import { useSystemLog } from '../hooks/useSystemLog';
 import { useMillerKeyboard } from '../hooks/useMillerKeyboard';
+import { QueryHistoryPanel } from '../components/query/QueryHistoryPanel';
+import { QbeContext, type QbeHandler } from '../components/query/QbeMenu';
+import { clearQueryHistory, removeQueryHistory, useQueryHistory, type QueryHistoryEntry } from '../services/queryHistory';
+import { openSearchPanel } from '../services/queryPanel';
+import { dataSourceKind } from '../services/api';
 
 // ── 스타일 ────────────────────────────────────────────────────────────────────
 
@@ -104,7 +109,16 @@ export default function ExplorerPage() {
     undo,
     refresh,
     openCollection,
+    runQuery,
+    queryByExample,
   } = state;
+  // 사이드바 Query = 쿼리 기록 패널(누른 버튼 옆에) — 열려 있으면 그 버튼 위치
+  const queryHistory = useQueryHistory();
+  const [historyAnchor, setHistoryAnchor] = useState<DOMRect | null>(null);
+  const closeHistory = useCallback(() => setHistoryAnchor(null), []);
+  const qbeHandler = useCallback<QbeHandler>((database, collection, conditions) => {
+    void queryByExample(database, collection, conditions).then((ok) => ok && openSearchPanel('query'));
+  }, [queryByExample]);
   // 지금 컬렉션 — 문서 목록 컬럼이 열려 있으면 그 컬렉션 이름(트리 강조, 알림 센터의 '이 컬렉션' 범위)
   const documentsPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'documents');
   const activeCollectionName = documentsPath?.kind === 'normal' ? documentsPath.collectionName ?? null : null;
@@ -206,6 +220,11 @@ export default function ExplorerPage() {
               await openCollection(database, name, label);
             }}
             onMutate={mutate}
+            queryHistory={{
+              open: historyAnchor !== null,
+              canQuery: dataSourceKind === 'remote',
+              onToggle: (anchor) => setHistoryAnchor((open) => (open ? null : anchor)),
+            }}
           />
 
           {/* Miller Columns */}
@@ -223,6 +242,8 @@ export default function ExplorerPage() {
             />
             {/* 강조 색: 내 저장 = 연초록, 밖에서 온 변경 = 하늘색 (ChangeFlash가 꺼내 쓴다) */}
             <ChangeToneContext.Provider value={changeTone}>
+            {/* Query by example — 필드 행의 메뉴가 부른다. 고르면 쿼리 패널을 열어 칩을 보여 준다 */}
+            <QbeContext.Provider value={qbeHandler}>
               <MillerColumns
                 visibleColumns={visibleColumns}
                 maxVisibleColumns={maxVisibleColumns}
@@ -252,6 +273,7 @@ export default function ExplorerPage() {
                 setEditingId={setEditingId}
                 clearChangedPaths={clearChangedPaths}
               />
+            </QbeContext.Provider>
             </ChangeToneContext.Provider>
           </div>
         </div>
@@ -332,6 +354,30 @@ export default function ExplorerPage() {
         onOpenCollection={(database, collection, label) => void openCollection(database, collection, label)}
         onOpenDatabase={(database) => void selectDatabase(database)}
       />
+
+      {/* 쿼리 기록 — 누르면 지금 컬렉션에(없으면 원래 컬렉션을 열고) 실행, ↗는 원래 컬렉션에서 실행 */}
+      {historyAnchor && (
+        <QueryHistoryPanel
+          anchor={historyAnchor}
+          entries={queryHistory}
+          current={activeDatabase && activeCollectionName ? { database: activeDatabase, collection: activeCollectionName } : null}
+          onApply={(entry: QueryHistoryEntry) => {
+            closeHistory();
+            const current = activeDatabase && activeCollectionName;
+            void runQuery(entry.filter, entry.text, current ? undefined : { database: entry.database, collection: entry.collection })
+              .then((ok) => ok && openSearchPanel('query'));
+          }}
+          onOpenOriginal={(entry) => {
+            closeHistory();
+            if (sidebar.isOverlay) sidebar.setMode('rail');
+            void runQuery(entry.filter, entry.text, { database: entry.database, collection: entry.collection })
+              .then((ok) => ok && openSearchPanel('query'));
+          }}
+          onRemove={removeQueryHistory}
+          onClear={clearQueryHistory}
+          onClose={closeHistory}
+        />
+      )}
 
       {/* 토스트 — 오른쪽 아래(알림 센터가 열려 있으면 그 위) */}
       <Toast

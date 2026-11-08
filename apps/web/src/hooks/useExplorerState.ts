@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, dataSourceKind } from '../services/api';
+import { recordQuery } from '../services/queryHistory';
 import { useToast, type ToastMessage } from './useToast';
 import { useUniqueOidRegistry } from './useUniqueOidRegistry';
 import { CHANGE_FLASH_MS, type ChangeTone } from '../components/common/ChangeFlash';
@@ -31,6 +32,9 @@ import { getPreferences, LIVE_BATCH_MS } from '../services/preferences';
 import {
   writeBlockedReason,
   validateQueryFilter,
+  formatQueryText,
+  addCondition,
+  type Condition,
   collectionKey,
   compareKey,
   idString,
@@ -201,6 +205,10 @@ export interface UseExplorerStateResult {
   setDocumentQuery: (patch: Partial<DocumentListQuery>) => Promise<void>;
   // 사용자 쿼리 적용(filter 없음 = 해제). 첫 페이지부터 다시 받는다. 실패하면 이전 결과·쿼리를 그대로 두고 오류 메시지를 돌려준다
   applyMongoFilter: (filter: JsonObject | undefined, text?: string) => Promise<string | null>;
+  // 쿼리 기록 등에서 다시 실행 — open이 있으면 그 컬렉션을 먼저 연다. 실패는 알림으로. 성공하면 true
+  runQuery: (filter: JsonObject, text: string, open?: { database: string; collection: string }) => Promise<boolean>;
+  // Query by example — 조건(들)을 지금 쿼리에 더해(AND) 실행. 다른 컬렉션이면 그 컬렉션을 열고 그 조건만으로. 성공하면 true
+  queryByExample: (database: string, collection: string, conditions: Condition[]) => Promise<boolean>;
   pushJsonPath: (path: ActivePath) => void;
   popToIndex: (index: number) => void;
   pushFieldPath: (segments: string[]) => void;
@@ -1303,11 +1311,28 @@ export function useExplorerState(): UseExplorerStateResult {
       // loadDocuments는 응답이 와야 쿼리 상태를 바꾼다 — 실패하면 이전 쿼리와 목록이 그대로 남는다(기억도 안 한다)
       await loadDocuments(db, col, next);
       rememberQuery(db, col, next);
+      if (mongoFilter) recordQuery({ database: db, collection: col, text: text?.trim() || formatQueryText(mongoFilter), filter: mongoFilter });
       return null;
     } catch (e) {
       return e instanceof Error ? e.message : 'Query failed';
     }
   }, [loadDocuments]);
+
+  const runQuery = useCallback(async (filter: JsonObject, text: string, open?: { database: string; collection: string }) => {
+    if (open) await openCollection(open.database, open.collection, open.collection);
+    const failure = await applyMongoFilter(filter, text);
+    if (failure) showToast(failure, 'error');
+    return failure === null;
+  }, [openCollection, applyMongoFilter, showToast]);
+
+  const queryByExample = useCallback(async (database: string, collection: string, conditions: Condition[]) => {
+    const here = activeDatabaseRef.current === database && activeCollectionRef.current === collection;
+    if (!here) await openCollection(database, collection, collection);
+    const next = conditions.reduce(addCondition, here ? documentQueryRef.current.mongoFilter ?? {} : {});
+    const failure = await applyMongoFilter(next, formatQueryText(next));
+    if (failure) showToast(failure, 'error');
+    return failure === null;
+  }, [openCollection, applyMongoFilter, showToast]);
 
   return {
     connectionStatus,
@@ -1338,6 +1363,8 @@ export function useExplorerState(): UseExplorerStateResult {
     selectDocument,
     setDocumentQuery,
     applyMongoFilter,
+    runQuery,
+    queryByExample,
     pushJsonPath,
     popToIndex,
     pushFieldPath,

@@ -8,6 +8,7 @@ import { SPRING_SNAPPY, SPRING_HOVER } from '../../../utils/motionPresets';
 import { useHover } from '../../../hooks/useHover';
 import { ChangeFlash } from '../../common/ChangeFlash';
 import { useNavRow } from '../../../utils/keyboardNav';
+import { QbeMenu, type QbeTarget } from '../../query/QbeMenu';
 
 export interface FieldItemProps {
   fieldKey: string;
@@ -25,6 +26,8 @@ export interface FieldItemProps {
   onClick: (() => void) | null;
   // 이 필드의 문서 안 경로("a.b.0") — 있으면 올렸을 때 경로 복사 버튼(편집 가능 여부와 상관없이)
   copyPath?: string;
+  // 있으면 경로 복사 대신 Query by example 버튼(경로 복사는 그 메뉴 안에) — 서버 연결일 때
+  qbe?: QbeTarget;
   // 키보드 Delete용(화면에선 편집기 안의 삭제 버튼으로 지운다)
   onDelete?: () => void;
   // 키 글자 바로 왼쪽에 겹쳐 그릴 것 — 순서 바꾸기 손잡이(ReorderRow). 평소엔 키(인덱스)에 올렸을 때만, showLeading이면 늘
@@ -36,7 +39,7 @@ export interface FieldItemProps {
 export function FieldItem({
   fieldKey, isId, isExpandable, isEditable, isHighlighted, isActive = false, reduceMotion = false,
   reserveEditWidth = false,
-  onEdit, onClick, children, copyPath, onDelete, leading, showLeading = false,
+  onEdit, onClick, children, copyPath, qbe, onDelete, leading, showLeading = false,
 }: FieldItemProps) {
   const { hovered, hoverHandlers } = useHover();
   // 손잡이는 키(인덱스) 글자에 올렸을 때만 — 행 어디든 올릴 때마다 나오면 산만하다
@@ -110,8 +113,12 @@ export function FieldItem({
       </div>
 
       <div className={cn("flex items-center shrink-0", reserveEditWidth && 'self-start')}>
-        {copyPath && (
+        {qbe ? (
           // 자리는 늘 잡아 두고(올릴 때 값이 밀리지 않게) 올렸을 때만 보인다
+          <span className={cn('transition-opacity', hovered ? 'opacity-100' : 'pointer-events-none opacity-0')} onClick={(e) => e.stopPropagation()}>
+            <QbeMenu target={qbe} />
+          </span>
+        ) : copyPath && (
           <span className={cn('transition-opacity', hovered ? 'opacity-100' : 'pointer-events-none opacity-0')} onClick={(e) => e.stopPropagation()}>
             <CopyBtn text={copyPath} icon={Route} size={14} tip={`Copy path  ${copyPath}`} className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors" />
           </span>

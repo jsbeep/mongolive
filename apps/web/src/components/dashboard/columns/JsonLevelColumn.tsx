@@ -27,7 +27,8 @@ import { usePreferences } from '../../../services/preferences';
 import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 import { dateTooltip, formatDate, formatOid, oidTooltip } from '../../../utils/formatValue';
 import { mongoshFindQuery } from '../../../utils/mongoshQuery';
-import { api } from '../../../services/api';
+import type { QbeTarget } from '../../query/QbeMenu';
+import { api, dataSourceKind } from '../../../services/api';
 import { InlineSegmentEditor } from '../../editors/InlineSegmentEditor';
 import { DeleteConfirmModal } from '../../common/DeleteConfirmModal';
 import { AddItemButton } from './AddItemButton';
@@ -340,6 +341,18 @@ export function JsonLevelColumn({
   // 이 컬럼이 보여주는 컬렉션에 선언된 필드 기반 참조(FK) 설정 — string/number 필드에 LINK 배지를 띄울지 결정
   const referenceFields = collections.find((c) => c.name === mutateCollectionName)?.referenceFields ?? {};
 
+  // Query by example — 이 필드 값으로 문서 목록에 조건을 건다(서버 연결일 때만). 참조로 연 문서면 그 컬렉션으로 이동해서
+  const qbeFor = (fieldKey: string, value: JsonValue): QbeTarget | undefined =>
+    dataSourceKind === 'remote' && mutateDatabaseName && mutateCollectionName
+      ? {
+          path: [...projectionPath, fieldKey],
+          value,
+          database: mutateDatabaseName,
+          collection: mutateCollectionName,
+          elsewhere: mutateDatabaseName !== activeDatabaseName || mutateCollectionName !== activeCollectionName,
+        }
+      : undefined;
+
   const isObjectNode = isEjsonObject(currentNode);
   const isArrayNode = Array.isArray(currentNode);
   // 안전장치(설정 창 › Safety): read-only거나 이 문서의 컬렉션(참조로 연 문서면 그 컬렉션)이 보호 대상이면 편집을 숨긴다
@@ -354,7 +367,7 @@ export function JsonLevelColumn({
 
   // ── 순서 바꾸기(배열 원소·객체 키) ─────────────────────────────────────────
   // 손잡이를 잡으면 '초안'이 시작된다: base = 그 순간의 컨테이너. 끄는 동안 순서만 바꿔 들고 있다가
-  // 머리의 ✓로 한 번에 쓴다(✗·Esc = 취소). 쓸 때 base를 '본 값'으로 보내므로, 그 사이 누가 바꿨으면
+  // 헤더의 ✓로 한 번에 쓴다(✗·Esc = 취소). 쓸 때 base를 '본 값'으로 보내므로, 그 사이 누가 바꿨으면
   // 다른 수정과 똑같이 충돌로 거절된다. 초안 동안엔 실시간 반영이 와도 base로 그린다.
   // 평소엔 페이지(PAGE_SIZE개씩)로 보이지만 초안 동안엔 전체를 펼쳐 다른 페이지 자리로도 옮길 수 있다.
   const [reorder, setReorder] = useState<{ base: JsonValue; order: string[] } | null>(null);
@@ -829,6 +842,7 @@ export function JsonLevelColumn({
             onEdit={() => onSetEditingId(editorId)}
             onClick={handleClick}
             copyPath={[...projectionPath, fieldKey].join('.')}
+            qbe={qbeFor(fieldKey, value)}
             onDelete={() => setDeleteTarget({ fieldKey, value })}
           >
             {valueContent}
@@ -863,6 +877,7 @@ export function JsonLevelColumn({
         onEdit={() => onSetEditingId(editorId)}
         onClick={handleClick}
         copyPath={[...projectionPath, fieldKey].join('.')}
+        qbe={inDraft ? undefined : qbeFor(fieldKey, value)}
         onDelete={() => setDeleteTarget({ fieldKey, value })}
         leading={opts?.grip}
         showLeading={inDraft}

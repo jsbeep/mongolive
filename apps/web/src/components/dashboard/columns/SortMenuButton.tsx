@@ -74,7 +74,7 @@ export function SortMenuButton({ value, options, onChange }: SortMenuButtonProps
                 role="menuitemradio"
                 aria-checked={selected}
                 className={cn(
-                  'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-slate-100',
+                  'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors hover:bg-slate-100',
                   selected ? 'text-emerald-700' : 'text-slate-600',
                 )}
                 onClick={() => {

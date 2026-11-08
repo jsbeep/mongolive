@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { FileText, Tag, Check, X, ArrowLeft, Link, Search, ArrowUpDown, ArrowDownAZ, ArrowDownZA, ArrowDownWideNarrow, ArrowDownNarrowWide, ClockArrowDown, ClockArrowUp } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { ActivePath, CollectionSummary, DocumentSort, DocumentSummary, JsonObject, MutationRequest } from '../../../types/explorer';
+import { loadQueryFieldPaths } from '../../../services/fieldSuggestions';
 import type { DocumentListQuery, DocumentPageInfo } from '../../../hooks/useExplorerState';
 import { ColumnItem, ColumnSkeletonList } from './ColumnItem';
 import { AddItemButton } from './AddItemButton';
 import { DropOverlay } from './DropOverlay';
 import { InlineSegmentEditor } from '../../editors/InlineSegmentEditor';
 import { DeleteConfirmModal } from '../../common/DeleteConfirmModal';
-import { ReferenceFieldsManager } from './ReferenceFieldsManager';
+import { ReferenceFieldsEditor } from './ReferenceFieldsEditor';
 import { cn } from '../../../utils/cn';
 import { api } from '../../../services/api';
 import { columnListStyles as styles } from './columnListStyles';
@@ -97,9 +98,11 @@ export function DocumentsColumn({
 
   const [isEditingTitleKey, setIsEditingTitleKey] = useState(false);
   const [titleKeyInput, setTitleKeyInput] = useState('');
+  // 참조(FK) 설정 — 헤더 아래 패널(찾기 패널과 같은 자리, 그 아래). 컬렉션이 바뀌면 닫는다
   const [isManagingRefs, setIsManagingRefs] = useState(false);
+  useEffect(() => { setIsManagingRefs(false); }, [activeDatabaseName, activeCollectionName]);
 
-  // 찾기 패널 — 머리의 찾기 버튼 하나로 연다. 위: 글자 필터·정렬(FilterSortToolbar), 아래: 쿼리(QueryBar).
+  // 찾기 패널 — 헤더의 찾기 버튼 하나로 연다. 위: 글자 필터·정렬(FilterSortToolbar), 아래: 쿼리(QueryBar).
   // 거르기·정렬·페이지 자르기는 데이터 소스가 하고(현재 페이지만 받아오므로 브라우저에서 정렬하면 그 페이지
   // 안에서만 섞인다) 여기서는 입력값만 넘긴다. 열림 상태는 breadcrumb 칩·단축키(/, q)도 쓰므로 모듈 저장소에 둔다.
   const searchPanel = useSearchPanel();
@@ -131,7 +134,7 @@ export function DocumentsColumn({
         : undefined;
 
   const listRef = useRef<HTMLDivElement>(null);
-  // 머리가 좁으면 제목 필드·참조를 ⋯ 메뉴로 접는다
+  // 헤더가 좁으면 제목 필드·참조를 ⋯ 메뉴로 접는다
   const headerRef = useRef<HTMLDivElement>(null);
   const foldableRef = useRef<HTMLDivElement>(null);
   const fixedRef = useRef<HTMLButtonElement>(null);
@@ -225,7 +228,7 @@ export function DocumentsColumn({
           </>
         ) : (
           <>
-            {/* 왼쪽: 아이콘·제목·개수 — 머리 너비의 절반은 늘 이쪽(useHeaderFold) */}
+            {/* 왼쪽: 아이콘·제목·개수 — 헤더 너비의 절반은 늘 이쪽(useHeaderFold) */}
             <div className="flex min-w-[50%] flex-1 items-center gap-2">
               <FileText size={15} className={cn(styles.headerIcon, 'shrink-0')} />
               <HeaderTitle title={collectionLabel} total={totalAll} matched={isDocFilterActive || isQueryActive ? totalMatched : undefined} />
@@ -236,7 +239,7 @@ export function DocumentsColumn({
                 <HeaderOverflowMenu
                   items={[
                     { icon: <Tag size={12} />, label: 'Title field', detail: currentTitleKey ?? 'name', disabled: !activeCollectionName, onSelect: startTitleKeyEdit },
-                    { icon: <Link size={12} />, label: 'References', detail: String(Object.keys(referenceFields).length), disabled: !activeCollectionName, onSelect: () => setIsManagingRefs(true) },
+                    { icon: <Link size={12} />, label: 'References', detail: String(Object.keys(referenceFields).length), disabled: !activeCollectionName, onSelect: () => setIsManagingRefs((v) => !v) },
                   ]}
                 />
               ) : (
@@ -256,12 +259,14 @@ export function DocumentsColumn({
                   </button>
                   <button
                     type="button"
+                    aria-expanded={isManagingRefs}
                     className={cn(
-                      'flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200/70 text-slate-500 hover:text-slate-700 transition-colors shrink-0',
+                      'flex items-center gap-1 px-2 py-1 rounded-lg transition-colors shrink-0',
+                      isManagingRefs ? 'bg-cyan-100 text-cyan-700' : 'bg-slate-100 hover:bg-slate-200/70 text-slate-500 hover:text-slate-700',
                       !activeCollectionName && 'opacity-40 pointer-events-none',
                     )}
                     data-tt="References — declare which fields link to another collection, then click them to jump"
-                    onClick={() => setIsManagingRefs(true)}
+                    onClick={() => setIsManagingRefs((v) => !v)}
                   >
                     <Link size={12} />
                     <span className="text-[11px] font-mono">{Object.keys(referenceFields).length}</span>
@@ -309,9 +314,43 @@ export function DocumentsColumn({
               onRun={onApplyMongoFilter}
               onClose={closeSearchPanel}
               focusSignal={searchPanel.focus === 'query' ? searchPanel.seq : undefined}
+              // 필드 자동완성 — 이 컬렉션 문서 몇 개(지금 연 문서 먼저)의 경로들
+              loadFieldSuggestions={() => (activeDatabaseName ? loadQueryFieldPaths(activeDatabaseName, activeCollectionName, activeDocumentOid) : Promise.resolve([]))}
             />
           )}
         </>
+      )}
+
+      {/* 참조(FK) 설정 패널 — 좁은 컬럼이라 두 줄 배치. Esc·닫기·헤더 버튼으로 닫는다 */}
+      {isManagingRefs && activeDatabaseName && activeCollectionName && (
+        <div
+          role="region"
+          aria-label="References"
+          className="shrink-0 border-b border-slate-100 bg-slate-50/60 px-3 py-2.5"
+          onKeyDown={(e) => {
+            if (e.key !== 'Escape') return;
+            e.stopPropagation();
+            setIsManagingRefs(false);
+          }}
+        >
+          <div className="mb-2 flex items-center gap-1.5">
+            <Link size={12} className="text-cyan-500" />
+            <span className="flex-1 truncate text-xs font-semibold text-slate-600">References</span>
+            <span className="truncate text-[11px] text-slate-400">field → collection.key</span>
+            <button type="button" aria-label="Close references" className="rounded-md p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600" onClick={() => setIsManagingRefs(false)}>
+              <X size={12} />
+            </button>
+          </div>
+          <ReferenceFieldsEditor
+            database={activeDatabaseName}
+            collection={activeCollectionName}
+            referenceFields={referenceFields}
+            collections={collections}
+            onMutate={onMutate}
+            layout="compact"
+            autoFocus
+          />
+        </div>
       )}
 
       {/* 목록 + 오른쪽 페이지 레일 */}
@@ -472,19 +511,7 @@ export function DocumentsColumn({
         document.body,
       )}
 
-      {/* 참조(FK) 관리 모달 */}
-      {isManagingRefs && activeDatabaseName && activeCollectionName && createPortal(
-        <ReferenceFieldsManager
-          isOpen={isManagingRefs}
-          database={activeDatabaseName}
-          collection={activeCollectionName}
-          referenceFields={referenceFields}
-          collections={collections}
-          onMutate={onMutate}
-          onClose={() => setIsManagingRefs(false)}
-        />,
-        document.body,
-      )}
+
     </div>
   );
 }

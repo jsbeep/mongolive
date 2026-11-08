@@ -53,7 +53,7 @@ export function FilterSortToolbar({
           value={filterText}
           onChange={(e) => onFilterTextChange(e.target.value)}
           placeholder={filterPlaceholder}
-          className="w-full text-xs pl-6 pr-6 py-1.5 rounded-lg bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 transition-all"
+          className="w-full text-[13px] pl-6 pr-6 py-1.5 rounded-lg bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 transition-all"
         />
         {filterText && (
           <button

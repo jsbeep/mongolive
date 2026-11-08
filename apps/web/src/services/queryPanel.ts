@@ -1,5 +1,5 @@
 // 문서 컬럼의 찾기 패널(위: 글자 필터·정렬, 아래: 쿼리)이 열려 있나 + 어느 입력칸으로 커서를 보낼까.
-// 컬럼 머리 버튼·breadcrumb의 쿼리 칩·단축키(/, q)가 같이 쓴다(서로 다른 곳에 있어서 모듈 저장소로).
+// 컬럼 헤더 버튼·breadcrumb의 쿼리 칩·단축키(/, q)가 같이 쓴다(서로 다른 곳에 있어서 모듈 저장소로).
 import { useSyncExternalStore } from 'react';
 
 export type SearchPanelFocus = 'filter' | 'query';

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Link, X, Plus } from 'lucide-react';
+import { Link } from 'lucide-react';
 import type { CollectionSummary, MutationRequest } from '../../../types/explorer';
+import { ReferenceFieldsEditor } from './ReferenceFieldsEditor';
 
 // ── 스타일 ────────────────────────────────────────────────────────────────────
 
@@ -13,22 +14,6 @@ const styles = {
   iconWrap: 'w-10 h-10 rounded-2xl bg-cyan-50 flex items-center justify-center shrink-0',
   title: 'text-base font-semibold text-slate-900',
   message: 'text-sm text-slate-500 leading-relaxed',
-  list: 'flex flex-col gap-1.5 max-h-48 overflow-y-auto -mx-1 px-1',
-  row: 'flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-100 text-sm',
-  rowField: 'font-mono text-slate-700 shrink-0',
-  rowArrow: 'text-slate-300 shrink-0',
-  rowTarget: 'font-mono text-cyan-600 truncate flex-1',
-  removeBtn: 'p-1 rounded-lg text-slate-400 hover:bg-slate-200/70 hover:text-slate-600 transition-colors shrink-0',
-  // 한 줄짜리 선언 행 — [Field key] → [Target collection.key] [+] 로 읽히게 배치한다.
-  // 위 목록의 "field → collection.key" 행과 같은 모양이라 무엇을 만드는지가 바로 보인다.
-  addRow: 'flex items-end gap-2 pt-3 border-t border-slate-100',
-  addGroup: 'flex flex-col gap-1 min-w-0',
-  addLabel: 'text-[10px] font-semibold uppercase tracking-wider text-slate-400 px-0.5',
-  addArrow: 'text-slate-300 shrink-0 pb-2 text-sm',
-  addTargetControls: 'flex items-center gap-1 min-w-0',
-  addDot: 'text-slate-300 shrink-0 text-xs',
-  select: 'w-full min-w-0 text-xs px-2 py-1.5 rounded-lg bg-slate-100/80 text-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 focus:bg-white transition-all font-mono',
-  addBtn: 'shrink-0 flex items-center justify-center w-[30px] h-[30px] rounded-lg text-white bg-cyan-500 hover:bg-cyan-600 transition-colors disabled:opacity-40 disabled:pointer-events-none',
   closeBtn: 'self-end px-4 py-2 rounded-xl text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors',
 } as const;
 
@@ -40,15 +25,15 @@ interface ReferenceFieldsManagerProps {
   collection: string;
   referenceFields: Record<string, { targetCollection: string; targetKey: string }>;
   collections: CollectionSummary[];
-  // import 직후 일괄 설정 시 — 파싱된 문서들에서 발견된 필드 키 후보(없으면 자유 입력)
+  // import 직후 일괄 설정 시 — 파싱된 문서들에서 발견된 필드 키 후보. 그 밖엔 열 때 이 컬렉션 문서 몇 개에서 뽑는다
   suggestedFieldKeys?: string[];
   onMutate: (op: MutationRequest) => Promise<unknown>;
   onClose: () => void;
 }
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────────────────
-// 컬렉션 단위로 "어떤 필드가 어떤 컬렉션의 어떤 키를 가리키는지" 선언하는 곳 — 한 곳뿐이고
-// 평상시 관리와 import 직후 일괄 설정에서 똑같이 재사용된다.
+// 컬렉션 가져오기(import) 직후 일괄 설정용 모달 — 그때는 그 컬렉션의 문서 컬럼이 아직 열려 있지 않아서.
+// 평소 관리는 문서 컬럼 헤더 아래 패널(DocumentsColumn의 References 패널)에서 한다. 안의 내용은 둘 다 ReferenceFieldsEditor.
 
 export function ReferenceFieldsManager({
   isOpen,
@@ -60,35 +45,6 @@ export function ReferenceFieldsManager({
   onMutate,
   onClose,
 }: ReferenceFieldsManagerProps) {
-  const [newField, setNewField] = useState('');
-  const [newTargetCollection, setNewTargetCollection] = useState('');
-  const [newTargetKey, setNewTargetKey] = useState('');
-
-  const resetAddRow = () => {
-    setNewField('');
-    setNewTargetCollection('');
-    setNewTargetKey('');
-  };
-
-  const handleRemove = async (field: string) => {
-    await onMutate({ type: 'setCollectionReferenceField', database, collection, field });
-  };
-
-  const handleAdd = async () => {
-    if (!newField.trim() || !newTargetCollection || !newTargetKey.trim()) return;
-    await onMutate({
-      type: 'setCollectionReferenceField',
-      database,
-      collection,
-      field: newField.trim(),
-      targetCollection: newTargetCollection,
-      targetKey: newTargetKey.trim(),
-    });
-    resetAddRow();
-  };
-
-  const availableSuggestions = (suggestedFieldKeys ?? []).filter((k) => !(k in referenceFields));
-
   // Esc = 닫기(다른 모달과 같게). 입력 중이어도 — 추가 줄은 저장 전이라 잃을 게 적다
   useEffect(() => {
     if (!isOpen) return;
@@ -136,83 +92,15 @@ export function ReferenceFieldsManager({
               </div>
             </div>
 
-            {Object.keys(referenceFields).length > 0 && (
-              <div className={styles.list}>
-                {Object.entries(referenceFields).map(([field, ref]) => (
-                  <div key={field} className={styles.row}>
-                    <span className={styles.rowField}>{field}</span>
-                    <span className={styles.rowArrow}>→</span>
-                    <span className={styles.rowTarget}>{ref.targetCollection}.{ref.targetKey}</span>
-                    <button type="button" className={styles.removeBtn} onClick={() => void handleRemove(field)}>
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className={styles.addRow}>
-              <div className={`${styles.addGroup} flex-1`}>
-                <span className={styles.addLabel}>Field key</span>
-                {availableSuggestions.length > 0 ? (
-                  <select className={styles.select} value={newField} onChange={(e) => setNewField(e.target.value)}>
-                    <option value="">Select…</option>
-                    {availableSuggestions.map((key) => (
-                      <option key={key} value={key}>{key}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    className={styles.select}
-                    placeholder="authorId"
-                    value={newField}
-                    onChange={(e) => setNewField(e.target.value)}
-                  />
-                )}
-              </div>
-
-              <span className={styles.addArrow}>→</span>
-
-              <div className={`${styles.addGroup} flex-[1.6]`}>
-                <span className={styles.addLabel}>Target</span>
-                <div className={styles.addTargetControls}>
-                  <select
-                    className={styles.select}
-                    value={newTargetCollection}
-                    onChange={(e) => {
-                      const targetCollection = e.target.value;
-                      setNewTargetCollection(targetCollection);
-                      const target = collections.find((c) => c.name === targetCollection);
-                      setNewTargetKey(target?.primaryKey ?? '_id');
-                    }}
-                  >
-                    <option value="">Collection…</option>
-                    {collections.map((c) => (
-                      <option key={c.name} value={c.name}>{c.label || c.name}</option>
-                    ))}
-                  </select>
-                  <span className={styles.addDot}>.</span>
-                  <input
-                    type="text"
-                    className={styles.select}
-                    placeholder="_id"
-                    value={newTargetKey}
-                    onChange={(e) => setNewTargetKey(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <button
-                type="button"
-                className={styles.addBtn}
-                data-tt="Add reference"
-                disabled={!newField.trim() || !newTargetCollection || !newTargetKey.trim()}
-                onClick={() => void handleAdd()}
-              >
-                <Plus size={15} />
-              </button>
-            </div>
+            <ReferenceFieldsEditor
+              database={database}
+              collection={collection}
+              referenceFields={referenceFields}
+              collections={collections}
+              suggestedFieldKeys={suggestedFieldKeys}
+              onMutate={onMutate}
+              layout="wide"
+            />
 
             <button type="button" className={styles.closeBtn} onClick={onClose}>
               Done

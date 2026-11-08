@@ -1,5 +1,5 @@
 // 왼쪽 사이드바 — 세 단계(useSidebar): 완전 접힘 / 아이콘 레일 / 전체.
-//   전체: [ML 이름] · 쿼리/집계/북마크(아직 자리만) · ── · DB/컬렉션 트리
+//   전체: [ML 이름] · 쿼리 기록(Query)/집계·북마크(아직 자리만) · ── · DB/컬렉션 트리
 //   레일: 아이콘만. 아무 아이콘이나 누르면 전체로 펼친다. 맨 아래 = 완전히 접기
 //   접힘: 화면 왼쪽 끝에 당김 핸들(아이폰 PiP를 옆으로 치워 둔 모양) — 늘 얇게 보이고 마우스가 다가가면 커진다.
 //         누르면 접기 전 단계로, 오른쪽으로 끌면 끄는 만큼 펼친다.
@@ -12,6 +12,7 @@ import { Bookmark, ChevronRight, ChevronsLeft, Database, PanelLeftClose, PanelLe
 import type { CollectionSummary, DatabaseSummary, MutationRequest } from '../../types/explorer';
 import { clampFullWidth, FULL_DEFAULT, RAIL_WIDTH, snapMode, type SidebarMode, type SidebarState } from '../../hooks/useSidebar';
 import { DatabaseTree } from './DatabaseTree';
+import { cn } from '../../utils/cn';
 
 // 사이드바와 컬럼 사이 틈 — 끌기 손잡이가 이 틈에 놓인다
 const GAP = 8;
@@ -26,16 +27,19 @@ interface SidebarProps {
   onSelectDatabase: (name: string) => Promise<void>;
   onOpenCollection: (database: string, name: string, label: string) => Promise<void>;
   onMutate: (op: MutationRequest) => Promise<unknown>;
+  // Query = 쿼리 기록 패널(누른 버튼 옆에 뜬다). canQuery가 false면(Mock) 흐리게
+  queryHistory: { open: boolean; canQuery: boolean; onToggle: (anchor: DOMRect) => void };
 }
 
 type TreeProps = Omit<SidebarProps, 'sidebar'>;
 
 // 아직 없는 기능 — 눌러도 아무 일이 없으니 흐리게 + 'Soon' 표시
-const NAV_ITEMS: { icon: LucideIcon; label: string }[] = [
-  { icon: Search, label: 'Query' },
+const SOON_ITEMS: { icon: LucideIcon; label: string }[] = [
   { icon: Workflow, label: 'Aggregation' },
   { icon: Bookmark, label: 'Bookmarks' },
 ];
+const QUERY_TIP = 'Query history — run a past query on this collection';
+const QUERY_TIP_MOCK = 'Query history — needs a server connection (not in demo mode)';
 
 const styles = {
   // 컬럼 패널과 같은 카드 모양
@@ -53,6 +57,8 @@ const styles = {
   nav: 'flex shrink-0 flex-col gap-0.5 px-2 pt-3',
   // 아직 없는 기능 — 누를 수 없음(aria-disabled: disabled면 툴팁 이벤트도 막혀서)
   navItem: 'flex h-8 cursor-default items-center gap-2.5 rounded-md px-2 text-[13px] text-slate-400',
+  navButton: 'flex h-8 items-center gap-2.5 rounded-md px-2 text-left text-[13px] text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800',
+  navButtonActive: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-700',
   soon: 'ml-auto rounded px-1.5 py-px text-[10px] font-medium text-slate-400 ring-1 ring-slate-200',
   divider: 'mx-3 my-2.5 h-px shrink-0 bg-slate-100',
   railList: 'flex flex-col items-center gap-1',
@@ -86,7 +92,19 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
         </div>
       </div>
       <nav className={styles.nav} aria-label="Tools">
-        {NAV_ITEMS.map(({ icon: Icon, label }) => (
+        <button
+          type="button"
+          data-query-history-toggle=""
+          aria-expanded={tree.queryHistory.open}
+          aria-disabled={!tree.queryHistory.canQuery}
+          className={cn(styles.navButton, tree.queryHistory.open && styles.navButtonActive, !tree.queryHistory.canQuery && 'cursor-default opacity-50 hover:bg-transparent')}
+          data-tt={tree.queryHistory.canQuery ? QUERY_TIP : QUERY_TIP_MOCK}
+          onClick={(e) => tree.queryHistory.canQuery && tree.queryHistory.onToggle(e.currentTarget.getBoundingClientRect())}
+        >
+          <Search size={15} />
+          <span>Query</span>
+        </button>
+        {SOON_ITEMS.map(({ icon: Icon, label }) => (
           <div key={label} className={styles.navItem} role="button" aria-disabled="true" data-tt={`${label} — coming soon`}>
             <Icon size={15} />
             <span>{label}</span>
@@ -108,14 +126,26 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
   );
 }
 
-function RailContent({ onExpand, onHide }: { onExpand: () => void; onHide: () => void }) {
+function RailContent({ onExpand, onHide, queryHistory }: { onExpand: () => void; onHide: () => void; queryHistory: SidebarProps['queryHistory'] }) {
   return (
     <>
       <div className={styles.brandRail}>
         <MlButton hoverIcon={PanelLeftOpen} label="Expand sidebar" onClick={onExpand} />
       </div>
       <nav className={`${styles.railList} pt-3`} aria-label="Tools">
-        {NAV_ITEMS.map(({ icon: Icon, label }) => (
+        <button
+          type="button"
+          data-query-history-toggle=""
+          aria-label="Query history"
+          aria-expanded={queryHistory.open}
+          aria-disabled={!queryHistory.canQuery}
+          className={cn(queryHistory.canQuery ? styles.railBtn : styles.railBtnSoon, queryHistory.open && 'bg-emerald-50 text-emerald-700')}
+          data-tt={queryHistory.canQuery ? QUERY_TIP : QUERY_TIP_MOCK}
+          onClick={(e) => queryHistory.canQuery && queryHistory.onToggle(e.currentTarget.getBoundingClientRect())}
+        >
+          <Search size={16} />
+        </button>
+        {SOON_ITEMS.map(({ icon: Icon, label }) => (
           <div key={label} className={styles.railBtnSoon} role="button" aria-disabled="true" aria-label={label} data-tt={`${label} — coming soon`}>
             <Icon size={16} />
           </div>
@@ -310,7 +340,7 @@ export function Sidebar({ sidebar, ...tree }: SidebarProps) {
             <div className={styles.card}>
               {contentMode === 'full'
                 ? <FullContent {...tree} onCollapseToRail={toRail} />
-                : <RailContent onExpand={toFull} onHide={hide} />}
+                : <RailContent onExpand={toFull} onHide={hide} queryHistory={tree.queryHistory} />}
             </div>
             {/* 좁은 화면의 레일은 끌지 않는다(전체는 위에 떠서 열리므로).
                 끄는 중엔 미리보기가 '접힘'이어도 남겨 둔다 — 사라지면 포인터 캡처가 끊겨 '놓기'를 못 받는다 */}

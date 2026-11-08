@@ -1,4 +1,4 @@
-// 컬럼 머리 오른쪽 버튼 묶음을 '⋯' 메뉴로 접을지 — 왼쪽(아이콘·제목·개수)이 머리 너비의 절반은 늘 갖도록.
+// 컬럼 헤더 오른쪽 버튼 묶음을 '⋯' 메뉴로 접을지 — 왼쪽(아이콘·제목·개수)이 헤더 너비의 절반은 늘 갖도록.
 // 오른쪽에 필요한 너비(접히는 버튼들의 원래 너비 + 늘 보이는 버튼) > 절반이면 접는다.
 // 접힌 동안엔 접히는 버튼이 화면에 없으므로 마지막으로 잰 원래 너비를 쓴다.
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
@@ -22,7 +22,7 @@ export function useHeaderFold(
     const check = () => {
       const foldable = foldableRef.current;
       if (foldable) naturalRef.current = foldable.scrollWidth;
-      // 제목 필드 편집 중처럼 머리 모양이 다를 때는 그대로 둔다
+      // 제목 필드 편집 중처럼 헤더 모양이 다를 때는 그대로 둔다
       if (!naturalRef.current || !fixedRef.current) return;
       const style = getComputedStyle(header);
       const inner = header.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);

@@ -1,4 +1,4 @@
-// 컬럼 머리가 좁을 때 오른쪽 버튼들을 접어 넣는 '⋯' 메뉴(useHeaderFold가 접을지 정한다).
+// 컬럼 헤더가 좁을 때 오른쪽 버튼들을 접어 넣는 '⋯' 메뉴(useHeaderFold가 접을지 정한다).
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { cn } from '../../../utils/cn';
@@ -60,7 +60,7 @@ export function HeaderOverflowMenu({ items }: { items: HeaderMenuItem[] }) {
               type="button"
               role="menuitem"
               disabled={item.disabled}
-              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-slate-600 transition-colors hover:bg-slate-100 disabled:pointer-events-none disabled:opacity-40"
+              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-colors hover:bg-slate-100 disabled:pointer-events-none disabled:opacity-40"
               onClick={() => {
                 setOpen(false);
                 item.onSelect();
@@ -68,7 +68,7 @@ export function HeaderOverflowMenu({ items }: { items: HeaderMenuItem[] }) {
             >
               <span className="shrink-0 text-slate-400">{item.icon}</span>
               <span className="flex-1">{item.label}</span>
-              {item.detail && <span className="max-w-[10ch] truncate font-mono text-[11px] text-slate-400">{item.detail}</span>}
+              {item.detail && <span className="max-w-[10ch] truncate font-mono text-xs text-slate-400">{item.detail}</span>}
             </button>
           ))}
         </div>
