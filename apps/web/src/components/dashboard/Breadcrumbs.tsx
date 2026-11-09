@@ -35,6 +35,8 @@ const styles = {
   dropdownEmpty: 'px-3 py-4 text-xs text-slate-400 text-center',
   dropdownBack: 'relative flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer select-none transition-colors text-slate-500',
   dropdownDivider: 'h-px bg-slate-100 my-1',
+  // 빈 공간에 올리면 보이는 '경로 입력' 표시
+  pathHint: 'flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-dashed border-slate-300 font-mono text-[13px] font-semibold leading-none text-slate-400 opacity-0 transition-opacity group-hover/path:opacity-100',
   // 쿼리가 걸린 컬렉션 칸 옆 칩
   queryChip: 'inline-flex h-5 shrink-0 items-center rounded-md bg-emerald-100 px-1.5 font-mono text-[11px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-200/80',
 } as const;
@@ -206,6 +208,23 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFie
     setIsEditing(true);
   };
 
+  // . 키 = 경로 입력 시작(입력칸 밖, 모달이 없을 때, 문서가 열려 있을 때) — 설정 › Keyboard에도 있다
+  const startEditingRef = useRef(startEditing);
+  startEditingRef.current = startEditing;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '.' || e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as Element | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      if (!canEdit || isEditing) return;
+      e.preventDefault();
+      startEditingRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [canEdit, isEditing]);
+
   const triggerShake = () => {
     setShake(true);
     setTimeout(() => setShake(false), 300);
@@ -375,8 +394,22 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFie
             />
           </motion.div>
         )}
-        <div className={cn("inline-flex flex-1 self-stretch", breadcrumbs.length > 2 ? "cursor-pointer" : "")} 
-          onClick={() => breadcrumbs.length > 2 ? isEditing ? setIsEditing(false) : startEditing() : undefined}/>
+        {/* 남은 빈 공간 — 문서가 열려 있으면 올렸을 때 작은 점선 네모(.)가 나타나 '여기에 경로를 칠 수 있다'고 알린다.
+            누르거나 . 키 = 필드 경로 입력(.likes.0). 입력 중에 누르면 닫는다 */}
+        <div
+          className={cn('group/path inline-flex flex-1 items-center self-stretch pl-1', canEdit && 'cursor-text')}
+          onClick={() => (canEdit ? (isEditing ? setIsEditing(false) : startEditing()) : undefined)}
+        >
+          {canEdit && !isEditing && (
+            <span
+              className={styles.pathHint}
+              aria-label="Type a field path"
+              data-tt="Type a field path — or press ."
+            >
+              .
+            </span>
+          )}
+        </div>
       </div>
 
       {isEditing && createPortal(

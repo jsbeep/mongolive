@@ -9,7 +9,8 @@ import { saveServerSettings } from './serverSettings';
 const LOCAL_KEYS = [
   'mongolive.preferences', // 표시·삭제 확인·Undo 단계·반영 간격·애니메이션·글꼴
   'mongolive.activity.hiddenOps', // 변경 기록 배지로 끈 종류
-  'mongolive.collectionQuery', // 컬렉션별 필터·정렬
+  'mongolive.collectionQuery', // 컬렉션별 필터·정렬·쿼리
+  'mongolive.bookmarks', // 경로 북마크
   'mongolive.sidebar.mode',
   'mongolive.sidebar.restore',
   'mongolive.sidebar.width',

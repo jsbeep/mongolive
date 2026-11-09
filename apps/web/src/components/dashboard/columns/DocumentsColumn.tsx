@@ -24,6 +24,7 @@ import { QueryBar } from './QueryBar';
 import { closeSearchPanel, openSearchPanel, useSearchPanel } from '../../../services/queryPanel';
 import { useHeaderFold } from '../../../hooks/useHeaderFold';
 import { HeaderOverflowMenu } from './HeaderOverflowMenu';
+import { BookmarkIcon } from './BookmarkIcon';
 import { dataSourceKind } from '../../../services/api';
 
 const DOCUMENT_SORT_OPTIONS: SortOption[] = [
@@ -230,7 +231,12 @@ export function DocumentsColumn({
           <>
             {/* 왼쪽: 아이콘·제목·개수 — 헤더 너비의 절반은 늘 이쪽(useHeaderFold) */}
             <div className="flex min-w-[50%] flex-1 items-center gap-2">
-              <FileText size={15} className={cn(styles.headerIcon, 'shrink-0')} />
+              <BookmarkIcon
+                icon={<FileText size={15} className={styles.headerIcon} />}
+                location={activeDatabaseName && activeCollectionName ? { database: activeDatabaseName, collection: activeCollectionName } : null}
+                what="this collection"
+                size={15}
+              />
               <HeaderTitle title={collectionLabel} total={totalAll} matched={isDocFilterActive || isQueryActive ? totalMatched : undefined} />
             </div>
             {/* 오른쪽: 제목 필드·참조(좁으면 ⋯ 메뉴로) + 찾기(늘 보임 — 걸린 조건의 점이 여기 붙는다) */}
@@ -285,7 +291,8 @@ export function DocumentsColumn({
                 onClick={() => (searchPanel.open ? closeSearchPanel() : openSearchPanel('filter'))}
               >
                 {(isDocFilterActive || isQueryActive) && !searchPanel.open && <span className={FILTER_DOT_CLASS} />}
-                <Search size={13} />
+                {/* 돋보기는 꽉 찬 원이라 같은 크기여도 깔때기·태그보다 커 보인다 — 한 단계 작게(태그·링크와 같은 12) */}
+                <Search size={12} />
               </button>
             </div>
           </>

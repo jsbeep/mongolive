@@ -14,6 +14,7 @@ import { isPathChanged } from '../../../utils/changedPaths';
 import { useFileDrop } from '../../../hooks/useFileDrop';
 import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../../utils/motionPresets';
 import { HeaderTitle } from './HeaderTitle';
+import { BookmarkIcon } from './BookmarkIcon';
 import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ export function CollectionsColumn({
 
       {/* 헤더 */}
       <div className={styles.header}>
-        <Folder size={15} className={styles.headerIcon} />
+        <BookmarkIcon icon={<Folder size={15} className={styles.headerIcon} />} location={databaseName ? { database: databaseName } : null} what="this database" size={15} />
         <HeaderTitle title="Collections" total={collections.length} />
       </div>
 

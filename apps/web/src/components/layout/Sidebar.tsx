@@ -1,5 +1,5 @@
 // 왼쪽 사이드바 — 세 단계(useSidebar): 완전 접힘 / 아이콘 레일 / 전체.
-//   전체: [ML 이름] · 쿼리 기록(Query)·참조(References) 패널 / 집계·북마크(아직 자리만) · ── · DB/컬렉션 트리
+//   전체: [ML 이름] · 쿼리 기록(Query)·참조(References)·북마크(Bookmarks) 패널 / 집계(아직 자리만) · ── · DB/컬렉션 트리
 //   레일: 아이콘만. 아무 아이콘이나 누르면 전체로 펼친다. 맨 아래 = 설정 · 로그아웃 · 완전히 접기
 //   전체 맨 아래: 설정 · 로그아웃(상태바는 '지금 상태'만, 앱·계정은 여기 — 완전히 접혀도 Ctrl+K 명령으로)
 //   접힘: 화면 왼쪽 끝에 당김 핸들(아이폰 PiP를 옆으로 치워 둔 모양) — 늘 얇게 보이고 마우스가 다가가면 커진다.
@@ -29,30 +29,31 @@ interface SidebarProps {
   onSelectDatabase: (name: string) => Promise<void>;
   onOpenCollection: (database: string, name: string, label: string) => Promise<void>;
   onMutate: (op: MutationRequest) => Promise<unknown>;
-  // 떠 있는 패널(누른 버튼 옆) — Query = 쿼리 기록, References = 선언한 참조 전체. 한 번에 하나만.
+  // 떠 있는 패널(누른 버튼 옆) — Query = 쿼리 기록, References = 선언한 참조 전체, Bookmarks = 북마크. 한 번에 하나만.
   // canQuery가 false면(Mock) Query만 흐리게
   panels: { open: SidebarPanelKind | null; canQuery: boolean; onToggle: (kind: SidebarPanelKind, anchor: DOMRect) => void };
   // 맨 아래(VSCode처럼 앱·계정은 사이드바 아래) — 설정 창, 로그아웃(로그인 모드일 때만)
   onOpenSettings: () => void;
 }
 
-export type SidebarPanelKind = 'history' | 'references';
+export type SidebarPanelKind = 'history' | 'references' | 'bookmarks';
 
 type TreeProps = Omit<SidebarProps, 'sidebar'>;
 
 // 아직 없는 기능 — 눌러도 아무 일이 없으니 흐리게 + 'Soon' 표시
 const SOON_ITEMS: { icon: LucideIcon; label: string }[] = [
   { icon: Workflow, label: 'Aggregation' },
-  { icon: Bookmark, label: 'Bookmarks' },
 ];
 const QUERY_TIP = 'Query history — run a past query on this collection';
 const QUERY_TIP_MOCK = 'Query history — needs a server connection (not in demo mode)';
 const REFS_TIP = 'References — everything you declared, across databases';
+const BOOKMARKS_TIP = 'Bookmarks — places you saved from a column’s icon';
 
 // 패널을 여는 사이드바 버튼들(전체·레일 공통)
 const PANEL_ITEMS: { kind: SidebarPanelKind; icon: LucideIcon; label: string; tip: (canQuery: boolean) => string; needsQuery: boolean }[] = [
   { kind: 'history', icon: Search, label: 'Query', tip: (ok) => (ok ? QUERY_TIP : QUERY_TIP_MOCK), needsQuery: true },
   { kind: 'references', icon: Link, label: 'References', tip: () => REFS_TIP, needsQuery: false },
+  { kind: 'bookmarks', icon: Bookmark, label: 'Bookmarks', tip: () => BOOKMARKS_TIP, needsQuery: false },
 ];
 
 const styles = {

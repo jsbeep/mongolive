@@ -23,6 +23,8 @@ import { useSystemLog } from '../hooks/useSystemLog';
 import { useMillerKeyboard } from '../hooks/useMillerKeyboard';
 import { QueryHistoryPanel } from '../components/query/QueryHistoryPanel';
 import { ReferencesPanel } from '../components/references/ReferencesPanel';
+import { BookmarksPanel } from '../components/bookmarks/BookmarksPanel';
+import { useBookmarks } from '../services/bookmarks';
 import { QbeContext, type QbeHandler } from '../components/query/QbeMenu';
 import { clearQueryHistory, removeQueryHistory, useQueryHistory, type QueryHistoryEntry } from '../services/queryHistory';
 import { openSearchPanel } from '../services/queryPanel';
@@ -114,6 +116,7 @@ export default function ExplorerPage() {
     openCollection,
     runQuery,
     queryByExample,
+    openLocation,
   } = state;
   // 사이드바 Query = 쿼리 기록 패널(누른 버튼 옆에) — 열려 있으면 그 버튼 위치
   const queryHistory = useQueryHistory();
@@ -122,6 +125,8 @@ export default function ExplorerPage() {
   const closeSidebarPanel = useCallback(() => setSidebarPanel(null), []);
   const historyAnchor = sidebarPanel?.kind === 'history' ? sidebarPanel.anchor : null;
   const referencesAnchor = sidebarPanel?.kind === 'references' ? sidebarPanel.anchor : null;
+  const bookmarksAnchor = sidebarPanel?.kind === 'bookmarks' ? sidebarPanel.anchor : null;
+  const bookmarks = useBookmarks();
   const qbeHandler = useCallback<QbeHandler>((database, collection, conditions) => {
     void queryByExample(database, collection, conditions).then((ok) => ok && openSearchPanel('query'));
   }, [queryByExample]);
@@ -397,6 +402,21 @@ export default function ExplorerPage() {
             closeSidebarPanel();
             if (sidebar.isOverlay) sidebar.setMode('rail');
             void openCollection(database, collection, label);
+          }}
+          onClose={closeSidebarPanel}
+        />
+      )}
+
+      {/* Bookmarks — 누르면 그 자리로(DB·컬렉션·문서·필드). 패널은 닫힌다 */}
+      {bookmarksAnchor && (
+        <BookmarksPanel
+          anchor={bookmarksAnchor}
+          bookmarks={bookmarks}
+          databases={databases}
+          onOpen={(b) => {
+            closeSidebarPanel();
+            if (sidebar.isOverlay) sidebar.setMode('rail');
+            void openLocation(b);
           }}
           onClose={closeSidebarPanel}
         />

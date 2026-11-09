@@ -22,6 +22,7 @@ import {
   type ReferenceActivePath,
   PAGE_SIZE,
   dateMs,
+  summarizeDocument,
 } from '../../../types/explorer';
 import { usePreferences } from '../../../services/preferences';
 import { canEditIn, useServerSettings } from '../../../services/serverSettings';
@@ -34,6 +35,7 @@ import { AddItemButton } from './AddItemButton';
 import { CopyBtn } from './CopyBtn';
 import { FieldItem } from './FieldItem';
 import { HeaderIcon } from './HeaderIcon';
+import { BookmarkIcon } from './BookmarkIcon';
 import { FILTER_DOT_CLASS, HeaderTitle } from './HeaderTitle';
 import { DropOverlay } from './DropOverlay';
 import { PageRail, PageTransition } from './PageRail';
@@ -351,6 +353,13 @@ export function JsonLevelColumn({
           elsewhere: mutateDatabaseName !== activeDatabaseName || mutateCollectionName !== activeCollectionName,
         }
       : undefined;
+
+  // 이 컬럼의 북마크 자리 — 참조로 연 문서면 그 문서가 실제로 있는 컬렉션 기준. 이름은 문서 제목
+  const bookmarkLocation = displayDoc && mutateDatabaseName && mutateCollectionName && docOidForMutate
+    ? { database: mutateDatabaseName, collection: mutateCollectionName, documentId: docOidForMutate, path: projectionPath }
+    : null;
+  const bookmarkCollection = mutateDatabaseName === activeDatabaseName ? collections.find((c) => c.name === mutateCollectionName) : undefined;
+  const bookmarkTitle = displayDoc ? summarizeDocument(displayDoc, 0, bookmarkCollection?.titleKey, bookmarkCollection?.primaryKey).title : undefined;
 
   const isObjectNode = isEjsonObject(currentNode);
   const isArrayNode = Array.isArray(currentNode);
@@ -909,7 +918,12 @@ export function JsonLevelColumn({
 
       {/* 헤더 */}
       <div className="shrink-0 flex items-center gap-2.5 px-4 h-12 border-b border-slate-100/80">
-        <HeaderIcon node={currentNode} />
+        <BookmarkIcon
+          icon={<HeaderIcon node={currentNode} />}
+          location={bookmarkLocation}
+          title={bookmarkTitle}
+          what={projectionPath.length ? 'this field' : 'this document'}
+        />
         <HeaderTitle title={path.label} total={entries.length} matched={isFieldFilterActive ? displayEntries.length : undefined} />
         {chainColor && (
           <button

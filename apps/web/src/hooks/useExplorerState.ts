@@ -216,6 +216,8 @@ export interface UseExplorerStateResult {
   navigateToReference: (oid: string) => Promise<void>;
   // 활동 기록 한 줄이 가리키는 곳(DB/컬렉션/문서/바뀐 필드)으로 이동
   navigateToChange: (entry: LiveLogEntry) => Promise<void>;
+  // 북마크한 자리(DB/컬렉션/문서/필드 경로)로 이동. 갔으면 true
+  openLocation: (loc: { database: string; collection?: string; documentId?: string; path?: string[] }) => Promise<boolean>;
   pushReferenceByField: (database: string, collection: string, key: string, value: JsonValue, fieldKey: string, popIndex?: number) => Promise<void>;
   navigateToReferenceByField: (database: string, collection: string, key: string, value: JsonValue) => Promise<void>;
   resolveReferenceCandidate: (candidate: FieldReferenceCandidate) => Promise<void>;
@@ -1284,6 +1286,69 @@ export function useExplorerState(): UseExplorerStateResult {
     }
   }, [activePaths, showToast, focusDatabase, selectCollection, finalizeNavigateFieldReference, pushFieldPath, flashChangedPaths]);
 
+  // 북마크한 자리로 — DB / 컬렉션 / 문서(+ 필드 경로). 그 사이 없어졌으면 갈 수 있는 데까지 가고 알린다.
+  // 문서는 빈 조건으로 연다(저장된 필터·쿼리에 가려지면 안 되므로 — 참조·변경 기록 이동과 같다). 갔으면 true
+  const openLocation = useCallback(async (loc: { database: string; collection?: string; documentId?: string; path?: string[] }): Promise<boolean> => {
+    const { database, collection, documentId, path = [] } = loc;
+    // 이미 그 자리면(맨 끝 컬럼이 같은 DB·컬렉션·문서·경로) 아무것도 하지 않는다 — 다시 읽을 필요가 없다
+    const last = activePaths[activePaths.length - 1];
+    const sameDb = activeDatabaseRef.current === database;
+    const sameCollection = sameDb && activeCollectionRef.current === (collection ?? null);
+    const here = !collection
+      ? sameDb && activePaths.length === 1
+      : !documentId
+        ? sameCollection && last?.columnKind === 'documents'
+        : sameCollection && last?.kind === 'normal' && last.columnKind === 'json' && last.documentOid === documentId
+          && (last.projectionPath ?? []).join('.') === path.join('.');
+    if (here) return true;
+    setIsLoading(true);
+    try {
+      const dbs = await api.listDatabases();
+      setDatabases(dbs);
+      if (!dbs.some((d) => d.name === database)) {
+        showToast(`Database "${database}" no longer exists`, 'error');
+        return false;
+      }
+      await focusDatabase(database);
+      if (!collection) return true;
+      const colSummary = (await api.getCollections(database)).find((c) => c.name === collection);
+      if (!colSummary) {
+        showToast(`Collection "${collection}" no longer exists`, 'error');
+        return false;
+      }
+      if (!documentId) {
+        await selectCollection(collection, colSummary.label || collection);
+        return true;
+      }
+      const doc = await api.getFullDocumentByIdInCollection(database, collection, documentId).catch(() => null);
+      if (!doc) {
+        await selectCollection(collection, colSummary.label || collection);
+        showToast('This document no longer exists', 'error');
+        return false;
+      }
+      const title = summarizeDocument(doc, 0, colSummary.titleKey, colSummary.primaryKey).title;
+      await finalizeNavigateFieldReference({ database, collection, documentId, documentTitle: title });
+      // 필드 경로는 지금 문서에 실제로 있는 데까지만 펼친다
+      const reachable: string[] = [];
+      let node: JsonValue = doc;
+      for (const seg of path) {
+        if (!isContainer(node)) break;
+        const next: JsonValue | undefined = Array.isArray(node) ? node[Number(seg)] : node[seg];
+        if (next === undefined) break;
+        reachable.push(seg);
+        node = next;
+      }
+      if (reachable.length) pushFieldPath(reachable);
+      if (reachable.length < path.length) showToast(`"${path.join('.')}" isn't in this document any more — opened as far as it goes`, 'error');
+      return true;
+    } catch {
+      showToast('Could not open this place', 'error');
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activePaths, showToast, focusDatabase, selectCollection, finalizeNavigateFieldReference, pushFieldPath]);
+
   const setDocumentQuery = useCallback(async (patch: Partial<DocumentListQuery>) => {
     const prev = documentQueryRef.current;
     const next = { ...prev, ...patch };
@@ -1371,6 +1436,7 @@ export function useExplorerState(): UseExplorerStateResult {
     pushReference,
     navigateToReference,
     navigateToChange,
+    openLocation,
     pushReferenceByField,
     navigateToReferenceByField,
     resolveReferenceCandidate,

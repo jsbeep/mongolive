@@ -455,6 +455,7 @@ const SHORTCUTS: { title: string; rows: [keys: string[], what: string][] }[] = [
       [['Delete'], 'Delete the row — asks first, per Safety'],
       [['/'], 'Filter this column (from the collection list: the documents)'],
       [['q'], 'Query the open collection — MongoDB filter, server mode'],
+      [['.'], 'Type a field path in the breadcrumb (.likes.0) — when a document is open'],
       [['Esc'], 'Hide the keyboard cursor'],
     ],
   },
