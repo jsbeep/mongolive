@@ -14,8 +14,9 @@ import {
   conditionValueText,
   fieldPaths,
   referenceKeyCandidates,
+  formatPipelineText,
 } from './queryConditions';
-import { parseQueryText } from './queryParser';
+import { parsePipelineText, parseQueryText } from './queryParser';
 import type { EjsonObject } from './ejson';
 
 const int = (n: number) => ({ $numberInt: String(n) });
@@ -244,5 +245,26 @@ describe('referenceKeyCandidates', () => {
       flags: [true],
       createdAt: date,
     })).toEqual(['writerId', 'count', 'id', 'kids', 'sku', 'qty']);
+  });
+});
+
+describe('파이프라인 텍스트', () => {
+  it('쓰고 다시 읽으면 같다', () => {
+    const pipeline = [
+      { $match: { title: { $regularExpression: { pattern: 'hel', options: 'i' } }, at: { $gte: date } } },
+      { $group: { _id: '$author', n: { $sum: int(1) } } },
+      { $sort: { n: int(-1) } },
+    ] as EjsonObject[];
+    const text = formatPipelineText(pipeline);
+    expect(text.split('\n')).toHaveLength(5);
+    expect(parsePipelineText(text)).toEqual({ ok: true, pipeline });
+  });
+  it('빈 입력·모양 오류', () => {
+    expect(parsePipelineText('  ')).toEqual({ ok: true, pipeline: [] });
+    expect(formatPipelineText([])).toBe('[]');
+    const notArray = parsePipelineText('{ $match: {} }');
+    expect(notArray.ok).toBe(false);
+    const notObject = parsePipelineText('[{ $match: {} }, 3]');
+    expect(!notObject.ok && notObject.error.message).toMatch(/Stage 2/);
   });
 });

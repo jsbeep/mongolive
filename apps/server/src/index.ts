@@ -12,6 +12,7 @@ import { startRealtime } from './realtime';
 import { createAppServer } from './tls';
 import { mutateRouter } from './routes/mutate';
 import { readRouter } from './routes/read';
+import { aggregateRouter } from './routes/aggregate';
 import { metricsRouter } from './routes/metrics';
 import { refsRouter } from './routes/refs';
 import { diagnosticsRouter } from './routes/diagnostics';
@@ -32,6 +33,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use('/api', readRouter);
+app.use('/api', aggregateRouter);
 app.use('/api', mutateRouter);
 app.use('/api', refsRouter);
 app.use('/api', metricsRouter);

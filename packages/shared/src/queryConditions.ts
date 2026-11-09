@@ -386,3 +386,29 @@ export const referenceKeyCandidates = (document: EjsonObject, maxDepth = 3): str
   walk(document, 0);
   return [...out];
 };
+
+// 파이프라인 → 텍스트(스테이지마다 한 줄) — parsePipelineText로 다시 읽으면 같다
+export const formatPipelineText = (pipeline: EjsonObject[]): string =>
+  pipeline.length ? `[\n${pipeline.map((stage) => `  ${formatQueryValue(stage)}`).join(',\n')}\n]` : '[]';
+
+// 스테이지 하나를 읽기 좋게 — 한 줄에 들어가면(들여쓰기 포함 60자) 한 줄, 아니면 객체·배열을 펼쳐 2칸씩 들여 쓴다.
+// parseStageText로 다시 읽으면 같다
+const PRETTY_LINE_MAX = 60;
+const formatPretty = (value: EjsonValue, indent: number): string => {
+  const flat = formatQueryValue(value);
+  if (indent + flat.length <= PRETTY_LINE_MAX) return flat;
+  const pad = ' '.repeat(indent + 2);
+  const close = ' '.repeat(indent);
+  const kind = valueKind(value);
+  if (kind === 'object') {
+    const entries = Object.entries(value as EjsonObject);
+    return `{\n${entries.map(([k, v]) => `${pad}${formatKey(k)}: ${formatPretty(v, indent + 2)}`).join(',\n')}\n${close}}`;
+  }
+  if (kind === 'array') {
+    return `[\n${(value as EjsonValue[]).map((v) => `${pad}${formatPretty(v, indent + 2)}`).join(',\n')}\n${close}]`;
+  }
+  return flat;
+};
+
+export const formatStageText = (stage: EjsonObject): string => formatPretty(stage, 0);
+

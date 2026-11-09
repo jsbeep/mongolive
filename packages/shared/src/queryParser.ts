@@ -3,7 +3,7 @@
 // eval을 쓰지 않는 작은 파서다 — 받는 것은 객체·배열·문자열·숫자·true/false/null·정규식 리터럴과
 // 아래 도우미 함수뿐. 숫자 타입은 편집기와 같은 규칙(parseNumberInput: int32 → Int32, 큰 정수 → Long, 소수 → Double).
 // 이미 Canonical인 입력({ "$oid": "…" })은 그냥 객체라 그대로 통과한다.
-import { makeDate, makeDecimal, makeInt32, makeLong, makeOid, parseNumberInput, type EjsonObject, type EjsonValue } from './ejson';
+import { makeDate, makeDecimal, makeInt32, makeLong, makeOid, parseNumberInput, valueKind, type EjsonObject, type EjsonValue } from './ejson';
 
 export interface QueryParseError {
   message: string;
@@ -269,6 +269,43 @@ export const parseQueryText = (text: string): QueryParseResult => {
     const filter = parser.object();
     if (parser.peek() !== '') parser.fail('Unexpected text after the query');
     return { ok: true, filter };
+  } catch (e) {
+    if (e instanceof ParseFail) return { ok: false, error: { message: e.message, offset: e.offset, ...locate(text, e.offset) } };
+    throw e;
+  }
+};
+
+// aggregation 파이프라인 — 맨 바깥이 배열이고 원소는 스테이지 객체. 빈 입력 = 빈 파이프라인([])
+export type PipelineParseResult = { ok: true; pipeline: EjsonObject[] } | { ok: false; error: QueryParseError };
+
+export const parsePipelineText = (text: string): PipelineParseResult => {
+  if (text.trim() === '') return { ok: true, pipeline: [] };
+  const parser = new Parser(text);
+  try {
+    if (parser.peek() !== '[') parser.fail('A pipeline starts with "[" — like [{ $match: { … } }]');
+    const start = parser.pos;
+    const items = parser.array();
+    // EJSON 래퍼({ $numberInt })도 객체라 valueKind로 '일반 객체'인지 본다
+    const notObject = items.findIndex((item) => valueKind(item) !== 'object');
+    if (notObject >= 0) parser.fail(`Stage ${notObject + 1} is not an object`, start);
+    if (parser.peek() !== '') parser.fail('Unexpected text after the pipeline');
+    return { ok: true, pipeline: items as EjsonObject[] };
+  } catch (e) {
+    if (e instanceof ParseFail) return { ok: false, error: { message: e.message, offset: e.offset, ...locate(text, e.offset) } };
+    throw e;
+  }
+};
+
+// 스테이지 하나({ $group: … }) — 스테이지 편집기의 입력. 키가 하나인지·허용된 스테이지인지는 validatePipelineStage가 본다
+export type StageParseResult = { ok: true; stage: EjsonObject } | { ok: false; error: QueryParseError };
+
+export const parseStageText = (text: string): StageParseResult => {
+  const parser = new Parser(text);
+  try {
+    if (parser.peek() !== '{') parser.fail('A stage starts with "{" — like { $match: { … } }');
+    const stage = parser.object();
+    if (parser.peek() !== '') parser.fail('Unexpected text after the stage — one stage per card');
+    return { ok: true, stage };
   } catch (e) {
     if (e instanceof ParseFail) return { ok: false, error: { message: e.message, offset: e.offset, ...locate(text, e.offset) } };
     throw e;
