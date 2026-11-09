@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { nextPathId } from '../../../hooks/useExplorerState';
-import { Link, Hash, ToggleLeft, KeyRound, ChevronRight, Calendar, Sigma, Binary, Filter, Box, Check, X, ArrowUpDown, ArrowDownAZ, ArrowDownZA, Shapes } from 'lucide-react';
+import { Link, Hash, ToggleLeft, KeyRound, ChevronRight, Calendar, Sigma, Binary, Filter, Box, Check, X, ArrowUpDown, ArrowDownAZ, ArrowDownZA, Shapes, Lock } from 'lucide-react';
 import { AnimatePresence, Reorder, m } from 'framer-motion';
 import { ReorderRow } from './ReorderRow';
 import { SPRING_SNAPPY } from '../../../utils/motionPresets';
@@ -96,6 +96,15 @@ interface JsonLevelColumnProps {
   // "같은 경로 재클릭/비확장 클릭" 시 pop 대상을 윈도우 크기 기준이 아니라
   // 이 컬럼까지로 단순하게 맞춘다
   isInlineChain?: boolean;
+  // 맨 왼쪽 컬럼 노릇(펼친 필드·값을 다시 누르면 경로 하나 빼기). 없으면 0번 칸(slotIndex === 0)인지로 —
+  // aggregation은 Pipeline이 왼쪽에 고정돼 있어서 그 바로 오른쪽 칸을 MillerColumns가 직접 알려 준다
+  leftEdge?: boolean;
+  // aggregation 모드의 필드 컬럼은 다 읽기만 — 편집을 숨긴다(분석 화면이라 실수로 고칠 일이 없게)
+  //   'result'   = 파이프라인이 만든 값(저장할 곳이 없다, 북마크도 없다)
+  //   'source'   = 원본 문서(파이프라인 앞) — 고치는 건 문서 모드에서
+  //   'document' = 결과 안의 참조를 따라 연 진짜 문서 — 고치려면 색 칩으로 문서 모드에서 연다(북마크는 된다)
+  // result·source에선 필드 메뉴가 '파이프라인에 넣기'(Collect) — 경로가 그 출력의 경로라서. document는 다른 컬렉션이라 없다
+  readOnly?: false | 'result' | 'source' | 'document';
 }
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────────────────
@@ -127,6 +136,8 @@ export function JsonLevelColumn({
   nestedChild = null,
   isNested = false,
   isInlineChain = false,
+  leftEdge,
+  readOnly = false,
 }: JsonLevelColumnProps) {
   // 위험 영역(의도적으로 더 쪼개지 않음): 아래부터 renderField까지는 refOid/myIndex
   // 파생값, 두 개의 참조-문서 fetch effect, handlePushChild, deleteTarget/
@@ -150,6 +161,7 @@ export function JsonLevelColumn({
   // visibleColumns는 activePaths.slice(-3) 왼쪽 정렬 → slotIndex로 실제 index 역산
   const myIndex = Math.max(0, activePaths.length - visibleLength) + slotIndex;
   const hasPathsAfter = myIndex < activePaths.length - 1;
+  const isLeftEdge = leftEdge ?? slotIndex === 0;
   // 다음 컬럼이 바로 이 컬럼의 어떤 필드를 펼친 것인지 — 그 필드를 활성 경로로 표시
   const nextActivePath = activePaths[myIndex + 1];
 
@@ -283,9 +295,9 @@ export function JsonLevelColumn({
       if (isInlineChain) {
         // 재귀 중첩 모드엔 "보이는 윈도우 크기" 개념이 없으므로 이 컬럼까지만 남기고 접는다
         onPopToIndex(myIndex);
-      } else if (slotIndex === 0) {
-        // 0번 열이면 pop만 1번
-        onPopToIndex(myIndex + (visibleLength - 2));
+      } else if (isLeftEdge) {
+        // 맨 왼쪽 열이면 pop만 1번(마지막 경로 하나 빼기 — 0번 칸이면 myIndex + visibleLength - 2와 같다)
+        onPopToIndex(activePaths.length - 2);
       }
       return;
     }
@@ -317,7 +329,7 @@ export function JsonLevelColumn({
       };
       onPushJsonPath(child);
     }
-  }, [activePaths, slotIndex, isInlineChain, path, refOid, refField, chainColor, chainIndex, projectionPath, onPopToIndex, onPushJsonPath]);
+  }, [activePaths, slotIndex, isLeftEdge, isInlineChain, path, refOid, refField, chainColor, chainIndex, projectionPath, onPopToIndex, onPushJsonPath]);
 
   const [deleteTarget, setDeleteTarget] = useState<{ fieldKey: string; value: JsonValue } | null>(null);
   // 충돌 확인용: 편집기를 '연 순간' 본 값. 열려 있는 동안 실시간 반영으로 값이 바뀌어도 기준은 그대로다 —
@@ -342,20 +354,28 @@ export function JsonLevelColumn({
   // 이 컬럼이 보여주는 컬렉션에 선언된 필드 기반 참조(FK) 설정 — string/number 필드에 LINK 배지를 띄울지 결정
   const referenceFields = collections.find((c) => c.name === mutateCollectionName)?.referenceFields ?? {};
 
-  // Query by example — 이 필드 값으로 문서 목록에 조건을 건다(서버 연결일 때만). 참조로 연 문서면 그 컬렉션으로 이동해서
+  // Query by example — 이 필드 값으로 문서 목록에 조건을 건다(서버 연결일 때만). 참조로 연 문서면 그 컬렉션으로 이동해서.
+  // aggregation 결과·원본에선 같은 메뉴가 파이프라인에 모은다 — 참조 필드면 $lookup도
+  const collecting = readOnly === 'result' || readOnly === 'source';
+  const lookupFor = (fieldKey: string, value: JsonValue): QbeTarget['lookup'] => {
+    if (isBsonOid(value) && fieldKey !== '_id' && !uniqueOids.has(value.$oid)) return { kind: 'oid', oid: value.$oid };
+    const config = projectionPath.length === 0 ? referenceFields[fieldKey] : undefined;
+    return config ? { kind: 'field', collection: config.targetCollection, key: config.targetKey } : undefined;
+  };
   const qbeFor = (fieldKey: string, value: JsonValue): QbeTarget | undefined =>
-    dataSourceKind === 'remote' && mutateDatabaseName && mutateCollectionName
+    (!readOnly || collecting) && dataSourceKind === 'remote' && mutateDatabaseName && mutateCollectionName
       ? {
           path: [...projectionPath, fieldKey],
           value,
           database: mutateDatabaseName,
           collection: mutateCollectionName,
-          elsewhere: mutateDatabaseName !== activeDatabaseName || mutateCollectionName !== activeCollectionName,
+          elsewhere: !collecting && (mutateDatabaseName !== activeDatabaseName || mutateCollectionName !== activeCollectionName),
+          ...(collecting ? { mode: 'collect' as const, lookup: lookupFor(fieldKey, value) } : {}),
         }
       : undefined;
 
   // 이 컬럼의 북마크 자리 — 참조로 연 문서면 그 문서가 실제로 있는 컬렉션 기준. 이름은 문서 제목
-  const bookmarkLocation = displayDoc && mutateDatabaseName && mutateCollectionName && docOidForMutate
+  const bookmarkLocation = readOnly !== 'result' && displayDoc && mutateDatabaseName && mutateCollectionName && docOidForMutate
     ? { database: mutateDatabaseName, collection: mutateCollectionName, documentId: docOidForMutate, path: projectionPath }
     : null;
   const bookmarkCollection = mutateDatabaseName === activeDatabaseName ? collections.find((c) => c.name === mutateCollectionName) : undefined;
@@ -364,7 +384,7 @@ export function JsonLevelColumn({
   const isObjectNode = isEjsonObject(currentNode);
   const isArrayNode = Array.isArray(currentNode);
   // 안전장치(설정 창 › Safety): read-only거나 이 문서의 컬렉션(참조로 연 문서면 그 컬렉션)이 보호 대상이면 편집을 숨긴다
-  const canEditHere = canEditIn(safetySettings, mutateDatabaseName, mutateCollectionName);
+  const canEditHere = !readOnly && canEditIn(safetySettings, mutateDatabaseName, mutateCollectionName);
   const canAddField = canEditHere && !!displayDoc && (isObjectNode || isArrayNode);
   // path.comp.id를 포함해야 한다 — 그렇지 않으면 동일한 projectionPath를 가진
   // 다른 컬럼(예: 부모 문서와 그 안의 REF 문서가 둘 다 루트에서 "필드 추가"를
@@ -829,7 +849,7 @@ export function JsonLevelColumn({
       }
       // 비확장 필드 클릭 시 하위 컬럼이 열려있으면 닫기
       if (hasPathsAfter && isInlineChain) return () => onPopToIndex(myIndex);
-      if (hasPathsAfter && slotIndex === 0) return () => onPopToIndex(activePaths.length - 2);
+      if (hasPathsAfter && isLeftEdge) return () => onPopToIndex(activePaths.length - 2);
       return null;
     })();
 
@@ -925,6 +945,26 @@ export function JsonLevelColumn({
           what={projectionPath.length ? 'this field' : 'this document'}
         />
         <HeaderTitle title={path.label} total={entries.length} matched={isFieldFilterActive ? displayEntries.length : undefined} />
+        {readOnly === 'result' && (
+          <span
+            className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-slate-400"
+            data-tt="Aggregation result — read-only (the pipeline made this value)"
+          >
+            result
+          </span>
+        )}
+        {/* 진짜 문서는 자물쇠만 — 옆에 참조 색 칩이 있어 글자 칩까지 달면 제목이 밀려난다 */}
+        {(readOnly === 'document' || readOnly === 'source') && (
+          <span
+            className="shrink-0 text-slate-400"
+            aria-label="Read-only in Aggregation"
+            data-tt={readOnly === 'source'
+              ? 'Original document — read-only in Aggregation (edit it in Documents)'
+              : 'Read-only in Aggregation — to edit, open the document from its colored reference chip'}
+          >
+            <Lock size={12} />
+          </span>
+        )}
         {chainColor && (
           <button
             type="button"

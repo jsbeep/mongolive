@@ -9,7 +9,7 @@
 // 좁은 화면(<1024px)에선 레일까지만 붙고, 전체는 컬럼 위에 떠서 열린다(바깥 클릭·Esc → 레일).
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
-import { Bookmark, ChevronRight, ChevronsLeft, Database, Link, LogOut, PanelLeftClose, PanelLeftOpen, Search, Settings, Workflow, type LucideIcon } from 'lucide-react';
+import { Bookmark, ChevronRight, ChevronsLeft, Database, Link, LogOut, PanelLeftClose, PanelLeftOpen, Search, Settings, Workflow, X, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, MutationRequest } from '../../types/explorer';
 import { clampFullWidth, FULL_DEFAULT, RAIL_WIDTH, snapMode, type SidebarMode, type SidebarState } from '../../hooks/useSidebar';
 import { DatabaseTree } from './DatabaseTree';
@@ -31,27 +31,30 @@ interface SidebarProps {
   onMutate: (op: MutationRequest) => Promise<unknown>;
   // 떠 있는 패널(누른 버튼 옆) — Query = 쿼리 기록, References = 선언한 참조 전체, Bookmarks = 북마크. 한 번에 하나만.
   // canQuery가 false면(Mock) Query만 흐리게
-  panels: { open: SidebarPanelKind | null; canQuery: boolean; onToggle: (kind: SidebarPanelKind, anchor: DOMRect) => void };
+  // Aggregation은 떠 있는 패널이 아니라 컬럼 전환(문서 목록 ⇄ 파이프라인) — 켜져 있는지는 aggregationOpen
+  panels: { open: SidebarPanelKind | null; aggregationOpen: boolean; canQuery: boolean; onToggle: (kind: SidebarPanelKind, anchor: DOMRect) => void };
   // 맨 아래(VSCode처럼 앱·계정은 사이드바 아래) — 설정 창, 로그아웃(로그인 모드일 때만)
   onOpenSettings: () => void;
 }
 
-export type SidebarPanelKind = 'history' | 'references' | 'bookmarks';
+export type SidebarPanelKind = 'history' | 'references' | 'bookmarks' | 'aggregation';
 
 type TreeProps = Omit<SidebarProps, 'sidebar'>;
 
 // 아직 없는 기능 — 눌러도 아무 일이 없으니 흐리게 + 'Soon' 표시
-const SOON_ITEMS: { icon: LucideIcon; label: string }[] = [
-  { icon: Workflow, label: 'Aggregation' },
-];
+const SOON_ITEMS: { icon: LucideIcon; label: string }[] = [];
 const QUERY_TIP = 'Query history — run a past query on this collection';
 const QUERY_TIP_MOCK = 'Query history — needs a server connection (not in demo mode)';
 const REFS_TIP = 'References — everything you declared, across databases';
 const BOOKMARKS_TIP = 'Bookmarks — places you saved from a column’s icon';
 
 // 패널을 여는 사이드바 버튼들(전체·레일 공통)
+// 켜진 Aggregation은 X를 달아 '다시 누르면 닫힌다'를 보인다
+const AGGREGATION_CLOSE_TIP = 'Close Aggregation — back to the documents';
+
 const PANEL_ITEMS: { kind: SidebarPanelKind; icon: LucideIcon; label: string; tip: (canQuery: boolean) => string; needsQuery: boolean }[] = [
   { kind: 'history', icon: Search, label: 'Query', tip: (ok) => (ok ? QUERY_TIP : QUERY_TIP_MOCK), needsQuery: true },
+  { kind: 'aggregation', icon: Workflow, label: 'Aggregation', tip: (ok) => (ok ? 'Aggregation — build a pipeline on this collection (click again for documents)' : 'Aggregation — needs a server connection (not in demo mode)'), needsQuery: true },
   { kind: 'references', icon: Link, label: 'References', tip: () => REFS_TIP, needsQuery: false },
   { kind: 'bookmarks', icon: Bookmark, label: 'Bookmarks', tip: () => BOOKMARKS_TIP, needsQuery: false },
 ];
@@ -115,7 +118,8 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
       <nav className={styles.nav} aria-label="Tools">
         {PANEL_ITEMS.map(({ kind, icon: Icon, label, tip, needsQuery }) => {
           const enabled = !needsQuery || tree.panels.canQuery;
-          const open = tree.panels.open === kind;
+          const open = kind === 'aggregation' ? tree.panels.aggregationOpen : tree.panels.open === kind;
+          const closable = kind === 'aggregation' && open;
           return (
             <button
               key={kind}
@@ -123,12 +127,13 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
               data-sidebar-panel-toggle=""
               aria-expanded={open}
               aria-disabled={!enabled}
-              className={cn(styles.navButton, !enabled ? styles.navButtonDisabled : open ? styles.navButtonActive : styles.navButtonIdle)}
-              data-tt={tip(tree.panels.canQuery)}
+              className={cn(styles.navButton, !enabled ? styles.navButtonDisabled : open ? styles.navButtonActive : styles.navButtonIdle, closable && 'group hover:bg-emerald-100/70')}
+              data-tt={closable ? AGGREGATION_CLOSE_TIP : tip(tree.panels.canQuery)}
               onClick={(e) => enabled && tree.panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
             >
               <Icon size={15} />
               <span>{label}</span>
+              {closable && <X size={13} className="ml-auto shrink-0 opacity-60 transition-opacity group-hover:opacity-100" />}
             </button>
           );
         })}
@@ -175,7 +180,8 @@ function RailContent({ onExpand, onHide, panels, onOpenSettings }: { onExpand: (
       <nav className={`${styles.railList} pt-3`} aria-label="Tools">
         {PANEL_ITEMS.map(({ kind, icon: Icon, label, tip, needsQuery }) => {
           const enabled = !needsQuery || panels.canQuery;
-          const open = panels.open === kind;
+          const open = kind === 'aggregation' ? panels.aggregationOpen : panels.open === kind;
+          const closable = kind === 'aggregation' && open;
           return (
             <button
               key={kind}
@@ -184,11 +190,13 @@ function RailContent({ onExpand, onHide, panels, onOpenSettings }: { onExpand: (
               aria-label={label}
               aria-expanded={open}
               aria-disabled={!enabled}
-              className={!enabled ? styles.railBtnSoon : open ? styles.railBtnActive : styles.railBtn}
-              data-tt={tip(panels.canQuery)}
+              className={cn(!enabled ? styles.railBtnSoon : open ? styles.railBtnActive : styles.railBtn, closable && 'group relative hover:bg-emerald-100/70')}
+              data-tt={closable ? AGGREGATION_CLOSE_TIP : tip(panels.canQuery)}
               onClick={(e) => enabled && panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
             >
-              <Icon size={16} />
+              {/* 켜진 Aggregation — 올리면 아이콘이 X로 바뀐다 */}
+              <Icon size={16} className={closable ? 'group-hover:hidden' : undefined} />
+              {closable && <X size={16} className="hidden group-hover:block" />}
             </button>
           );
         })}

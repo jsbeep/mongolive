@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   Database, Folder, FileText, Braces, ChevronRight,
   KeyRound, Calendar, Sigma, Binary, Hash, CornerDownLeft, CornerUpLeft,
-  ToggleLeft, Ban, Box,
+  ToggleLeft, Ban, Box, Workflow, Layers,
 } from 'lucide-react';
 import { openSearchPanel } from '../../services/queryPanel';
 import { ExplorerPathSegment, Document, JsonValue, type DatabaseSummary } from '../../types/explorer';
@@ -72,6 +72,10 @@ const getIconForKind = (kind: ExplorerPathSegment['kind']) => {
       return FileText;
     case 'field':
       return Braces;
+    case 'pipeline':
+      return Workflow;
+    case 'stage':
+      return Layers;
     default:
       return null;
   }

@@ -24,6 +24,8 @@ import type {
   ServerMetrics,
   Diagnostics,
   ServerSettings,
+  AggregateResult,
+  AggregateCounts,
 } from '../types/explorer';
 import { mutationTarget } from '../types/explorer';
 import { fetchAuthStatus, notifySessionExpired } from './auth';
@@ -224,6 +226,10 @@ export const createRemoteDataSource = (): DataSource => {
     async getFullDocumentById(oid) {
       return (await requireOid(oid)).document;
     },
+    aggregate: (database, collection, pipeline) =>
+      request<AggregateResult>(`${collectionPath(database, collection)}/aggregate`, { method: 'POST', body: JSON.stringify({ pipeline }) }),
+    aggregateCounts: (database, collection, pipeline) =>
+      request<AggregateCounts>(`${collectionPath(database, collection)}/aggregate`, { method: 'POST', body: JSON.stringify({ pipeline, counts: true }) }),
     getFullDocumentByIdInCollection: (database, collection, documentId) =>
       request<Document>(`${collectionPath(database, collection)}/documents/${enc(documentId)}`),
     exportCollection: (database, collection) => request<CollectionExport>(`${collectionPath(database, collection)}/export`),

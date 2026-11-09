@@ -22,6 +22,8 @@ import type {
   MutationResult,
   ReferenceInfo,
   ServerMetrics,
+  AggregateResult,
+  AggregateCounts,
 } from '../types/explorer';
 
 export type ClientMetrics = ServerMetrics & { rttMs: number | null };
@@ -45,6 +47,11 @@ export interface DataSource {
   getReferenceInfo(oid: string): Promise<ReferenceInfo | null>;
   getReferenceCandidatesByField(database: string, collection: string, key: string, value: JsonValue): Promise<FieldReferenceCandidate[]>;
   getFieldValueCandidates(database: string, collection: string, key: string): Promise<FieldValueCandidate[]>;
+
+  // ── Aggregation(읽기만, 서버 연결에서만 — Mock은 거절) ──
+  // pipeline은 Canonical EJSON. counts = 스테이지 카드의 개수(들어오는 문서 + 스테이지마다 지난 문서)
+  aggregate(database: string, collection: string, pipeline: JsonValue[]): Promise<AggregateResult>;
+  aggregateCounts(database: string, collection: string, pipeline: JsonValue[]): Promise<AggregateCounts>;
 
   // ── 쓰기 ──
   mutate(op: MutationRequest): Promise<MutationResult>;

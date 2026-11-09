@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, dataSourceKind } from '../services/api';
 import { recordQuery } from '../services/queryHistory';
+import { getPipelineStages, INPUT_STAGE_ID, stageLabel, usePipelineStages } from '../services/pipelines';
 import { useToast, type ToastMessage } from './useToast';
 import { useUniqueOidRegistry } from './useUniqueOidRegistry';
 import { CHANGE_FLASH_MS, type ChangeTone } from '../components/common/ChangeFlash';
@@ -72,6 +73,10 @@ export const MIN_VISIBLE_COLUMNS = 2;
 export const MAX_VISIBLE_COLUMNS = 6;
 // 폰 너비 — 이보다 좁으면 Tree 모드로 연다
 const MOBILE_QUERY = '(max-width: 767px)';
+// 집계 모드의 기본 컬럼 수 — Collections │ Pipeline │ Stage Output │ 결과 상세
+export const AGGREGATION_COLUMNS = 4;
+// 집계 모드의 최소 — 이때가 Tree(Pipeline │ Output │ 결과 트리). 문서 탐색의 최소(2)와 같은 자리
+export const AGGREGATION_MIN_COLUMNS = 3;
 
 let pathIdCounter = 0;
 export const nextPathId = () => ++pathIdCounter;
@@ -191,10 +196,16 @@ export interface UseExplorerStateResult {
   // 파생값
   visibleColumns: (ActivePath | null)[];
   breadcrumbs: ExplorerPathSegment[];
+  // 지금 모드(문서 탐색 / 집계)의 컬럼 수 — 두 모드가 따로 기억한다. 최소일 때가 Tree
   maxVisibleColumns: number;
+  treeMode: boolean;
+  // 컬럼 수 버튼의 최소·'처음 값'(문서 2·3, 집계 3·4)
+  minColumns: number;
+  defaultColumns: number;
 
   // 액션
   setMaxVisibleColumns: (count: number) => void;
+  setTreeMode: (on: boolean) => void;
   initialize: () => Promise<void>;
   selectDatabase: (name: string) => Promise<void>;
   selectCollection: (name: string, label: string) => Promise<void>;
@@ -230,8 +241,22 @@ export interface UseExplorerStateResult {
   setEditingId: (id: string | null) => void;
   clearChangedPaths: () => void;
   dismissToast: () => void;
+  // 탐색 밖에서 알림을 띄울 때(파이프라인에 모으기 등) — undoable이 함수면 Undo가 그것을 부른다
+  showToast: (message: string, type: 'success' | 'error', undoable?: boolean | (() => void)) => void;
   undo: () => Promise<void>;
   refresh: () => Promise<void>;
+
+  // ── Aggregation 모드 — 경로 [collections, pipeline, output(고른 스테이지), json(결과 문서)…] ──
+  // 두 번째 컬럼이 pipeline이면 aggregation 모드(따로 들고 있지 않다 — 다른 곳으로 이동하면 자연히 빠진다)
+  isAggregation: boolean;
+  // 사이드바 Aggregation 버튼 — 켜면 지금 컬렉션의 파이프라인, 끄면 그 컬렉션의 문서 목록
+  toggleAggregation: () => Promise<void>;
+  // 그 컬렉션의 파이프라인을 연다(다른 DB면 옮긴 다음). collection null = 컬렉션을 고르기 전
+  openPipeline: (database: string, collection: string | null, label: string) => Promise<void>;
+  // 스테이지를 고르면 그 스테이지까지의 출력 컬럼(이미 골라 둔 스테이지면 결과 문서 컬럼만 닫는다)
+  selectStage: (stageId: string) => void;
+  // 출력의 문서 하나를 필드 컬럼으로(읽기만)
+  selectAggregateResult: (document: Document, title: string, index: number) => void;
 }
 
 // 실시간 이벤트는 잠깐 모았다가 한 번에 반영한다(LIVE_BATCH_MS, 설정 › Realtime) — 연달아 오는 변경(일괄 수정 등)에 매번 다시 읽지 않도록
@@ -245,6 +270,26 @@ interface LivePending {
   highlight: string[];
 }
 const emptyLivePending = (): LivePending => ({ databases: false, collections: false, documents: false, openDocument: false, highlight: [] });
+
+// aggregation 모드의 경로 칸들 — 파이프라인 컬럼(collection null = 아직 안 고름)과 스테이지 출력 컬럼
+const pipelinePathFor = (database: string, collection: string | null, label: string): NormalActivePath => ({
+  kind: 'normal',
+  columnKind: 'pipeline',
+  label: collection ? label || collection : 'Aggregation',
+  databaseName: database,
+  ...(collection ? { collectionName: collection } : {}),
+  comp: { id: nextPathId(), direction: -1 },
+});
+
+const outputPathFor = (database: string, collection: string, stageId: string): NormalActivePath => ({
+  kind: 'normal',
+  columnKind: 'output',
+  label: 'Output',
+  databaseName: database,
+  collectionName: collection,
+  stageId,
+  comp: { id: nextPathId(), direction: -1 },
+});
 
 // ── 훅 ───────────────────────────────────────────────────────────────────────
 
@@ -305,27 +350,35 @@ export function useExplorerState(): UseExplorerStateResult {
   const conflictResolverRef = useRef<((overwrite: boolean) => void) | null>(null);
   const [referenceCandidates, setReferenceCandidates] = useState<PendingFieldReference | null>(null);
   // 폰 너비면 Tree 모드(컬럼 최소)로 시작한다
-  const [maxVisibleColumns, setMaxVisibleColumnsState] = useState(() =>
+  // 문서 탐색의 컬럼 수 — 최소(2)면 Tree 모드
+  const [documentColumns, setDocumentColumns] = useState(() =>
     window.matchMedia(MOBILE_QUERY).matches ? MIN_VISIBLE_COLUMNS : MIN_VISIBLE_COLUMNS + 1,
   );
-
-  const setMaxVisibleColumns = useCallback((count: number) => {
-    const clamped = Math.min(MAX_VISIBLE_COLUMNS, Math.max(MIN_VISIBLE_COLUMNS, count));
-    setMaxVisibleColumnsState(clamped);
-  }, []);
+  // 집계 모드의 컬럼 수는 따로 — 최소(3)면 Tree(결과 상세만 한 칸에 접는다)
+  const [aggregationColumns, setAggregationColumns] = useState(() =>
+    window.matchMedia(MOBILE_QUERY).matches ? AGGREGATION_MIN_COLUMNS : AGGREGATION_COLUMNS,
+  );
 
   // 쓰는 중에 폰 너비로 좁아지면(창 크기 조절 등) Tree로 바꾸고, 다시 넓어지면 바꾸기 전 컬럼 수로 돌려놓는다.
   // 폰 너비에서도 상태 표시줄 버튼으로 Columns로 바꿀 수 있다.
   useEffect(() => {
     const query = window.matchMedia(MOBILE_QUERY);
     let beforeMobile = MIN_VISIBLE_COLUMNS + 1;
+    let aggregationBeforeMobile = AGGREGATION_COLUMNS;
     const onChange = () => {
-      setMaxVisibleColumnsState((current) => {
+      setDocumentColumns((current) => {
         if (query.matches) {
           beforeMobile = current;
           return MIN_VISIBLE_COLUMNS;
         }
         return beforeMobile;
+      });
+      setAggregationColumns((current) => {
+        if (query.matches) {
+          aggregationBeforeMobile = current;
+          return AGGREGATION_MIN_COLUMNS;
+        }
+        return aggregationBeforeMobile;
       });
     };
     query.addEventListener('change', onChange);
@@ -337,6 +390,9 @@ export function useExplorerState(): UseExplorerStateResult {
 
   const activeDatabaseRef = useRef<string | null>(null);
   const activeCollectionRef = useRef<string | null>(null);
+  // 지금 경로(콜백 안에서 최신 값을 읽을 때 — aggregation 모드인가 등)
+  const activePathsRef = useRef(activePaths);
+  activePathsRef.current = activePaths;
   const activeDocumentOidRef = useRef<string | null>(null);
   const changedPathsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -351,6 +407,26 @@ export function useExplorerState(): UseExplorerStateResult {
 
   // ── 파생값 ──────────────────────────────────────────────────────────────────
 
+  // aggregation 모드면 그 파이프라인 — 출력 컬럼의 이름("2 · $group")이 스테이지를 고치거나 옮기면 따라 바뀌게
+  const pipelinePath = activePaths[1]?.columnKind === 'pipeline' && activePaths[1].kind === 'normal' ? activePaths[1] : null;
+  const isAggregation = pipelinePath !== null;
+  const aggregationStages = usePipelineStages(pipelinePath?.databaseName ?? null, pipelinePath?.collectionName ?? null);
+
+  // 지금 모드의 컬럼 수·Tree — 어느 모드든 '최소 = Tree'(문서 2, 집계 3)
+  const maxVisibleColumns = isAggregation ? aggregationColumns : documentColumns;
+  const minColumns = isAggregation ? AGGREGATION_MIN_COLUMNS : MIN_VISIBLE_COLUMNS;
+  const defaultColumns = isAggregation ? AGGREGATION_COLUMNS : MIN_VISIBLE_COLUMNS + 1;
+  const treeMode = maxVisibleColumns === minColumns;
+  const setMaxVisibleColumns = useCallback((count: number) => {
+    const clamped = Math.min(MAX_VISIBLE_COLUMNS, Math.max(minColumns, count));
+    if (isAggregation) setAggregationColumns(clamped);
+    else setDocumentColumns(clamped);
+  }, [isAggregation, minColumns]);
+  const setTreeMode = useCallback((on: boolean) => {
+    setMaxVisibleColumns(on ? minColumns : defaultColumns);
+  }, [setMaxVisibleColumns, minColumns, defaultColumns]);
+
+  // 문서 탐색의 보이는 컬럼(끝의 N개). 집계 모드는 MillerColumns가 Pipeline을 고정해 따로 고른다
   const visibleColumns = useMemo<(ActivePath | null)[]>(() => {
     const lastN = activePaths.slice(-maxVisibleColumns);
     const padding = Array(Math.max(0, maxVisibleColumns - lastN.length)).fill(null) as null[];
@@ -360,6 +436,14 @@ export function useExplorerState(): UseExplorerStateResult {
   const breadcrumbs = useMemo<ExplorerPathSegment[]>(() => {
     const segs: ExplorerPathSegment[] = [];
     for (const ap of activePaths) {
+      if (ap.columnKind === 'pipeline' && ap.kind === 'normal') {
+        segs.push({ key: `pipeline-${ap.comp.id}`, label: ap.label, kind: 'pipeline' });
+        continue;
+      }
+      if (ap.columnKind === 'output' && ap.kind === 'normal') {
+        segs.push({ key: `stage-${ap.comp.id}`, label: ap.stageId ? stageLabel(aggregationStages, ap.stageId) : ap.label, kind: 'stage' });
+        continue;
+      }
       if (ap.columnKind === 'collections') {
         if (ap.databaseName) {
           segs.push({ key: ap.databaseName, label: ap.databaseName, kind: 'database' });
@@ -386,7 +470,7 @@ export function useExplorerState(): UseExplorerStateResult {
       }
     }
     return segs;
-  }, [activePaths]);
+  }, [activePaths, aggregationStages]);
 
   // ── 액션 ────────────────────────────────────────────────────────────────────
 
@@ -440,15 +524,16 @@ export function useExplorerState(): UseExplorerStateResult {
       setCollections(cols);
       clearDocuments();
       setOpenDocument(null);
-      setActivePaths([
-        {
-          kind: 'normal',
-          columnKind: 'collections',
-          label: name,
-          databaseName: name,
-          comp: { id: nextPathId(), direction: -1 },
-        },
-      ]);
+      const collectionsPath: NormalActivePath = {
+        kind: 'normal',
+        columnKind: 'collections',
+        label: name,
+        databaseName: name,
+        comp: { id: nextPathId(), direction: -1 },
+      };
+      // aggregation 모드였으면 그대로 — 새 DB에서 컬렉션을 고르면 그 파이프라인
+      const keepAggregation = activePathsRef.current[1]?.columnKind === 'pipeline';
+      setActivePaths(keepAggregation ? [collectionsPath, pipelinePathFor(name, null, '')] : [collectionsPath]);
       setEditingId(null);
     } catch {
       showToast('Could not load database.', 'error');
@@ -882,6 +967,82 @@ export function useExplorerState(): UseExplorerStateResult {
     await selectCollection(name, label);
   }, [focusDatabase, selectCollection, showToast]);
 
+  // ── Aggregation 모드 ───────────────────────────────────────────────────────
+  // 문서 목록 대신 파이프라인 컬럼. 문서 목록 쪽 상태(열린 컬렉션·문서)는 비운다 — 실시간 반영이 숨은 목록을 다시 받지 않게
+  const openPipeline = useCallback(async (database: string, collection: string | null, label: string) => {
+    if (activeDatabaseRef.current !== database) {
+      try {
+        await focusDatabase(database);
+      } catch {
+        showToast('Could not load database.', 'error');
+        return;
+      }
+    }
+    activeCollectionRef.current = null;
+    activeDocumentOidRef.current = null;
+    clearDocuments();
+    setOpenDocument(null);
+    // 처음 열면 마지막(이미 붙인) 스테이지의 출력까지 — 스테이지가 없으면 원본 문서
+    const stages = collection ? getPipelineStages(database, collection).filter((s) => !s.pending) : [];
+    const last = stages[stages.length - 1];
+    setActivePaths((prev) => {
+      const current = prev[1];
+      // 같은 파이프라인을 다시 고르면 결과 문서 컬럼만 닫는다 — 닫을 게 없으면(경로의 끝이 출력) 아무것도 안 한다
+      if (current?.columnKind === 'pipeline' && current.kind === 'normal' && current.databaseName === database && current.collectionName === (collection ?? undefined)) {
+        return prev.length <= 3 ? prev : prev.slice(0, 3);
+      }
+      const base: NormalActivePath = prev[0]?.columnKind === 'collections' && prev[0].kind === 'normal'
+        ? prev[0]
+        : { kind: 'normal', columnKind: 'collections', label: database, databaseName: database, comp: { id: nextPathId(), direction: 1 } };
+      const pipeline = pipelinePathFor(database, collection, label);
+      return collection ? [base, pipeline, outputPathFor(database, collection, last?.id ?? INPUT_STAGE_ID)] : [base, pipeline];
+    });
+    setEditingId(null);
+  }, [focusDatabase, clearDocuments, showToast]);
+
+  const toggleAggregation = useCallback(async () => {
+    const database = activeDatabaseRef.current;
+    if (!database) return;
+    const second = activePathsRef.current[1];
+    if (second?.columnKind === 'pipeline' && second.kind === 'normal') {
+      // 끄기 — 그 컬렉션의 문서 목록으로(컬렉션을 고르기 전이었으면 컬렉션 목록만)
+      if (second.collectionName) await selectCollection(second.collectionName, second.label);
+      else setActivePaths((prev) => prev.slice(0, 1));
+      return;
+    }
+    const collection = second?.columnKind === 'documents' && second.kind === 'normal' ? second.collectionName ?? null : null;
+    await openPipeline(database, collection, second?.label ?? '');
+  }, [selectCollection, openPipeline]);
+
+  const selectStage = useCallback((stageId: string) => {
+    setActivePaths((prev) => {
+      const pipeline = prev[1];
+      if (pipeline?.columnKind !== 'pipeline' || pipeline.kind !== 'normal' || !pipeline.databaseName || !pipeline.collectionName) return prev;
+      const output = prev[2];
+      // 고른 스테이지를 다시 — 결과 문서 컬럼만 닫는다(출력이 경로의 끝이면 그대로)
+      if (output?.kind === 'normal' && output.columnKind === 'output' && output.stageId === stageId) return prev.length === 3 ? prev : prev.slice(0, 3);
+      return [prev[0], pipeline, outputPathFor(pipeline.databaseName, pipeline.collectionName, stageId)];
+    });
+    setEditingId(null);
+  }, []);
+
+  const selectAggregateResult = useCallback((document: Document, title: string, index: number) => {
+    setOpenDocument(document);
+    setActivePaths((prev) => {
+      if (prev[2]?.columnKind !== 'output') return prev;
+      const root: NormalActivePath = {
+        kind: 'normal',
+        columnKind: 'json',
+        label: title,
+        projectionPath: [],
+        resultIndex: index,
+        comp: { id: nextPathId(), direction: -1 },
+      };
+      return [...prev.slice(0, 3), root];
+    });
+    setEditingId(null);
+  }, []);
+
   // 충돌 창을 띄우고 사용자가 고를 때까지 기다린다
   const askConflict = useCallback(
     (pending: PendingConflict) =>
@@ -1036,8 +1197,9 @@ export function useExplorerState(): UseExplorerStateResult {
   // 목록 순서·페이지는 서버가 정하므로 이벤트로 직접 고치지 않고 '현재 페이지 다시 받기'로 맞춘다.
 
   // 지금 보는 DB/컬렉션을 서버에 알린다 — 그 컬렉션의 변경만 자세히 받는다
+  // aggregation 모드면 파이프라인의 컬렉션 — 그 컬렉션이 바뀌면 출력에 '낡았을 수 있음'을 띄운다(services/aggregateRuns)
   const activeCollectionName = useMemo(() => {
-    const docPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'documents');
+    const docPath = activePaths.find((p) => p.kind === 'normal' && (p.columnKind === 'documents' || p.columnKind === 'pipeline'));
     return docPath?.kind === 'normal' ? docPath.collectionName ?? null : null;
   }, [activePaths]);
   useEffect(() => {
@@ -1420,7 +1582,11 @@ export function useExplorerState(): UseExplorerStateResult {
     visibleColumns,
     breadcrumbs,
     maxVisibleColumns,
+    treeMode,
+    minColumns,
+    defaultColumns,
     setMaxVisibleColumns,
+    setTreeMode,
     initialize,
     selectDatabase,
     selectCollection,
@@ -1448,7 +1614,13 @@ export function useExplorerState(): UseExplorerStateResult {
     setEditingId,
     clearChangedPaths,
     dismissToast,
+    showToast,
     undo,
     refresh,
+    isAggregation,
+    toggleAggregation,
+    openPipeline,
+    selectStage,
+    selectAggregateResult,
   };
 }

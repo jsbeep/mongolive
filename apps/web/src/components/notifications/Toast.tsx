@@ -46,7 +46,7 @@ export function Toast({ toast, raised, onUndo, onDismiss }: ToastProps) {
               ? <CircleAlert size={16} className="mt-px shrink-0 text-rose-500" />
               : <CircleCheck size={16} className="mt-px shrink-0 text-emerald-500" />}
             <span className={styles.message}>{toast.message}</span>
-            {toast.undoable && (
+            {(toast.undoable || toast.undo) && (
               <button type="button" className={styles.undo} onClick={onUndo}>
                 Undo
               </button>

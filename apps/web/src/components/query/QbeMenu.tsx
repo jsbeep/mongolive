@@ -4,9 +4,11 @@
 // 고르면 그 조건을 지금 쿼리에 더하고(AND, 같은 필드 규칙) 바로 실행한다. 다른 컬렉션의 문서(참조로 연 것)면
 // 그 컬렉션으로 이동해서 건다 — 메뉴 헤더의 ⓘ가 알려 준다. Copy path는 메뉴 맨 아래로 옮겼다.
 // 배열 안의 값(tags.0, items.3.name)은 기본이 '아무 원소'(tags, items.name), 'This position only'로 그 자리만.
+// aggregation 모드(target.mode = 'collect')에선 같은 메뉴가 '파이프라인에 넣기' — 조건은 $match로, 아래 Shape 칸은
+// 정렬·그룹·값 세기·포함/제외·$lookup. 실제로 쌓는 건 page.tsx가 넣어 준 CollectContext(services/pipelineCollect).
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Info, ListFilterPlus, Route } from 'lucide-react';
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, Eye, EyeOff, Group, Info, Link2, ListFilterPlus, ListPlus, Route, Sigma } from 'lucide-react';
 import {
   CONDITION_OP_LABEL,
   dateMs,
@@ -14,6 +16,7 @@ import {
   makeDate,
   textMatchRegex,
   valueKind,
+  type CollectAction,
   type Condition,
   type ConditionOp,
   type JsonValue,
@@ -29,12 +32,43 @@ export interface QbeTarget {
   collection: string;
   // 지금 문서 목록의 컬렉션이 아니다(참조로 연 문서) — 고르면 그 컬렉션으로 이동
   elsewhere: boolean;
+  // 'collect' = aggregation 모드 — 쿼리 대신 파이프라인에 모은다
+  mode?: 'query' | 'collect';
+  // 참조 필드면 $lookup을 채울 수 있다(ObjectId는 고를 때 어느 컬렉션인지 찾아본다, 필드 참조는 설정에서)
+  lookup?: { kind: 'oid'; oid: string } | { kind: 'field'; collection: string; key: string };
 }
 
 // 실제 실행은 explorer 상태가 한다(page.tsx가 넣어 준다) — 필드 행이 여러 컬럼·중첩 안에 있어서 props 대신 context로
 // 조건이 여럿이면(same day = 이상 + 미만) 차례로 더한다
 export type QbeHandler = (database: string, collection: string, conditions: Condition[]) => void;
 export const QbeContext = createContext<QbeHandler | null>(null);
+
+// aggregation 모드 — 고른 동작을 파이프라인에. ObjectId 참조의 $lookup은 대상 컬렉션을 찾아본 뒤에 만든다
+export type CollectRequest = CollectAction | { kind: 'lookupOid'; field: string; oid: string };
+export type CollectHandler = (request: CollectRequest) => void;
+export const CollectContext = createContext<CollectHandler | null>(null);
+
+// 필드 이름의 끝(a.b.c → c) — $lookup 결과 이름(as)에
+const leafOf = (field: string) => field.split('.').pop() || field;
+
+// Shape 칸 — 필드 자체로 하는 것
+const shapeItems = (field: string, lookup: QbeTarget['lookup']): { label: string; icon: typeof Group; request: CollectRequest }[] => [
+  { label: 'Sort ascending', icon: ArrowUpNarrowWide, request: { kind: 'sort', field, direction: 1 } },
+  { label: 'Sort descending', icon: ArrowDownWideNarrow, request: { kind: 'sort', field, direction: -1 } },
+  { label: 'Group by this field', icon: Group, request: { kind: 'group', field } },
+  { label: 'Count values', icon: Sigma, request: { kind: 'count', field } },
+  { label: 'Include this field', icon: Eye, request: { kind: 'project', field, include: true } },
+  { label: 'Exclude this field', icon: EyeOff, request: { kind: 'project', field, include: false } },
+  ...(lookup?.kind === 'oid'
+    ? [{ label: 'Lookup referenced document', icon: Link2, request: { kind: 'lookupOid', field, oid: lookup.oid } as CollectRequest }]
+    : lookup?.kind === 'field'
+      ? [{
+          label: `Lookup ${lookup.collection}`,
+          icon: Link2,
+          request: { kind: 'lookup', from: lookup.collection, localField: field, foreignField: lookup.key, as: `${leafOf(field)}_${lookup.collection}` } as CollectRequest,
+        }]
+      : []),
+];
 
 // group이 바뀌는 곳에 구분선 — 비교 / 글자 / 그 밖
 type MenuItem = { label: string; conditions: Condition[]; group: number };
@@ -129,6 +163,8 @@ const MENU_WIDTH = 260;
 
 export function QbeMenu({ target }: { target: QbeTarget }) {
   const run = useContext(QbeContext);
+  const collect = useContext(CollectContext);
+  const collecting = target.mode === 'collect';
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const [exactPosition, setExactPosition] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -170,7 +206,13 @@ export function QbeMenu({ target }: { target: QbeTarget }) {
     };
   }, [anchor]);
 
-  if (!run) return null;
+  if (collecting ? !collect : !run) return null;
+  const pick = (conditions: Condition[]) => {
+    setAnchor(null);
+    if (collecting) collect!({ kind: 'match', conditions });
+    else run!(target.database, target.collection, conditions);
+  };
+  const sectionTitle = 'px-2.5 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400';
 
   return (
     <>
@@ -179,22 +221,22 @@ export function QbeMenu({ target }: { target: QbeTarget }) {
         type="button"
         aria-haspopup="menu"
         aria-expanded={!!anchor}
-        aria-label="Query by example"
-        data-tt={anchor ? undefined : 'Find documents like this'}
+        aria-label={collecting ? 'Add to pipeline' : 'Query by example'}
+        data-tt={anchor ? undefined : collecting ? 'Add to the pipeline — filter, sort, group…' : 'Find documents like this'}
         className={cn('p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors', anchor && 'bg-slate-100 text-slate-600')}
         onClick={(e) => {
           e.stopPropagation();
           setAnchor(anchor ? null : e.currentTarget.getBoundingClientRect());
         }}
       >
-        <ListFilterPlus size={14} />
+        {collecting ? <ListPlus size={14} /> : <ListFilterPlus size={14} />}
       </button>
       {anchor && createPortal(
         <div
           ref={menuRef}
           role="menu"
-          aria-label="Query by example"
-          className="fixed z-[120] flex flex-col gap-0.5 rounded-xl bg-white p-1 shadow-elevated ring-1 ring-slate-100"
+          aria-label={collecting ? 'Add to pipeline' : 'Query by example'}
+          className="fixed z-[120] flex max-h-[calc(100vh-16px)] flex-col gap-0.5 overflow-y-auto rounded-xl bg-white p-1 shadow-elevated ring-1 ring-slate-100"
           style={{ top, left: Math.max(8, Math.min(anchor.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8)), width: MENU_WIDTH }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -224,6 +266,7 @@ export function QbeMenu({ target }: { target: QbeTarget }) {
               ))}
             </div>
           )}
+          {collecting && <p className={sectionTitle}>Filter · $match</p>}
           {items.map((item, index) => (
             <div key={item.label} className="contents">
               {index > 0 && items[index - 1].group !== item.group && <div className="mx-2 my-0.5 h-px bg-slate-100" />}
@@ -232,15 +275,34 @@ export function QbeMenu({ target }: { target: QbeTarget }) {
                 role="menuitem"
                 className="truncate rounded-lg px-2.5 py-1.5 text-left font-mono text-[13px] text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
                 title={item.label}
-                onClick={() => {
-                  setAnchor(null);
-                  run(target.database, target.collection, item.conditions);
-                }}
+                onClick={() => pick(item.conditions)}
               >
                 {item.label}
               </button>
             </div>
           ))}
+          {/* 파이프라인에 넣기 — 필드 자체로 하는 것(정렬·그룹·값 세기·포함/제외·$lookup) */}
+          {collecting && (
+            <>
+              <div className="my-0.5 h-px bg-slate-100" />
+              <p className={sectionTitle}>Shape</p>
+              {shapeItems(field, target.lookup).map(({ label, icon: Icon, request }) => (
+                <button
+                  key={label}
+                  type="button"
+                  role="menuitem"
+                  className="flex items-center gap-2 truncate rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
+                  onClick={() => {
+                    setAnchor(null);
+                    collect!(request);
+                  }}
+                >
+                  <Icon size={13} className="shrink-0 text-slate-400" />
+                  <span className="truncate">{label}</span>
+                </button>
+              ))}
+            </>
+          )}
           <div className="my-0.5 h-px bg-slate-100" />
           <button
             type="button"

@@ -30,7 +30,8 @@ export interface MockSnapshot {
   updatedAt: number;
 }
 
-export type ColumnKind = 'collections' | 'documents' | 'json';
+// pipeline / output = aggregation 모드 — [collections, pipeline, output, json(결과 문서)…]
+export type ColumnKind = 'collections' | 'documents' | 'json' | 'pipeline' | 'output';
 
 export interface ActivePathComp {
   id: number;
@@ -49,6 +50,10 @@ export interface NormalActivePath extends BaseActivePath {
   collectionName?: string;
   documentOid?: string;
   projectionPath?: string[];
+  // output 컬럼: 어느 스테이지까지의 출력인가(services/pipelines의 스테이지 id)
+  stageId?: string;
+  // aggregation 결과 문서의 루트 json 컬럼: 출력 목록에서 몇 번째(0부터) — 읽기만, documentOid 없음
+  resultIndex?: number;
 }
 
 export type RefLocator =
@@ -71,7 +76,7 @@ export type ActivePath = NormalActivePath | ReferenceActivePath;
 export interface ExplorerPathSegment {
   key: string;
   label: string;
-  kind: 'database' | 'collection' | 'document' | 'field';
+  kind: 'database' | 'collection' | 'document' | 'field' | 'pipeline' | 'stage';
   chainColor?: string;
 }
 

@@ -139,7 +139,8 @@ export function useMillerKeyboard(containerRef: RefObject<HTMLElement | null>, o
       }
       // 쿼리는 커서가 어느 컬럼에 있든 문서 목록(컬럼 1)의 것 — 문서 목록이 열려 있고 서버 연결일 때만
       if (key === 'q') {
-        if (dataSourceKind !== 'remote' || !columnEl(1)) return;
+        // aggregation 모드(컬럼 1이 파이프라인)엔 쿼리 패널이 없다 — 필터 버튼이 있는 문서 목록일 때만
+        if (dataSourceKind !== 'remote' || !columnEl(1)?.querySelector('button[data-tt^="Filter"]')) return;
         e.preventDefault();
         openSearchPanel('query');
         return;

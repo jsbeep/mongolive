@@ -40,6 +40,9 @@ export const createMockDataSource = (): DataSource => {
     getDocumentById: mock.getDocumentById,
     getFullDocumentById: mock.getFullDocumentById,
     getFullDocumentByIdInCollection: mock.getFullDocumentByIdInCollection,
+    // aggregation은 서버 연결에서만 — Mock은 MongoDB 집계를 흉내 내지 않는다
+    aggregate: () => Promise.reject(new Error('Aggregation needs a server connection (not available in demo mode)')),
+    aggregateCounts: () => Promise.reject(new Error('Aggregation needs a server connection (not available in demo mode)')),
     exportCollection: mock.exportCollection,
 
     checkReference: mock.checkReference,

@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Bell, BellDot, Circle, Columns3, ListTree, Lock, LogOut, Minus, Plus, RefreshCw, Search, Settings } from 'lucide-react';
 import { useServerSettings } from '../../services/serverSettings';
 import { m } from 'framer-motion';
-import { MIN_VISIBLE_COLUMNS, MAX_VISIBLE_COLUMNS, type UseExplorerStateResult } from '../../hooks/useExplorerState';
+import { MAX_VISIBLE_COLUMNS, type UseExplorerStateResult } from '../../hooks/useExplorerState';
 import { dataSourceKind } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { CONNECTION_STATUS } from './connectionStatus';
@@ -16,6 +16,11 @@ interface StatusBarProps {
   onRefresh: () => void;
   maxVisibleColumns: number;
   setMaxVisibleColumns: (n: number) => void;
+  // 지금 모드의 Tree / 컬럼 수 최소·'처음 값' — 집계 모드는 따로 기억한다(useExplorerState)
+  treeMode: boolean;
+  setTreeMode: (on: boolean) => void;
+  minColumns: number;
+  defaultColumns: number;
   unreadChanges: number;
   unseenErrors: number;
   isCenterOpen: boolean;
@@ -45,6 +50,10 @@ export function StatusBar({
   onRefresh,
   maxVisibleColumns,
   setMaxVisibleColumns,
+  treeMode: isTreeMode,
+  setTreeMode,
+  minColumns,
+  defaultColumns,
   unreadChanges,
   unseenErrors,
   isCenterOpen,
@@ -56,7 +65,6 @@ export function StatusBar({
   const safety = useServerSettings();
   const status = CONNECTION_STATUS[connectionStatus];
   const [rotation, setRotation] = useState(0);
-  const isTreeMode = maxVisibleColumns === MIN_VISIBLE_COLUMNS;
   const hasNews = unreadChanges > 0 || unseenErrors > 0;
   const BellIcon = hasNews ? BellDot : Bell;
 
@@ -119,7 +127,7 @@ export function StatusBar({
           type="button"
           className={cn(styles.item, isTreeMode ? styles.itemOn : styles.itemIdle)}
           aria-pressed={isTreeMode}
-          onClick={() => setMaxVisibleColumns(isTreeMode ? 3 : MIN_VISIBLE_COLUMNS)}
+          onClick={() => setTreeMode(!isTreeMode)}
           data-tt={isTreeMode ? 'Tree mode — click to spread levels across columns' : 'Column mode — click to stack levels into one tree'}
         >
           {isTreeMode ? <ListTree size={16} /> : <Columns3 size={16} />}
@@ -130,7 +138,7 @@ export function StatusBar({
             type="button"
             className={cn(styles.item, styles.itemIdle, styles.square)}
             onClick={() => setMaxVisibleColumns(maxVisibleColumns - 1)}
-            disabled={maxVisibleColumns <= MIN_VISIBLE_COLUMNS}
+            disabled={maxVisibleColumns <= minColumns}
             aria-label="Show fewer columns"
           >
             <Minus size={16} />
@@ -138,9 +146,9 @@ export function StatusBar({
           <button
             type="button"
             className={cn(styles.item, styles.itemIdle, styles.square, styles.count)}
-            onClick={() => setMaxVisibleColumns(3)}
-            aria-label={`${maxVisibleColumns} columns — reset to 3`}
-            data-tt="Visible columns — click to reset to 3"
+            onClick={() => setMaxVisibleColumns(defaultColumns)}
+            aria-label={`${maxVisibleColumns} columns — reset to ${defaultColumns}`}
+            data-tt={`Visible columns — click to reset to ${defaultColumns}`}
           >
             {maxVisibleColumns}
           </button>

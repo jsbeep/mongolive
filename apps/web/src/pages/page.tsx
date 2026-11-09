@@ -15,7 +15,6 @@ import { QuickJump, type QuickCommand } from '../components/palette/QuickJump';
 import { Bell, ListTree, Lock, LogOut, PanelLeft, RefreshCw, Settings, Undo2 } from 'lucide-react';
 import { useAuth } from '../components/auth/AuthGate';
 import { getServerSettingsSnapshot, saveServerSettings } from '../services/serverSettings';
-import { MIN_VISIBLE_COLUMNS } from '../hooks/useExplorerState';
 import { startServerSettingsSync } from '../services/serverSettings';
 import { useActivityLog } from '../hooks/useActivityLog';
 import { useSidebar } from '../hooks/useSidebar';
@@ -25,10 +24,11 @@ import { QueryHistoryPanel } from '../components/query/QueryHistoryPanel';
 import { ReferencesPanel } from '../components/references/ReferencesPanel';
 import { BookmarksPanel } from '../components/bookmarks/BookmarksPanel';
 import { useBookmarks } from '../services/bookmarks';
-import { QbeContext, type QbeHandler } from '../components/query/QbeMenu';
+import { CollectContext, QbeContext, type CollectHandler, type QbeHandler } from '../components/query/QbeMenu';
+import { collectToPipeline } from '../services/pipelineCollect';
 import { clearQueryHistory, removeQueryHistory, useQueryHistory, type QueryHistoryEntry } from '../services/queryHistory';
 import { openSearchPanel } from '../services/queryPanel';
-import { dataSourceKind } from '../services/api';
+import { api, dataSourceKind } from '../services/api';
 
 // ── 스타일 ────────────────────────────────────────────────────────────────────
 
@@ -93,6 +93,10 @@ export default function ExplorerPage() {
     breadcrumbs,
     maxVisibleColumns,
     setMaxVisibleColumns,
+    treeMode,
+    setTreeMode,
+    minColumns,
+    defaultColumns,
     selectDatabase,
     selectCollection,
     selectDocument,
@@ -111,12 +115,18 @@ export default function ExplorerPage() {
     setEditingId,
     clearChangedPaths,
     dismissToast,
+    showToast,
     undo,
     refresh,
     openCollection,
     runQuery,
     queryByExample,
     openLocation,
+    isAggregation,
+    toggleAggregation,
+    openPipeline,
+    selectStage,
+    selectAggregateResult,
   } = state;
   // 사이드바 Query = 쿼리 기록 패널(누른 버튼 옆에) — 열려 있으면 그 버튼 위치
   const queryHistory = useQueryHistory();
@@ -130,12 +140,37 @@ export default function ExplorerPage() {
   const qbeHandler = useCallback<QbeHandler>((database, collection, conditions) => {
     void queryByExample(database, collection, conditions).then((ok) => ok && openSearchPanel('query'));
   }, [queryByExample]);
+  // aggregation 모드 — 결과·원본 필드의 메뉴가 고른 동작을 파이프라인에 모은다(실행은 Run). 알림의 Undo가 되돌린다.
+  // ObjectId 참조의 $lookup은 그 ObjectId가 어느 컬렉션 문서인지 먼저 찾아본다(같은 DB여야 한다)
+  const aggregationTarget = activePaths[1]?.kind === 'normal' && activePaths[1].columnKind === 'pipeline' ? activePaths[1] : null;
+  const viewedStageId = activePaths[2]?.kind === 'normal' && activePaths[2].columnKind === 'output' ? activePaths[2].stageId ?? null : null;
+  const collectHandler = useCallback<CollectHandler>((request) => {
+    const database = aggregationTarget?.databaseName;
+    const collection = aggregationTarget?.collectionName;
+    if (!database || !collection) return;
+    const finish = (action: Parameters<typeof collectToPipeline>[3]) => {
+      const outcome = collectToPipeline(database, collection, viewedStageId, action);
+      showToast(outcome.message, outcome.ok ? 'success' : 'error', outcome.ok && outcome.undo ? outcome.undo : false);
+    };
+    if (request.kind !== 'lookupOid') return finish(request);
+    void api.getReferenceInfo(request.oid).then((info) => {
+      if (!info) return showToast('Could not find the referenced document — nothing to look up', 'error');
+      if (info.databaseName !== database) return showToast(`$lookup works within one database — ${info.collectionName} is in ${info.databaseName}`, 'error');
+      const leaf = request.field.split('.').pop() || request.field;
+      finish({ kind: 'lookup', from: info.collectionName, localField: request.field, foreignField: '_id', as: `${leaf}_${info.collectionName}` });
+    }).catch(() => showToast('Could not look up the reference', 'error'));
+  }, [aggregationTarget?.databaseName, aggregationTarget?.collectionName, viewedStageId, showToast]);
   // 지금 컬렉션 — 문서 목록 컬럼이 열려 있으면 그 컬렉션 이름(트리 강조, 알림 센터의 '이 컬렉션' 범위)
   const documentsPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'documents');
   const activeCollectionName = documentsPath?.kind === 'normal' ? documentsPath.collectionName ?? null : null;
   // 지금 열린 문서(알림 센터의 '이 문서' 범위) — 참조를 따라 연 문서 말고, 이 컬렉션에서 고른 문서
   const documentPath = activePaths.find((p) => p.kind === 'normal' && p.columnKind === 'json');
   const activeDocumentId = documentPath?.kind === 'normal' ? documentPath.documentOid ?? null : null;
+  // aggregation 모드 — 사이드바 트리는 파이프라인의 컬렉션을 강조하고, 트리·빠른 이동·References에서 컬렉션을 고르면 그 파이프라인을 연다
+  const pipelinePath = activePaths[1]?.kind === 'normal' && activePaths[1].columnKind === 'pipeline' ? activePaths[1] : null;
+  const treeCollectionName = activeCollectionName ?? pipelinePath?.collectionName ?? null;
+  const openCollectionHere = (database: string, collection: string, label: string) =>
+    isAggregation ? openPipeline(database, collection, label) : openCollection(database, collection, label);
 
   // 밀러 컬럼 키보드 탐색(↑↓←→ / hjkl, Enter, e, Delete, /) — ?는 단축키 목록(설정 › Keyboard)
   const columnsRef = useRef<HTMLDivElement>(null);
@@ -176,13 +211,12 @@ export default function ExplorerPage() {
 
   // 빠른 이동의 명령 목록 — 단축키 표시는 Mac이면 ⌘
   const mod = navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+';
-  const isTreeMode = maxVisibleColumns === MIN_VISIBLE_COLUMNS;
   const quickCommands: QuickCommand[] = [
     { id: 'settings', label: 'Open settings', icon: Settings, run: () => openSettings() },
     { id: 'notifications', label: 'Show notifications', icon: Bell, run: () => setCenterOpen(true) },
     { id: 'resync', label: "Re-sync what's on screen", icon: RefreshCw, run: () => void refresh() },
     { id: 'undo', label: 'Undo last edit', icon: Undo2, hint: `${mod}Z`, run: () => void undo() },
-    { id: 'tree', label: isTreeMode ? 'Switch to column mode' : 'Switch to tree mode', icon: ListTree, run: () => setMaxVisibleColumns(isTreeMode ? 3 : MIN_VISIBLE_COLUMNS) },
+    { id: 'tree', label: treeMode ? 'Switch to column mode' : 'Switch to tree mode', icon: ListTree, run: () => setTreeMode(!treeMode) },
     { id: 'sidebar', label: sidebar.mode === 'full' ? 'Collapse sidebar to icons' : 'Expand sidebar', icon: PanelLeft, hint: `${mod}B`, run: () => sidebar.setMode(sidebar.mode === 'full' ? 'rail' : 'full') },
     {
       id: 'readonly',
@@ -224,21 +258,30 @@ export default function ExplorerPage() {
             sidebar={sidebar}
             databases={databases}
             activeDatabase={activeDatabase}
-            activeCollection={activeCollectionName}
+            activeCollection={treeCollectionName}
             collections={collections}
             onSelectDatabase={selectDatabase}
             onOpenCollection={async (database, name, label) => {
               // 좁은 화면에서 떠 있는 사이드바는 고르면 닫는다(열린 경로를 가리므로)
               if (sidebar.isOverlay) sidebar.setMode('rail');
-              await openCollection(database, name, label);
+              await openCollectionHere(database, name, label);
             }}
             onMutate={mutate}
             onOpenSettings={() => openSettings()}
             panels={{
               open: sidebarPanel?.kind ?? null,
+              aggregationOpen: isAggregation,
               canQuery: dataSourceKind === 'remote',
-              // 같은 버튼 = 닫기, 다른 버튼 = 그 패널로
-              onToggle: (kind, anchor) => setSidebarPanel((open) => (open?.kind === kind ? null : { kind, anchor })),
+              onToggle: (kind, anchor) => {
+                // Aggregation은 떠 있는 패널이 아니라 컬럼 전환(문서 목록 ⇄ 파이프라인)
+                if (kind === 'aggregation') {
+                  setSidebarPanel(null);
+                  void toggleAggregation();
+                  return;
+                }
+                // 같은 버튼 = 닫기, 다른 버튼 = 그 패널로
+                setSidebarPanel((open) => (open?.kind === kind ? null : { kind, anchor }));
+              },
             }}
           />
 
@@ -259,9 +302,11 @@ export default function ExplorerPage() {
             <ChangeToneContext.Provider value={changeTone}>
             {/* Query by example — 필드 행의 메뉴가 부른다. 고르면 쿼리 패널을 열어 칩을 보여 준다 */}
             <QbeContext.Provider value={qbeHandler}>
+            <CollectContext.Provider value={isAggregation ? collectHandler : null}>
               <MillerColumns
                 visibleColumns={visibleColumns}
                 maxVisibleColumns={maxVisibleColumns}
+                treeMode={treeMode}
                 collections={collections}
                 documents={documents}
                 documentPage={documentPage}
@@ -287,7 +332,11 @@ export default function ExplorerPage() {
                 unregisterUniqueOid={unregisterUniqueOid}
                 setEditingId={setEditingId}
                 clearChangedPaths={clearChangedPaths}
+                openPipeline={openPipeline}
+                selectStage={selectStage}
+                selectAggregateResult={selectAggregateResult}
               />
+            </CollectContext.Provider>
             </QbeContext.Provider>
             </ChangeToneContext.Provider>
           </div>
@@ -298,6 +347,10 @@ export default function ExplorerPage() {
           onRefresh={() => void refresh()}
           maxVisibleColumns={maxVisibleColumns}
           setMaxVisibleColumns={setMaxVisibleColumns}
+          treeMode={treeMode}
+          setTreeMode={setTreeMode}
+          minColumns={minColumns}
+          defaultColumns={defaultColumns}
           unreadChanges={activityLog.unread}
           unseenErrors={systemLog.unseenErrors}
           isCenterOpen={centerOpen}
@@ -354,7 +407,7 @@ export default function ExplorerPage() {
         activeDatabase={activeDatabase}
         commands={quickCommands}
         onOpenDatabase={(name) => void selectDatabase(name)}
-        onOpenCollection={(database, collection, label) => void openCollection(database, collection, label)}
+        onOpenCollection={(database, collection, label) => void openCollectionHere(database, collection, label)}
         onOpenObjectId={(oid) => void navigateToReference(oid)}
       />
 
@@ -401,7 +454,7 @@ export default function ExplorerPage() {
           onOpenCollection={(database, collection, label) => {
             closeSidebarPanel();
             if (sidebar.isOverlay) sidebar.setMode('rail');
-            void openCollection(database, collection, label);
+            void openCollectionHere(database, collection, label);
           }}
           onClose={closeSidebarPanel}
         />
@@ -426,7 +479,12 @@ export default function ExplorerPage() {
       <Toast
         toast={toast}
         raised={centerOpen}
-        onUndo={() => { void undo(); dismissToast(); }}
+        onUndo={() => {
+          // 토스트가 자기 되돌리기를 갖고 있으면 그것(파이프라인에 모은 것), 아니면 마지막 편집
+          if (toast?.undo) toast.undo();
+          else void undo();
+          dismissToast();
+        }}
         onDismiss={dismissToast}
       />
     </div>
