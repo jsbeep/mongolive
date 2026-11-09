@@ -7,12 +7,13 @@ import { ChangeToneContext } from '../components/common/ChangeFlash';
 import { ConflictModal } from '../components/common/ConflictModal';
 import { ReferenceCandidatesModal } from '../components/common/ReferenceCandidatesModal';
 import { TooltipLayer } from '../components/common/TooltipLayer';
-import { Sidebar } from '../components/layout/Sidebar';
+import { Sidebar, type SidebarPanelKind } from '../components/layout/Sidebar';
 import { NotificationCenter, type NotificationTab } from '../components/notifications/NotificationCenter';
 import { Toast } from '../components/notifications/Toast';
 import { SettingsModal, type SettingsSection } from '../components/settings/SettingsModal';
 import { QuickJump, type QuickCommand } from '../components/palette/QuickJump';
-import { Bell, ListTree, Lock, PanelLeft, RefreshCw, Settings, Undo2 } from 'lucide-react';
+import { Bell, ListTree, Lock, LogOut, PanelLeft, RefreshCw, Settings, Undo2 } from 'lucide-react';
+import { useAuth } from '../components/auth/AuthGate';
 import { getServerSettingsSnapshot, saveServerSettings } from '../services/serverSettings';
 import { MIN_VISIBLE_COLUMNS } from '../hooks/useExplorerState';
 import { startServerSettingsSync } from '../services/serverSettings';
@@ -21,6 +22,7 @@ import { useSidebar } from '../hooks/useSidebar';
 import { useSystemLog } from '../hooks/useSystemLog';
 import { useMillerKeyboard } from '../hooks/useMillerKeyboard';
 import { QueryHistoryPanel } from '../components/query/QueryHistoryPanel';
+import { ReferencesPanel } from '../components/references/ReferencesPanel';
 import { QbeContext, type QbeHandler } from '../components/query/QbeMenu';
 import { clearQueryHistory, removeQueryHistory, useQueryHistory, type QueryHistoryEntry } from '../services/queryHistory';
 import { openSearchPanel } from '../services/queryPanel';
@@ -42,6 +44,7 @@ const styles = {
 export default function ExplorerPage() {
   const state = useExplorerState();
   const sidebar = useSidebar();
+  const auth = useAuth();
   const activityLog = useActivityLog();
   const systemLog = useSystemLog();
   const [centerOpen, setCenterOpen] = useState(false);
@@ -114,8 +117,11 @@ export default function ExplorerPage() {
   } = state;
   // 사이드바 Query = 쿼리 기록 패널(누른 버튼 옆에) — 열려 있으면 그 버튼 위치
   const queryHistory = useQueryHistory();
-  const [historyAnchor, setHistoryAnchor] = useState<DOMRect | null>(null);
-  const closeHistory = useCallback(() => setHistoryAnchor(null), []);
+  // 사이드바의 떠 있는 패널(Query 기록 / References) — 한 번에 하나, 누른 버튼 위치에
+  const [sidebarPanel, setSidebarPanel] = useState<{ kind: SidebarPanelKind; anchor: DOMRect } | null>(null);
+  const closeSidebarPanel = useCallback(() => setSidebarPanel(null), []);
+  const historyAnchor = sidebarPanel?.kind === 'history' ? sidebarPanel.anchor : null;
+  const referencesAnchor = sidebarPanel?.kind === 'references' ? sidebarPanel.anchor : null;
   const qbeHandler = useCallback<QbeHandler>((database, collection, conditions) => {
     void queryByExample(database, collection, conditions).then((ok) => ok && openSearchPanel('query'));
   }, [queryByExample]);
@@ -182,6 +188,8 @@ export default function ExplorerPage() {
         void saveServerSettings({ ...current, readOnly: !current.readOnly });
       },
     },
+    // 로그인 모드일 때만 — 사이드바를 완전히 접어도 여기서 로그아웃할 수 있게
+    ...(auth.canLogout ? [{ id: 'signout', label: 'Sign out', icon: LogOut, run: () => void auth.logout() }] : []),
   ];
 
   // Ctrl+Z(⌘Z) = 마지막 문서·필드 편집 되돌리기(한 단계). 입력칸 안에선 브라우저의 글자 되돌리기를 그대로 두고,
@@ -220,10 +228,12 @@ export default function ExplorerPage() {
               await openCollection(database, name, label);
             }}
             onMutate={mutate}
-            queryHistory={{
-              open: historyAnchor !== null,
+            onOpenSettings={() => openSettings()}
+            panels={{
+              open: sidebarPanel?.kind ?? null,
               canQuery: dataSourceKind === 'remote',
-              onToggle: (anchor) => setHistoryAnchor((open) => (open ? null : anchor)),
+              // 같은 버튼 = 닫기, 다른 버튼 = 그 패널로
+              onToggle: (kind, anchor) => setSidebarPanel((open) => (open?.kind === kind ? null : { kind, anchor })),
             }}
           />
 
@@ -287,7 +297,6 @@ export default function ExplorerPage() {
           unseenErrors={systemLog.unseenErrors}
           isCenterOpen={centerOpen}
           onToggleCenter={() => setCenterOpen((v) => !v)}
-          onOpenSettings={() => openSettings()}
           onOpenSafety={() => openSettings('safety')}
           onOpenQuickJump={() => setQuickOpen(true)}
           onOpenSystem={() => {
@@ -344,14 +353,13 @@ export default function ExplorerPage() {
         onOpenObjectId={(oid) => void navigateToReference(oid)}
       />
 
-      {/* 설정 창 — 상태바의 톱니바퀴 */}
+      {/* 설정 창 — 사이드바 맨 아래 톱니바퀴(또는 Ctrl+K) */}
       <SettingsModal
         open={settingsOpen}
         initialSection={settingsSection}
         onClose={() => setSettingsOpen(false)}
         databases={databases}
         onMutate={mutate}
-        onOpenCollection={(database, collection, label) => void openCollection(database, collection, label)}
         onOpenDatabase={(database) => void selectDatabase(database)}
       />
 
@@ -362,20 +370,35 @@ export default function ExplorerPage() {
           entries={queryHistory}
           current={activeDatabase && activeCollectionName ? { database: activeDatabase, collection: activeCollectionName } : null}
           onApply={(entry: QueryHistoryEntry) => {
-            closeHistory();
+            closeSidebarPanel();
             const current = activeDatabase && activeCollectionName;
             void runQuery(entry.filter, entry.text, current ? undefined : { database: entry.database, collection: entry.collection })
               .then((ok) => ok && openSearchPanel('query'));
           }}
           onOpenOriginal={(entry) => {
-            closeHistory();
+            closeSidebarPanel();
             if (sidebar.isOverlay) sidebar.setMode('rail');
             void runQuery(entry.filter, entry.text, { database: entry.database, collection: entry.collection })
               .then((ok) => ok && openSearchPanel('query'));
           }}
           onRemove={removeQueryHistory}
           onClear={clearQueryHistory}
-          onClose={closeHistory}
+          onClose={closeSidebarPanel}
+        />
+      )}
+
+      {/* References — 선언한 제목 키·PK·FK 전체. 컬렉션 이름을 누르면 거기로(패널은 닫힌다) */}
+      {referencesAnchor && (
+        <ReferencesPanel
+          anchor={referencesAnchor}
+          databases={databases}
+          onMutate={mutate}
+          onOpenCollection={(database, collection, label) => {
+            closeSidebarPanel();
+            if (sidebar.isOverlay) sidebar.setMode('rail');
+            void openCollection(database, collection, label);
+          }}
+          onClose={closeSidebarPanel}
         />
       )}
 

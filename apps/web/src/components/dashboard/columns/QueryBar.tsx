@@ -3,10 +3,12 @@
 // 빈 입력이나 {}로 실행하면 쿼리를 푼다. Esc = 닫기(쿼리는 그대로, 헤더 버튼의 점으로 남는다).
 // 텍스트 위의 조건 칩(ConditionChips)은 텍스트에서 뽑은 것 — 칩을 고치면 텍스트를 새로 쓰고(formatQueryText) 바로 실행한다.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CornerDownLeft, X } from 'lucide-react';
+import { CornerDownLeft, SquareTerminal, X } from 'lucide-react';
 import { formatQueryText, parseQueryText, validateQueryFilter, type JsonObject } from '../../../types/explorer';
 import { cn } from '../../../utils/cn';
 import { ConditionChips } from '../../query/ConditionChips';
+import { CopyBtn } from './CopyBtn';
+import { mongoshFindCommand } from '../../../utils/mongoshQuery';
 
 interface QueryBarProps {
   // 지금 적용된 쿼리(글자 그대로) — 없으면 undefined
@@ -19,6 +21,9 @@ interface QueryBarProps {
   focusSignal?: number;
   // '+ condition'의 필드 자동완성 — 처음 열 때 한 번 부른다(이 컬렉션 문서 하나의 경로들)
   loadFieldSuggestions?: () => Promise<string[]>;
+  // 상태 줄의 'mongosh로 복사'가 쓰는 대상
+  database: string;
+  collection: string;
 }
 
 const MIN_ROWS = 2;
@@ -28,7 +33,7 @@ const LINE_PX = 20;
 const CHROME_PX = 14;
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
-export function QueryBar({ appliedText, isApplied, onRun, onClose, focusSignal, loadFieldSuggestions }: QueryBarProps) {
+export function QueryBar({ appliedText, isApplied, onRun, onClose, focusSignal, loadFieldSuggestions, database, collection }: QueryBarProps) {
   const [text, setText] = useState(appliedText ?? '');
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -150,6 +155,16 @@ export function QueryBar({ appliedText, isApplied, onRun, onClose, focusSignal, 
         <span className={cn('min-w-0 flex-1 truncate text-xs', isApplied && !dirty ? 'text-emerald-600' : 'text-slate-400')}>
           {running ? 'Running…' : isApplied && !dirty ? 'Applied — live' : `${isMac ? '⌘' : 'Ctrl'}+Enter to run`}
         </span>
+        {/* 지금 입력창의 쿼리를 mongosh 명령으로 복사 — 읽을 수 있고 비어 있지 않을 때만 */}
+        {parsedText.ok && Object.keys(parsedText.filter).length > 0 && (
+          <CopyBtn
+            text={mongoshFindCommand(database, collection, parsedText.filter)}
+            icon={SquareTerminal}
+            size={13}
+            tip="Copy as a mongosh command"
+            className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-200/70 hover:text-slate-600"
+          />
+        )}
         {(isApplied || text) && (
           <button
             type="button"

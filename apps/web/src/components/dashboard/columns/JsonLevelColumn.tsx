@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { nextPathId } from '../../../hooks/useExplorerState';
-import { Link, Hash, ToggleLeft, KeyRound, ChevronRight, Calendar, Sigma, Binary, Filter, Box, SquareTerminal, Check, X, ArrowUpDown, ArrowDownAZ, ArrowDownZA, Shapes } from 'lucide-react';
+import { Link, Hash, ToggleLeft, KeyRound, ChevronRight, Calendar, Sigma, Binary, Filter, Box, Check, X, ArrowUpDown, ArrowDownAZ, ArrowDownZA, Shapes } from 'lucide-react';
 import { AnimatePresence, Reorder, m } from 'framer-motion';
 import { ReorderRow } from './ReorderRow';
 import { SPRING_SNAPPY } from '../../../utils/motionPresets';
@@ -26,7 +26,6 @@ import {
 import { usePreferences } from '../../../services/preferences';
 import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 import { dateTooltip, formatDate, formatOid, oidTooltip } from '../../../utils/formatValue';
-import { mongoshFindQuery } from '../../../utils/mongoshQuery';
 import type { QbeTarget } from '../../query/QbeMenu';
 import { api, dataSourceKind } from '../../../services/api';
 import { InlineSegmentEditor } from '../../editors/InlineSegmentEditor';
@@ -957,16 +956,6 @@ export function JsonLevelColumn({
           </>
         ) : (
         <>
-        {/* mongosh 쿼리 복사 — 이 문서를 _id로, 펼친 깊이만큼 projection까지 */}
-        {displayDoc && mutateDatabaseName && mutateCollectionName && displayDoc._id !== undefined && (
-          <CopyBtn
-            text={mongoshFindQuery(mutateDatabaseName, mutateCollectionName, displayDoc._id, projectionPath)}
-            icon={SquareTerminal}
-            size={13}
-            tip="Copy as a mongosh query"
-            className="p-1.5 rounded-lg bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600 transition-colors shrink-0"
-          />
-        )}
         <button
           type="button"
           className={cn(

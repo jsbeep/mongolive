@@ -314,6 +314,8 @@ export function DocumentsColumn({
               onRun={onApplyMongoFilter}
               onClose={closeSearchPanel}
               focusSignal={searchPanel.focus === 'query' ? searchPanel.seq : undefined}
+              database={activeDatabaseName ?? ''}
+              collection={activeCollectionName}
               // 필드 자동완성 — 이 컬렉션 문서 몇 개(지금 연 문서 먼저)의 경로들
               loadFieldSuggestions={() => (activeDatabaseName ? loadQueryFieldPaths(activeDatabaseName, activeCollectionName, activeDocumentOid) : Promise.resolve([]))}
             />
@@ -321,7 +323,7 @@ export function DocumentsColumn({
         </>
       )}
 
-      {/* 참조(FK) 설정 패널 — 좁은 컬럼이라 두 줄 배치. Esc·닫기·헤더 버튼으로 닫는다 */}
+      {/* 참조(FK) 설정 패널 — 좁은 컬럼이라 두 줄 배치. 쿼리 바처럼 Esc·헤더 버튼으로 닫는다(닫기 버튼 없음) */}
       {isManagingRefs && activeDatabaseName && activeCollectionName && (
         <div
           role="region"
@@ -337,9 +339,6 @@ export function DocumentsColumn({
             <Link size={12} className="text-cyan-500" />
             <span className="flex-1 truncate text-xs font-semibold text-slate-600">References</span>
             <span className="truncate text-[11px] text-slate-400">field → collection.key</span>
-            <button type="button" aria-label="Close references" className="rounded-md p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600" onClick={() => setIsManagingRefs(false)}>
-              <X size={12} />
-            </button>
           </div>
           <ReferenceFieldsEditor
             database={activeDatabaseName}

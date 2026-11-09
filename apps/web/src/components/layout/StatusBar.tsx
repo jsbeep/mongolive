@@ -9,7 +9,6 @@ import { m } from 'framer-motion';
 import { MIN_VISIBLE_COLUMNS, MAX_VISIBLE_COLUMNS, type UseExplorerStateResult } from '../../hooks/useExplorerState';
 import { dataSourceKind } from '../../services/api';
 import { cn } from '../../utils/cn';
-import { useAuth } from '../auth/AuthGate';
 import { CONNECTION_STATUS } from './connectionStatus';
 
 interface StatusBarProps {
@@ -22,7 +21,6 @@ interface StatusBarProps {
   isCenterOpen: boolean;
   onToggleCenter: () => void;
   onOpenSystem: () => void;
-  onOpenSettings: () => void;
   // Read-only 배지 → 설정 창 › Safety
   onOpenSafety: () => void;
   // 빠른 이동(Ctrl+K) — 단축키를 모르는 사람도 찾을 수 있게 버튼으로도
@@ -52,12 +50,10 @@ export function StatusBar({
   isCenterOpen,
   onToggleCenter,
   onOpenSystem,
-  onOpenSettings,
   onOpenSafety,
   onOpenQuickJump,
 }: StatusBarProps) {
   const safety = useServerSettings();
-  const auth = useAuth();
   const status = CONNECTION_STATUS[connectionStatus];
   const [rotation, setRotation] = useState(0);
   const isTreeMode = maxVisibleColumns === MIN_VISIBLE_COLUMNS;
@@ -161,26 +157,6 @@ export function StatusBar({
 
         <span className={styles.sep} aria-hidden="true" />
 
-        <button
-          type="button"
-          className={cn(styles.item, styles.itemIdle, styles.square)}
-          onClick={onOpenSettings}
-          aria-label="Settings"
-          data-tt="Settings"
-        >
-          <Settings size={16} />
-        </button>
-        {auth.canLogout && (
-          <button
-            type="button"
-            className={cn(styles.item, styles.itemIdle, styles.square)}
-            onClick={() => void auth.logout()}
-            aria-label="Sign out"
-            data-tt="Sign out of this browser"
-          >
-            <LogOut size={16} />
-          </button>
-        )}
         <button
           type="button"
           className={cn(styles.item, isCenterOpen ? styles.itemOn : styles.itemIdle, unreadChanges > 0 ? '' : styles.square)}

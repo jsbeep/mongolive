@@ -2,14 +2,13 @@
 //   Display     — 값 표시(Date 시간대, ObjectId 줄임). 이 브라우저에만(services/preferences)
 //   Safety      — read-only·보호 대상(서버 settings.json, 모든 브라우저 공통 — 서버가 막는다), 삭제 확인 강도·Undo 단계(이 브라우저)
 //   Realtime    — 실시간 반영 간격(즉시 / 느슨하게)
-//   References  — 선언한 제목 키·PK·FK(Manage references)를 모든 DB에 걸쳐 한 목록으로
 //   Data        — 샘플 데이터 불러오기
 //   Diagnostics — 서버·MongoDB·changeStream·권한 (GET /api/diagnostics)
 //   Security    — 보안 설정(.env)을 읽기만. 화면에서 바꿀 수 있으면 세션 하나만 탈취돼도 인증을 끌 수 있어서
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, m } from 'framer-motion';
-import { ArrowRight, ChevronRight, CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Link, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, Diagnostics, MutationRequest } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
 import { sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type Theme, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type UndoDepth } from '../../services/preferences';
@@ -20,14 +19,13 @@ import { buildForumEjsonSample, buildForumJsonSample, FORUM_EJSON_DATABASE_NAME,
 import { formatDate, formatOid, offsetLabel } from '../../utils/formatValue';
 import { cn } from '../../utils/cn';
 
-export type SettingsSection = 'display' | 'safety' | 'realtime' | 'references' | 'keyboard' | 'data' | 'diagnostics' | 'security';
+export type SettingsSection = 'display' | 'safety' | 'realtime' | 'keyboard' | 'data' | 'diagnostics' | 'security';
 type Section = SettingsSection;
 
 const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: 'display', label: 'Display', icon: Monitor },
   { id: 'safety', label: 'Safety', icon: ShieldCheck },
   { id: 'realtime', label: 'Realtime', icon: Radio },
-  { id: 'references', label: 'References', icon: Link },
   { id: 'keyboard', label: 'Keyboard', icon: Keyboard },
   { id: 'data', label: 'Data', icon: Database },
   { id: 'diagnostics', label: 'Diagnostics', icon: Stethoscope },
@@ -41,8 +39,6 @@ interface SettingsModalProps {
   onClose: () => void;
   databases: DatabaseSummary[];
   onMutate: (op: MutationRequest) => Promise<unknown>;
-  // References 칸에서 컬렉션 이름을 누르면 거기로 이동(창은 닫힌다)
-  onOpenCollection: (database: string, collection: string, label: string) => void;
   // Data 칸에서 이미 있는 샘플 DB 열기(창은 닫힌다)
   onOpenDatabase: (database: string) => void;
 }
@@ -434,136 +430,6 @@ function RealtimeSection() {
   );
 }
 
-// ── References ───────────────────────────────────────────────────────────────
-
-type DeclaredRow = { database: string; collection: CollectionSummary };
-
-function ReferencesSection({ databases, onMutate, onOpenCollection }: Pick<SettingsModalProps, 'databases' | 'onMutate' | 'onOpenCollection'>) {
-  const [rows, setRows] = useState<DeclaredRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // 접어 둔 DB — 기본은 다 펼침
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-
-  // _id는 기본 키라 보여 줄 필요가 없다 — 직접 다른 키로 정한 경우만
-  const customPk = (c: CollectionSummary) => (c.primaryKey && c.primaryKey !== '_id' ? c.primaryKey : undefined);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const all = await Promise.all(databases.map((d) => api.getCollections(d.name).then((cols) => cols.map((c) => ({ database: d.name, collection: c })))));
-      setRows(all.flat().filter(({ collection: c }) => c.titleKey || customPk(c) || Object.keys(c.referenceFields ?? {}).length > 0));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load collections');
-    }
-  }, [databases]);
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const run = async (op: MutationRequest) => {
-    try {
-      await onMutate(op);
-    } finally {
-      void load();
-    }
-  };
-
-  const toggle = (db: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(db)) next.delete(db);
-      else next.add(db);
-      return next;
-    });
-
-  // DB별로 — 순서는 사이드바 트리와 같게
-  const byDb = (rows ?? []).reduce<Map<string, CollectionSummary[]>>((map, r) => map.set(r.database, [...(map.get(r.database) ?? []), r.collection]), new Map());
-
-  const chip = 'inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-700';
-  const removeBtn = 'rounded p-0.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700';
-
-  return (
-    <>
-      <p className={cn(styles.groupHint, 'mb-4')}>
-        What you declared with <span className="font-semibold">Manage references</span> (<Link size={11} className="inline align-[-1px]" aria-label="link icon" /> in a collection's document list) — title keys, primary keys and field references, across every database. Removing one only changes MongoLive's own metadata file, never your data. ObjectId references are found automatically and aren't listed.
-      </p>
-      {error && <p className={cn(styles.callout, 'mt-0 bg-rose-50 text-rose-700')}>{error}</p>}
-      {rows === null ? (
-        !error && <p className="flex items-center gap-2 text-xs text-slate-400"><Loader2 size={14} className="animate-spin" /> Loading…</p>
-      ) : rows.length === 0 ? (
-        <p className={cn(styles.callout, 'mt-0 bg-slate-50 text-slate-500')}>Nothing declared yet.</p>
-      ) : (
-        <div className="flex flex-col gap-1">
-          {[...byDb.entries()].map(([database, cols]) => {
-            const isOpen = !collapsed.has(database);
-            return (
-              <section key={database}>
-                {/* 스크롤해도 DB 이름이 맨 위에 붙어 있다.
-                    -top-5: 스크롤 영역의 위 여백(py-5)만큼 끌어올려 틈 없이 붙게(top-0이면 여백만큼 떠서 그 틈으로 카드가 비친다)
-                    -mx-6 px-6: 내용 영역 좌우 여백까지 덮어 아래 카드가 비치지 않게 */}
-                <button
-                  type="button"
-                  className="sticky -top-5 z-10 -mx-6 flex w-[calc(100%+3rem)] items-center gap-2 bg-white px-6 py-2 text-left"
-                  onClick={() => toggle(database)}
-                  aria-expanded={isOpen}
-                >
-                  <ChevronRight size={14} className={cn('shrink-0 text-slate-400 transition-transform', isOpen && 'rotate-90')} />
-                  <Database size={14} className="shrink-0 text-slate-400" />
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-slate-800">{database}</span>
-                  <span className="shrink-0 text-[11px] text-slate-400">{cols.length} collection{cols.length > 1 ? 's' : ''}</span>
-                </button>
-                {isOpen && (
-                  <div className="flex flex-col gap-2 pb-3 pl-5">
-                    {cols.map((c) => {
-                      const fks = Object.entries(c.referenceFields ?? {});
-                      const pk = customPk(c);
-                      const base = { database, collection: c.name };
-                      return (
-                        <div key={c.name} className="rounded-xl border border-slate-100 px-4 py-2.5">
-                          {/* 컬렉션 이름과 제목 키(·PK)를 한 줄에 — 참조(FK)만 아래로 */}
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button type="button" className="mr-1 font-mono text-xs font-semibold text-slate-700 hover:text-emerald-700 hover:underline" onClick={() => onOpenCollection(database, c.name, c.label || c.name)} data-tt="Open this collection">
-                              {c.name}
-                            </button>
-                              {c.titleKey && (
-                                <span className={chip}>
-                                  title: {c.titleKey}
-                                  <button type="button" className={removeBtn} aria-label="Remove title key" onClick={() => void run({ type: 'setCollectionTitleKey', ...base, titleKey: '' })}><X size={11} /></button>
-                                </span>
-                              )}
-                              {pk && (
-                                <span className={chip}>
-                                  key: {pk}
-                                  <button type="button" className={removeBtn} aria-label="Remove primary key" onClick={() => void run({ type: 'setCollectionPrimaryKey', ...base, primaryKey: '' })}><X size={11} /></button>
-                                </span>
-                              )}
-                          </div>
-                          {fks.length > 0 && (
-                            <ul className="mt-1.5 flex flex-col gap-1">
-                              {fks.map(([field, ref]) => (
-                                <li key={field} className="flex items-center gap-2 font-mono text-[11px] text-slate-700">
-                                  <span>{field}</span>
-                                  <ArrowRight size={11} className="text-slate-400" />
-                                  <span className="text-cyan-700">{ref.targetCollection}.{ref.targetKey}</span>
-                                  <button type="button" className={removeBtn} aria-label={`Remove reference ${field}`} data-tt="Remove this reference" onClick={() => void run({ type: 'setCollectionReferenceField', ...base, field })}><X size={11} /></button>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
-            );
-          })}
-        </div>
-      )}
-    </>
-  );
-}
-
 // ── Keyboard ─────────────────────────────────────────────────────────────────
 
 const isMac = typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac');
@@ -926,7 +792,7 @@ function SecuritySection({ diag }: { diag: ReturnType<typeof useDiagnostics> }) 
 
 // ── 창 ───────────────────────────────────────────────────────────────────────
 
-export function SettingsModal({ open, initialSection, onClose, databases, onMutate, onOpenCollection, onOpenDatabase }: SettingsModalProps) {
+export function SettingsModal({ open, initialSection, onClose, databases, onMutate, onOpenDatabase }: SettingsModalProps) {
   const [section, setSection] = useState<Section>('display');
   // 열 때마다 요청받은 칸으로(없으면 마지막에 보던 칸)
   useEffect(() => {
@@ -990,16 +856,6 @@ export function SettingsModal({ open, initialSection, onClose, databases, onMuta
                 {section === 'safety' && <SafetySection databases={databases} />}
                 {section === 'realtime' && <RealtimeSection />}
                 {section === 'keyboard' && <KeyboardSection />}
-                {section === 'references' && (
-                  <ReferencesSection
-                    databases={databases}
-                    onMutate={onMutate}
-                    onOpenCollection={(db, col, label) => {
-                      onClose();
-                      onOpenCollection(db, col, label);
-                    }}
-                  />
-                )}
                 {section === 'data' && (
                   <DataSection
                     databases={databases}
