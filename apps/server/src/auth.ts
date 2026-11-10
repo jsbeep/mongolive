@@ -9,7 +9,7 @@
 //               WebSocket은 CORS를 안 따라서 이걸 안 보면 다른 사이트 페이지가 실시간 변경을 엿볼 수 있다.
 //   2. 출입증   로그인 때 받은 쿠키. 공개 경로(로그인/로그아웃/상태)만 없이 통과.
 //
-// 출입증 쿠키: mongolive_session = <만료시각(ms)>.<서명>
+// 출입증 쿠키: __Secure-mongolive_session(HTTPS) / mongolive_session_http(HTTP) = <만료시각(ms)>.<서명>
 //   서명 = HMAC-SHA256(서버 비밀키, 만료시각). 만료시각을 고치면 서명이 안 맞아 거절된다.
 //   서버는 따로 저장하지 않는다(MongoDB에도, 파일에도) — 서명만 검증하면 된다.
 //   HttpOnly(페이지 JS가 못 읽음), SameSite=Strict(다른 사이트에서 시작된 요청엔 안 붙음).
@@ -20,7 +20,14 @@ import { loadAuthData, MAX_PASSWORD_LENGTH, verifyPassword, type AuthData } from
 import { config } from './config';
 import { clientIp, isHttps, requestHost } from './proxy';
 
-const COOKIE_NAME = 'mongolive_session';
+// 출입증 쿠키 이름은 HTTPS와 HTTP가 따로다.
+// 쿠키는 포트도 http/https도 가리지 않고 주소마다 묶인다. 이름이 같으면 HTTPS에서 받은 Secure 쿠키가 남아 있는 동안
+// HTTP 로그인이 주는 새 쿠키를 브라우저가 버리고(http 페이지는 Secure 쿠키를 덮어쓸 수 없다), 로그인하자마자 401이 난다.
+//   __Secure-  이 접두사가 붙은 쿠키는 브라우저가 HTTPS에서 Secure로 받을 때만 저장한다.
+// 예전 이름(mongolive_session)은 더 읽지 않는다 — 한 번 다시 로그인하면 된다.
+const SECURE_COOKIE = '__Secure-mongolive_session';
+const PLAIN_COOKIE = 'mongolive_session_http';
+const cookieName = (req: IncomingMessage): string => (isHttps(req) ? SECURE_COOKIE : PLAIN_COOKIE);
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000; // 30일
 
 // 출입증 없이 들어올 수 있는 곳
@@ -47,7 +54,7 @@ const readCookie = (req: IncomingMessage, name: string): string | null => {
 };
 
 export const hasValidSession = (req: IncomingMessage): boolean => {
-  const value = readCookie(req, COOKIE_NAME);
+  const value = readCookie(req, cookieName(req));
   if (!value) return false;
   const dot = value.indexOf('.');
   if (dot === -1) return false;
@@ -66,11 +73,13 @@ const cookieAttributes = (req: IncomingMessage, maxAgeSeconds: number): string =
 const issueSession = (req: IncomingMessage, res: ServerResponse): void => {
   const expires = Date.now() + SESSION_MS;
   const value = `${expires}.${sign(expires, authData().sessionSecret)}`;
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=${value}; ${cookieAttributes(req, SESSION_MS / 1000)}`);
+  res.setHeader('Set-Cookie', `${cookieName(req)}=${value}; ${cookieAttributes(req, SESSION_MS / 1000)}`);
 };
 
+// HTTPS에선 HTTP 쪽 쿠키도 같이 지운다(이 브라우저 로그아웃). HTTP에선 Secure 쿠키를 지울 수 없어 자기 것만.
 const clearSession = (req: IncomingMessage, res: ServerResponse): void => {
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; ${cookieAttributes(req, 0)}`);
+  const names = isHttps(req) ? [SECURE_COOKIE, PLAIN_COOKIE] : [PLAIN_COOKIE];
+  res.setHeader('Set-Cookie', names.map((name) => `${name}=; ${cookieAttributes(req, 0)}`));
 };
 
 // ── 문지기 ───────────────────────────────────────────────────────────────────
