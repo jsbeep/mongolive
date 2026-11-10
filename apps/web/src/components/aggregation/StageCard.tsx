@@ -35,6 +35,8 @@ interface StageCardProps {
   pending: boolean;
   // 모아서 바뀐 횟수(+N) — Run 전까지
   collectedCount: number;
+  // 요약 줄 대신 보일 것($match는 조건 칩)
+  summaryNode?: ReactNode;
   count: StageCardCount | null;
   reduceMotion: boolean;
   onSelect: () => void;
@@ -46,7 +48,7 @@ interface StageCardProps {
   onDragEnd: () => void;
 }
 
-export function StageCard({ id, index, name, summary, enabled, selected, edited, editing, editor, confirmingDelete, pending, collectedCount, count, reduceMotion, onSelect, onEdit, onToggleEdit, onRemove, onToggle, onDragEnd }: StageCardProps) {
+export function StageCard({ id, index, name, summary, enabled, selected, edited, editing, editor, confirmingDelete, pending, collectedCount, summaryNode, count, reduceMotion, onSelect, onEdit, onToggleEdit, onRemove, onToggle, onDragEnd }: StageCardProps) {
   const controls = useDragControls();
   const navRef = useNavRow({ open: onSelect, edit: onEdit, remove: onRemove });
   const number = String(index + 1).padStart(2, '0');
@@ -125,9 +127,11 @@ export function StageCard({ id, index, name, summary, enabled, selected, edited,
               </span>
             )}
           </p>
-          <p className={cn('mt-0.5 truncate text-xs', selected ? 'text-emerald-600/80' : 'text-slate-500')} title={summary}>
-            {summary}
-          </p>
+          {summaryNode ?? (
+            <p className={cn('mt-0.5 truncate text-xs', selected ? 'text-emerald-600/80' : 'text-slate-500')} title={summary}>
+              {summary}
+            </p>
+          )}
           {pending
             ? <p className="mt-1 truncate font-mono text-[11px] text-emerald-600/80" data-tt="Run adds it to the pipeline">not run yet</p>
             : <StageCountLine enabled={enabled} count={count} selected={selected} />}

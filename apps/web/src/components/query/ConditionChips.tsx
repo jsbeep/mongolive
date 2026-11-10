@@ -58,7 +58,8 @@ const listValue = (value: JsonValue): string => {
 
 const TEXT_MODE_LABEL = { contains: 'contains', startsWith: 'starts with', endsWith: 'ends with' } as const;
 
-const chipText = (chip: Extract<ConditionChip, { kind: 'condition' }>): { op: string; value: string } => {
+// 칩 한 개의 글자(연산자·값) — Pipeline 카드의 $match 칩도 쓴다
+export const conditionChipText = (chip: Extract<ConditionChip, { kind: 'condition' }>): { op: string; value: string } => {
   if (chip.op === 'exists') return { op: chip.value ? 'exists' : 'missing', value: '' };
   if (chip.op === 'regex') {
     const match = readTextMatch(chip.value);
@@ -118,7 +119,7 @@ export function ConditionChips({ filter, fieldSuggestions, onBuilderOpen, busy, 
               </button>
             );
           }
-          const { op, value } = chipText(chip);
+          const { op, value } = conditionChipText(chip);
           const editable = formInitial(chip) !== null;
           return (
             <span

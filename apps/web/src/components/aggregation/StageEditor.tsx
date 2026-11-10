@@ -33,9 +33,11 @@ interface EditorBoxProps {
   onRevert: () => void;
   // Esc — 없으면 입력칸에서 나가기만
   onEscape?: () => void;
+  // 있으면 글자 입력칸 대신 이것(Form 탭) — 아래 Revert / Preview / Apply는 그대로
+  children?: ReactNode;
 }
 
-function EditorBox({ text, error, dirty, focusSignal, selectRange, onFocused, placeholder, ariaLabel, minRows = 3, maxRows = 14, fill = false, hint, onChange, onApply, onPreview, onRevert, onEscape }: EditorBoxProps) {
+function EditorBox({ text, error, dirty, focusSignal, selectRange, onFocused, placeholder, ariaLabel, minRows = 3, maxRows = 14, fill = false, hint, onChange, onApply, onPreview, onRevert, onEscape, children }: EditorBoxProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -70,6 +72,7 @@ function EditorBox({ text, error, dirty, focusSignal, selectRange, onFocused, pl
         }
       }}
     >
+      {children ?? (
       <textarea
         ref={inputRef}
         value={text}
@@ -88,6 +91,7 @@ function EditorBox({ text, error, dirty, focusSignal, selectRange, onFocused, pl
           fill && 'min-h-0 flex-1',
         )}
       />
+      )}
       {error && (
         <p role="alert" className="mt-1.5 break-words font-mono text-xs leading-4 text-rose-600">
           {error}
@@ -151,13 +155,18 @@ interface StageEditorProps {
   onMove: (dir: -1 | 1) => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  // Form 탭 — 이 스테이지에 Form이 없으면 null, 글자가 안 읽히면 'invalid'
+  form: ReactNode | 'invalid' | null;
+  tab: 'json' | 'form';
+  onTab: (tab: 'json' | 'form') => void;
 }
 
 const iconBtn = 'shrink-0 rounded-xl p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:pointer-events-none disabled:opacity-30';
 
 // 카드 아래 펼쳐지는 편집기 — 위 줄은 순서·복제·지우기·닫기, 아래는 입력칸과 Revert / Preview / Apply.
 // 애니메이션 없이 바로 열고 닫는다(카드 크기가 바뀌는 걸 늘였다 줄였다 보이게 하지 않는다)
-export function StageEditor({ text, dirty, error, focusSignal, selectRange, onFocused, canMoveUp, canMoveDown, confirmingDelete, onChange, onApply, onPreview, onRevert, onClose, onMove, onDuplicate, onDelete }: StageEditorProps) {
+export function StageEditor({ text, dirty, error, focusSignal, selectRange, onFocused, canMoveUp, canMoveDown, confirmingDelete, onChange, onApply, onPreview, onRevert, onClose, onMove, onDuplicate, onDelete, form, tab, onTab }: StageEditorProps) {
+  const showForm = tab === 'form' && form !== null;
   const containerRef = useRef<HTMLDivElement>(null);
   // 열리면 다 보이게(목록 끝의 카드라도)
   useEffect(() => {
@@ -175,10 +184,28 @@ export function StageEditor({ text, dirty, error, focusSignal, selectRange, onFo
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div className="mb-2 flex items-center gap-0.5">
-        {/* 좁은 컬럼에서도 잘리지 않게 짧게 — 고친 글자가 있으면 카드의 점과 같은 색 */}
-        <span className={cn('min-w-0 flex-1 truncate text-xs font-medium', dirty ? 'text-amber-600' : 'text-slate-400')}>
-          {dirty ? 'Edited' : 'Edit'}
-        </span>
+        {/* JSON ⇄ Form(있는 스테이지만) — 고친 글자가 있으면 카드의 점과 같은 색으로 Edited */}
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <div className="flex shrink-0 rounded-lg bg-slate-100 p-0.5 text-[11px] font-medium" role="group" aria-label="Edit as">
+            {(['json', 'form'] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                aria-pressed={(t === 'form') === showForm}
+                disabled={t === 'form' && form === null}
+                data-tt={t === 'form' && form === null ? 'No form for this stage — edit it as JSON' : undefined}
+                className={cn(
+                  'rounded-md px-1.5 py-0.5 transition-colors disabled:cursor-default disabled:opacity-40',
+                  (t === 'form') === showForm ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600',
+                )}
+                onClick={() => onTab(t)}
+              >
+                {t === 'json' ? 'JSON' : 'Form'}
+              </button>
+            ))}
+          </div>
+          {dirty && <span className="truncate text-xs font-medium text-amber-600">Edited</span>}
+        </div>
         <button type="button" className={iconBtn} disabled={!canMoveUp} aria-label="Move stage up" data-tt="Move up" onClick={() => onMove(-1)}>
           <ArrowUp size={14} />
         </button>
@@ -221,7 +248,13 @@ export function StageEditor({ text, dirty, error, focusSignal, selectRange, onFo
         onPreview={onPreview}
         onRevert={onRevert}
         onEscape={onClose}
-      />
+      >
+        {showForm
+          ? form === 'invalid'
+            ? <p className="rounded-lg bg-rose-50 px-2.5 py-2 text-xs text-rose-600">The JSON has an error — fix it in the JSON tab first</p>
+            : form
+          : undefined}
+      </EditorBox>
     </div>
   );
 }

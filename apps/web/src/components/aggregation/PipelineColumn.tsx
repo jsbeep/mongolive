@@ -9,8 +9,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Reorder } from 'framer-motion';
 import { Braces, Database, Folder, List, Play, Plus, Workflow } from 'lucide-react';
 import {
+  fieldPaths,
+  formatStageText,
+  isPlainObject,
   parsePipelineText,
   parseStageText,
+  removeCondition,
   stageName,
   summarizeStage,
   validatePipeline,
@@ -33,13 +37,14 @@ import {
   type PipelineStage,
 } from '../../services/pipelines';
 import { pendingChangeCount, requestEditorFocus, updatePipelineDrafts, usePipelineDrafts, type PipelineDrafts } from '../../services/pipelineDrafts';
-import { forgetRuns, loadCounts, setPreview, useCounts } from '../../services/aggregateRuns';
+import { forgetRuns, loadCounts, setPreview, useCounts, useOutput } from '../../services/aggregateRuns';
 import { cn } from '../../utils/cn';
 import { useNavRow } from '../../utils/keyboardNav';
 import { HeaderTitle } from '../dashboard/columns/HeaderTitle';
 import { columnListStyles as styles } from '../dashboard/columns/columnListStyles';
 import { StageCard, type StageCardCount } from './StageCard';
 import { MOD, PipelineTextEditor, StageEditor } from './StageEditor';
+import { hasStageForm, MatchChips, StageForm } from './StageForm';
 
 // ── 새 스테이지 틀 — «» 안이 처음 골라지는 자리(바로 고쳐 쓰게). 그대로 둬도 돌아가는 값이다 ──
 const TEMPLATES = [
@@ -69,6 +74,8 @@ const TEMPLATES = [
 // (스테이지 초안·열린 편집기는 필드 메뉴도 쓰므로 services/pipelineDrafts에)
 const modeMemory = new Map<string, 'cards' | 'text'>();
 const textMemory = new Map<string, string>();
+// 편집기 탭(JSON / Form) — 마지막에 쓴 쪽을 기억한다(처음은 JSON)
+let lastEditorTab: 'json' | 'form' = 'json';
 
 const formatCount = (c: StageCount) => `${c.n.toLocaleString()}${c.capped ? '+' : ''}`;
 
@@ -108,9 +115,11 @@ interface PipelineColumnProps {
   onSelectStage: (stageId: string) => void;
   // 고른 스테이지가 없어졌을 때 — 원본 문서로
   onClearStage: () => void;
+  // 같은 DB의 컬렉션 이름 — Form의 $lookup from
+  collectionNames: string[];
 }
 
-export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, reduceMotion, onSelectStage, onClearStage }: PipelineColumnProps) {
+export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, reduceMotion, onSelectStage, onClearStage, collectionNames }: PipelineColumnProps) {
   const database = path.databaseName ?? '';
   const collection = path.collectionName ?? null;
   const target = collection ? pipelineKey(database, collection) : '';
@@ -133,6 +142,11 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
     if (collection) requestEditorFocus(database, collection, id, range);
   };
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [editorTab, setEditorTabState] = useState(lastEditorTab);
+  const setEditorTab = (tab: 'json' | 'form') => {
+    lastEditorTab = tab;
+    setEditorTabState(tab);
+  };
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   // 끄는 동안의 순서 — 놓을 때 한 번 저장한다(끄는 중에 저장하면 개수를 계속 다시 센다)
@@ -204,6 +218,33 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
 
   // ── 카드 동작 ────────────────────────────────────────────────────────────
   const selectedIndex = stages.findIndex((s) => s.id === selectedStageId);
+
+  // Form의 필드 자동완성 — 편집 중인 스테이지에 들어오는 문서(받아 둔 출력이 있을 때만, 새로 묻지 않는다).
+  // 없으면 지금 보고 있는 출력으로
+  const editingIndex = stages.findIndex((s) => s.id === editingId);
+  const editorInput = useMemo(() => (editingIndex >= 0 ? prefixPipeline(stages, editingIndex - 1) : null), [stages, editingIndex]);
+  const viewedPipeline = useMemo(
+    () => (selectedStageId === INPUT_STAGE_ID ? [] : selectedIndex >= 0 ? prefixPipeline(stages, selectedIndex) : null),
+    [stages, selectedStageId, selectedIndex],
+  );
+  const editorInputRun = useOutput(database, collection ?? '', collection ? editorInput : null);
+  const viewedRun = useOutput(database, collection ?? '', collection ? viewedPipeline : null);
+  const fieldSuggestions = useMemo(() => {
+    const run = editorInputRun?.status === 'done' ? editorInputRun : viewedRun?.status === 'done' ? viewedRun : null;
+    if (!run) return [];
+    const out = new Set<string>();
+    run.data.results.slice(0, 5).forEach((doc) => isPlainObject(doc) && fieldPaths(doc as EjsonObject).forEach((f) => out.add(f)));
+    return [...out];
+  }, [editorInputRun, viewedRun]);
+
+  // 카드의 $match 칩 × — 그 조건을 뺀 글자를 초안으로(고친 글자가 있으면 거기서)
+  const removeMatchCondition = (id: string, field: string, op: Parameters<typeof removeCondition>[2]) => {
+    const stage = stages.find((s) => s.id === id);
+    if (!stage) return;
+    const parsed = parseStageText(drafts[id] ?? stage.text);
+    if (!parsed.ok || !isPlainObject(parsed.stage.$match)) return;
+    setDraft(id, formatStageText({ $match: removeCondition(parsed.stage.$match as EjsonObject, field, op) }));
+  };
 
   const select = (id: string) => {
     // 아직 안 붙인 스테이지는 출력이 없다 — 편집기를 연다
@@ -532,6 +573,12 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
                 if (!stage) return null;
                 const index = stages.indexOf(stage);
                 const value = stageValue(stage);
+                // 고친 글자(초안)까지 읽은 값 — $match 칩과 Form은 이것으로
+                const current = (() => {
+                  const parsed = parseStageText(drafts[id] ?? stage.text);
+                  return parsed.ok ? parsed.stage : null;
+                })();
+                const matchFilter = current && Object.keys(current).length === 1 && isPlainObject(current.$match) ? (current.$match as EjsonObject) : null;
                 return (
                   <StageCard
                     key={id}
@@ -563,11 +610,25 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
                         onMove={(dir) => move(id, dir)}
                         onDuplicate={() => duplicate(id)}
                         onDelete={() => remove(id)}
+                        tab={editorTab}
+                        onTab={setEditorTab}
+                        form={!current ? 'invalid' : hasStageForm(current) ? (
+                          <StageForm
+                            stage={current}
+                            fieldSuggestions={fieldSuggestions}
+                            collections={collectionNames}
+                            onChange={(next) => setDraft(id, formatStageText(next))}
+                            onEditJson={() => setEditorTab('json')}
+                          />
+                        ) : null}
                       />
                     )}
                     confirmingDelete={confirmDelete === id}
                     pending={!!stage.pending}
                     collectedCount={collected[id] ?? 0}
+                    summaryNode={matchFilter && (
+                      <MatchChips filter={matchFilter} selected={id === selectedStageId} onRemove={(chip) => removeMatchCondition(id, chip.field, chip.op)} />
+                    )}
                     count={cardCounts[id] ?? null}
                     reduceMotion={reduceMotion}
                     onSelect={() => select(id)}
