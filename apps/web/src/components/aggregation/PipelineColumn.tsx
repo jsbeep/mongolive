@@ -36,7 +36,10 @@ import {
   usePipelineStages,
   type PipelineStage,
 } from '../../services/pipelines';
-import { pendingChangeCount, requestEditorFocus, updatePipelineDrafts, usePipelineDrafts, type PipelineDrafts } from '../../services/pipelineDrafts';
+import { getPipelineDrafts, pendingChangeCount, requestEditorFocus, updatePipelineDrafts, usePipelineDrafts, type PipelineDrafts } from '../../services/pipelineDrafts';
+import { recordPipelineVersion, type StoredStage } from '../../services/savedPipelines';
+import { mongoshAggregateCommand } from '../../utils/mongoshQuery';
+import { copyToClipboard } from '../../utils/clipboard';
 import { forgetRuns, loadCounts, setPreview, useCounts, useOutput } from '../../services/aggregateRuns';
 import { cn } from '../../utils/cn';
 import { useNavRow } from '../../utils/keyboardNav';
@@ -44,6 +47,7 @@ import { HeaderTitle } from '../dashboard/columns/HeaderTitle';
 import { columnListStyles as styles } from '../dashboard/columns/columnListStyles';
 import { StageCard, type StageCardCount } from './StageCard';
 import { MOD, PipelineTextEditor, StageEditor } from './StageEditor';
+import { PipelineMenu } from './PipelineMenu';
 import { hasStageForm, MatchChips, StageForm } from './StageForm';
 
 // ── 새 스테이지 틀 — «» 안이 처음 골라지는 자리(바로 고쳐 쓰게). 그대로 둬도 돌아가는 값이다 ──
@@ -115,11 +119,13 @@ interface PipelineColumnProps {
   onSelectStage: (stageId: string) => void;
   // 고른 스테이지가 없어졌을 때 — 원본 문서로
   onClearStage: () => void;
+  // 알림(저장한 파이프라인을 열면 Undo와 함께)
+  onToast: (message: string, type: 'success' | 'error', undo?: () => void) => void;
   // 같은 DB의 컬렉션 이름 — Form의 $lookup from
   collectionNames: string[];
 }
 
-export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, reduceMotion, onSelectStage, onClearStage, collectionNames }: PipelineColumnProps) {
+export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, reduceMotion, onSelectStage, onClearStage, onToast, collectionNames }: PipelineColumnProps) {
   const database = path.databaseName ?? '';
   const collection = path.collectionName ?? null;
   const target = collection ? pipelineKey(database, collection) : '';
@@ -190,6 +196,11 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
     if (!collection || !countsPipeline || counts) return;
     loadCounts(database, collection, countsPipeline);
   }, [database, collection, countsKey, counts]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 다시 셀 때마다(붙인 파이프라인이 바뀌어 자리를 잡으면) 최근 버전으로 남긴다 — ⋯ 메뉴의 Recent versions
+  useEffect(() => {
+    if (collection && countsPipeline && countsKey === fullKey) recordPipelineVersion(database, collection, stages);
+  }, [countsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cardCounts = useMemo(() => {
     const out: Record<string, StageCardCount> = {};
@@ -430,6 +441,30 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
     onSelectStage(show ?? next[next.length - 1]?.id ?? INPUT_STAGE_ID);
   };
 
+  // 저장한 것·최근 버전 열기 — 지금 파이프라인(과 초안)을 통째로 바꾸고 마지막 스테이지의 출력으로. Undo로 되돌린다
+  const openStored = (stored: StoredStage[], label: string) => {
+    if (!collection) return;
+    const before = { stages, drafts: getPipelineDrafts(database, collection), selected: selectedStageId };
+    const next: PipelineStage[] = stored.map((s) => ({ id: newStageId(), text: s.text, enabled: s.enabled }));
+    save(next);
+    updateDrafts(() => ({ drafts: {}, collected: {}, editingId: null, lastCollectedId: null, focus: null }));
+    setErrors({});
+    setTextDraft(null);
+    clearPreview();
+    onSelectStage([...next].reverse().find(isRunnable)?.id ?? INPUT_STAGE_ID);
+    onToast(`Opened ${label}`, 'success', () => {
+      setPipelineStages(database, collection, before.stages);
+      updatePipelineDrafts(database, collection, () => ({ ...before.drafts, focus: null }));
+      onSelectStage(before.selected ?? INPUT_STAGE_ID);
+    });
+  };
+
+  // mongosh로 복사 — 돌리는 것만(켜지고 붙인 스테이지)
+  const copyForMongosh = async () => {
+    if (!collection) return;
+    await copyToClipboard(mongoshAggregateCommand(database, collection, prefixPipeline(stages, stages.length - 1) ?? []));
+  };
+
   // ── 통 JSON 모드 ────────────────────────────────────────────────────────
   // 통 JSON은 붙인 스테이지만 — 아직 안 붙인 것·초안은 카드에 있고 Run이 붙인다
   const appliedStages = useMemo(() => stages.filter((s) => !s.pending), [stages]);
@@ -489,28 +524,28 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
         <HeaderTitle title="Pipeline" total={stages.length} />
         {collection && (
           <>
-            <div className="flex shrink-0 items-center rounded-lg bg-slate-100 p-0.5" role="group" aria-label="Pipeline view">
-              <button
-                type="button"
-                aria-pressed={mode === 'cards'}
-                aria-label="Edit as stage cards"
-                data-tt="Stage cards"
-                className={cn('rounded-md p-1 transition-colors', mode === 'cards' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600')}
-                onClick={() => setMode('cards')}
-              >
-                <List size={13} />
-              </button>
-              <button
-                type="button"
-                aria-pressed={mode === 'text'}
-                aria-label="Edit as text"
-                data-tt="Whole pipeline as text"
-                className={cn('rounded-md p-1 transition-colors', mode === 'text' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600')}
-                onClick={() => setMode('text')}
-              >
-                <Braces size={13} />
-              </button>
-            </div>
+            {/* 카드 ⇄ 통 JSON — 버튼 하나(누르면 다른 쪽으로, 아이콘은 지금 보기) */}
+            <button
+              type="button"
+              aria-pressed={mode === 'text'}
+              aria-label={mode === 'text' ? 'Edit as stage cards' : 'Edit as text'}
+              data-tt={mode === 'text' ? 'Whole pipeline as text — click for stage cards' : 'Stage cards — click for the whole pipeline as text'}
+              className={cn(
+                'shrink-0 rounded-lg p-1.5 transition-colors',
+                mode === 'text' ? 'bg-slate-200/70 text-slate-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600',
+              )}
+              onClick={() => setMode(mode === 'text' ? 'cards' : 'text')}
+            >
+              {mode === 'text' ? <Braces size={13} /> : <List size={13} />}
+            </button>
+            <PipelineMenu
+              database={database}
+              collection={collection}
+              stages={stages}
+              changeCount={changeCount}
+              onOpen={openStored}
+              onCopy={copyForMongosh}
+            />
             {/* Run — 모은 것·고친 것이 있으면 그 수(붙이고 돌린다) */}
             <button
               type="button"

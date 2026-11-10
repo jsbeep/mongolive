@@ -332,6 +332,7 @@ export default function ExplorerPage() {
                 unregisterUniqueOid={unregisterUniqueOid}
                 setEditingId={setEditingId}
                 clearChangedPaths={clearChangedPaths}
+                showToast={showToast}
                 openPipeline={openPipeline}
                 selectStage={selectStage}
                 selectAggregateResult={selectAggregateResult}

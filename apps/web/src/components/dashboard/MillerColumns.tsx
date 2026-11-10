@@ -54,6 +54,7 @@ type MillerColumnsProps = Pick<
   | 'visibleColumns'
   | 'maxVisibleColumns'
   | 'treeMode'
+  | 'showToast'
   | 'collections'
   | 'documents'
   | 'documentPage'
@@ -115,6 +116,7 @@ export function MillerColumns({
   unregisterUniqueOid,
   setEditingId,
   clearChangedPaths,
+  showToast,
   openPipeline,
   selectStage,
   selectAggregateResult,
@@ -302,6 +304,7 @@ export function MillerColumns({
                   unregisterUniqueOid={unregisterUniqueOid}
                   setEditingId={setEditingId}
                   clearChangedPaths={clearChangedPaths}
+                  showToast={showToast}
                   isAggregation={isAggregation}
                   openPipeline={openPipeline}
                   selectStage={selectStage}
@@ -418,6 +421,7 @@ function ColumnContent({ col, visibleLength, slotIndex, jsonChainTail, leftEdge,
         onSelectStage={rest.selectStage}
         // 고른 스테이지가 없어지면(마지막 하나를 지움 등) 원본 문서로
         onClearStage={() => rest.selectStage(INPUT_STAGE_ID)}
+        onToast={rest.showToast}
         collectionNames={rest.collections.map((c) => c.name)}
       />
     );
