@@ -118,14 +118,21 @@ const styles = {
   container: 'mx-1 my-1 z-10 rounded-2xl bg-white ring-1 shadow-panel',
   containerAdd: 'ring-emerald-200/70 bg-emerald-50/30',
   containerEdit: 'ring-slate-200/70',
-  inner: 'p-3 flex flex-col gap-2.5',
+  // 편집기 너비로 줄을 바꾼다(컨테이너 쿼리) — 컬럼이 많거나 화면이 좁아도 안이 컬럼 밖으로 밀리지 않게
+  inner: 'p-3 flex flex-col gap-2.5 [container-type:inline-size]',
   row: 'flex items-center gap-2 w-full',
+  // 이름 줄 — 입력칸 옆에 버튼이 안 들어가면 버튼이 다음 줄(오른쪽)로
+  keyRow: 'flex flex-wrap items-center gap-x-2 gap-y-1.5 w-full',
   input: 'flex w-full min-w-0 text-md px-3 py-2 rounded-xl bg-slate-100/80 text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 focus:bg-white transition-all',
-  inputWithIcons: 'pr-16',
-  inputWithThreeIcons: 'pr-24',
+  // 입력칸 안 아이콘 자리 — 아주 좁으면(11rem 아래) 아이콘을 입력칸 밑으로 내리고 자리도 비운다
+  inputWithIcons: 'pr-16 [@container(max-width:11rem)]:pr-3',
+  inputWithThreeIcons: 'pr-24 [@container(max-width:11rem)]:pr-3',
   inputError: 'ring-2 ring-red-300 bg-red-50/70',
-  inputWrap: 'relative min-w-0 w-full',
-  inputIcons: 'absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5',
+  // 글자 칸 + 안 아이콘이 들어갈 만큼을 바탕 너비로 — 그보다 좁으면 버튼이 다음 줄로
+  inputWrap: 'relative min-w-0 flex-[1_1_7rem]',
+  inputWrapTwoIcons: 'relative min-w-0 flex-[1_1_9rem]',
+  inputWrapThreeIcons: 'relative min-w-0 flex-[1_1_11rem]',
+  inputIcons: 'absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 [@container(max-width:11rem)]:static [@container(max-width:11rem)]:mt-1 [@container(max-width:11rem)]:translate-y-0',
   inputIconBtn: 'p-1.5 rounded-lg text-slate-400 hover:bg-slate-200/70 hover:text-slate-600 transition-colors',
   errorMsg: 'text-xs text-red-500 px-0.5',
   // 타입 선택기
@@ -134,14 +141,18 @@ const styles = {
   typeTab: 'shrink-0 flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/70 transition-colors font-medium text-slate-500 cursor-pointer whitespace-nowrap',
   typeTabActive: 'bg-emerald-100 text-emerald-700 font-semibold hover:bg-emerald-100',
   // 값 입력
+  // 나란히 놓인 두 칸(참조 고르기 등) — 좁으면 한 칸씩 줄을 바꾼다
+  pairRow: 'flex flex-wrap gap-1.5',
+  pairInput: 'flex-[1_1_7rem] min-w-0',
   valueInput: 'w-full text-md px-3 py-2 rounded-xl bg-slate-100/80 text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 focus:bg-white transition-all',
   oidDisplay: 'flex-1 min-w-0 text-[12px] font-mono text-slate-500 px-3 py-2 rounded-xl bg-slate-100/80 truncate',
   textarea: 'w-full text-md px-3 py-2 rounded-xl bg-slate-100/80 text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 focus:bg-white transition-all font-mono resize-y',
   toggle: 'relative w-10 h-5 rounded-full transition-colors cursor-pointer shrink-0',
   toggleThumb: 'absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform',
   // 액션 버튼
-  actions: 'flex items-center ml-auto',
-  actionBtn: 'p-2 rounded-xl transition-colors',
+  // 버튼 묶음도 안 들어가면 줄을 바꾼다(오른쪽 정렬) — 아주 좁으면 여백을 줄인다
+  actions: 'flex max-w-full flex-wrap items-center justify-end ml-auto',
+  actionBtn: 'p-2 rounded-xl transition-colors [@container(max-width:11rem)]:p-1.5',
   deleteBtn: 'hover:bg-red-50 text-red-400',
   submitBtn: 'text-emerald-500 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none',
   cancelBtn: 'hover:bg-slate-100 text-slate-400 hover:text-slate-600',
@@ -537,8 +548,12 @@ export function InlineSegmentEditor({
     >
       <div className={styles.inner}>
         {/* Key 입력 */}
-        <div className={styles.row}>
-          <div className={styles.inputWrap}>
+        <div className={styles.keyRow}>
+          <div className={
+            isSimpleLevel && mode === 'edit' && onExportRequest
+              ? styles.inputWrapThreeIcons
+              : canImport && mode === 'add' ? styles.inputWrapTwoIcons : styles.inputWrap
+          }>
             <input
               ref={keyInputRef}
               type="text"
@@ -807,9 +822,9 @@ export function InlineSegmentEditor({
                     </button>
                   </div>
                 ) : (
-                  <div className="flex gap-1.5">
+                  <div className={styles.pairRow}>
                     <select
-                      className={styles.valueInput}
+                      className={cn(styles.valueInput, styles.pairInput)}
                       value={refCollectionName}
                       onChange={(e) => { setRefCollectionName(e.target.value); setRefDocId(''); }}
                     >
@@ -819,7 +834,7 @@ export function InlineSegmentEditor({
                       ))}
                     </select>
                     <select
-                      className={styles.valueInput}
+                      className={cn(styles.valueInput, styles.pairInput)}
                       value={refDocId}
                       onChange={(e) => setRefDocId(e.target.value)}
                       disabled={!refCollectionName}
@@ -833,12 +848,12 @@ export function InlineSegmentEditor({
                 )}
               </div>
             ) : selectedType === 'Date' ? (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <input
                   type="datetime-local"
                   // 밀리초를 보일 때만 밀리초까지 입력(아니면 초까지)
                   step={dateWithMs ? '0.001' : '1'}
-                  className={styles.valueInput}
+                  className={cn(styles.valueInput, 'flex-[1_1_10rem] min-w-0')}
                   value={dateValue}
                   onChange={(e) => setDateValue(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit(); if (e.key === 'Escape') onCancel(); }}
@@ -870,10 +885,10 @@ export function InlineSegmentEditor({
                 <p className="text-[11px] text-slate-400 px-0.5">
                   Reference: <span className="text-cyan-600 font-medium font-mono">{referenceFieldConfig.targetCollection}.{referenceFieldConfig.targetKey}</span>
                 </p>
-                <div className="flex gap-1.5">
+                <div className={styles.pairRow}>
                   <input
                     type={selectedType === 'Number' ? 'number' : 'text'}
-                    className={styles.valueInput}
+                    className={cn(styles.valueInput, styles.pairInput)}
                     placeholder="Value"
                     value={rawValue}
                     onChange={(e) => setRawValue(e.target.value)}
@@ -881,7 +896,7 @@ export function InlineSegmentEditor({
                   />
                   {fieldRefCandidates.length > 0 && (
                     <select
-                      className={styles.valueInput}
+                      className={cn(styles.valueInput, styles.pairInput)}
                       value=""
                       onChange={(e) => { if (e.target.value) setRawValue(e.target.value); }}
                     >

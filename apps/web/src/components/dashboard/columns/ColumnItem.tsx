@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { Pencil, ChevronRight, Zap } from 'lucide-react';
 import { cn } from '../../../utils/cn';
@@ -21,6 +22,8 @@ export interface ColumnItemProps {
   onSelect: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  // 화살표 앞의 작은 표시(컬렉션의 저장한 파이프라인 등) — 누르는 버튼이면 스스로 클릭을 멈춘다
+  badge?: ReactNode;
 }
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────────────────
@@ -38,6 +41,7 @@ export function ColumnItem({
   onSelect,
   onEdit,
   onDelete,
+  badge,
 }: ColumnItemProps) {
   const { hovered, hoverHandlers } = useHover();
   const hasActions = !!(onEdit || onDelete);
@@ -118,6 +122,7 @@ export function ColumnItem({
       </div>
       
       <div className="flex items-center gap-1 shrink-0">
+        {badge}
         <ChevronRight size={15} className={isActive ? 'text-emerald-400' : 'text-slate-300'} />
         {/* 오른쪽: [액션 버튼 width 0→auto] [chevron] */}
         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>

@@ -1,5 +1,5 @@
 // 왼쪽 사이드바 — 세 단계(useSidebar): 완전 접힘 / 아이콘 레일 / 전체.
-//   전체: [ML 이름] · 쿼리 기록(Query)·참조(References)·북마크(Bookmarks) 패널 / 집계(아직 자리만) · ── · DB/컬렉션 트리
+//   전체: [ML 이름] · 쿼리 기록(Query)·집계 기록(Aggregation)·참조(References)·북마크(Bookmarks) 패널 · ── · DB/컬렉션 트리
 //   레일: 아이콘만. 아무 아이콘이나 누르면 전체로 펼친다. 맨 아래 = 설정 · 로그아웃 · 완전히 접기
 //   전체 맨 아래: 설정 · 로그아웃(상태바는 '지금 상태'만, 앱·계정은 여기 — 완전히 접혀도 Ctrl+K 명령으로)
 //   접힘: 화면 왼쪽 끝에 당김 핸들(아이폰 PiP를 옆으로 치워 둔 모양) — 늘 얇게 보이고 마우스가 다가가면 커진다.
@@ -9,7 +9,7 @@
 // 좁은 화면(<1024px)에선 레일까지만 붙고, 전체는 컬럼 위에 떠서 열린다(바깥 클릭·Esc → 레일).
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
-import { Bookmark, ChevronRight, ChevronsLeft, Database, Link, LogOut, PanelLeftClose, PanelLeftOpen, Search, Settings, Workflow, X, type LucideIcon } from 'lucide-react';
+import { Bookmark, ChevronRight, ChevronsLeft, Database, Link, LogOut, PanelLeftClose, PanelLeftOpen, Search, Settings, Workflow, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, MutationRequest } from '../../types/explorer';
 import { clampFullWidth, FULL_DEFAULT, RAIL_WIDTH, snapMode, type SidebarMode, type SidebarState } from '../../hooks/useSidebar';
 import { DatabaseTree } from './DatabaseTree';
@@ -29,10 +29,10 @@ interface SidebarProps {
   onSelectDatabase: (name: string) => Promise<void>;
   onOpenCollection: (database: string, name: string, label: string) => Promise<void>;
   onMutate: (op: MutationRequest) => Promise<unknown>;
-  // 떠 있는 패널(누른 버튼 옆) — Query = 쿼리 기록, References = 선언한 참조 전체, Bookmarks = 북마크. 한 번에 하나만.
-  // canQuery가 false면(Mock) Query만 흐리게
-  // Aggregation은 떠 있는 패널이 아니라 컬럼 전환(문서 목록 ⇄ 파이프라인) — 켜져 있는지는 aggregationOpen
-  panels: { open: SidebarPanelKind | null; aggregationOpen: boolean; canQuery: boolean; onToggle: (kind: SidebarPanelKind, anchor: DOMRect) => void };
+  // 떠 있는 패널(누른 버튼 옆) — Query = 쿼리 기록, Aggregation = 저장·최근 파이프라인, References = 선언한 참조 전체,
+  // Bookmarks = 북마크. 한 번에 하나만. canQuery가 false면(Mock) Query·Aggregation만 흐리게
+  // (집계 모드를 켜고 끄는 건 Collections 헤더의 Aggregation 버튼, Pipeline 헤더의 ×로도 나온다)
+  panels: { open: SidebarPanelKind | null; canQuery: boolean; onToggle: (kind: SidebarPanelKind, anchor: DOMRect) => void };
   // 맨 아래(VSCode처럼 앱·계정은 사이드바 아래) — 설정 창, 로그아웃(로그인 모드일 때만)
   onOpenSettings: () => void;
 }
@@ -49,12 +49,10 @@ const REFS_TIP = 'References — everything you declared, across databases';
 const BOOKMARKS_TIP = 'Bookmarks — places you saved from a column’s icon';
 
 // 패널을 여는 사이드바 버튼들(전체·레일 공통)
-// 켜진 Aggregation은 X를 달아 '다시 누르면 닫힌다'를 보인다
-const AGGREGATION_CLOSE_TIP = 'Close Aggregation — back to the documents';
 
 const PANEL_ITEMS: { kind: SidebarPanelKind; icon: LucideIcon; label: string; tip: (canQuery: boolean) => string; needsQuery: boolean }[] = [
   { kind: 'history', icon: Search, label: 'Query', tip: (ok) => (ok ? QUERY_TIP : QUERY_TIP_MOCK), needsQuery: true },
-  { kind: 'aggregation', icon: Workflow, label: 'Aggregation', tip: (ok) => (ok ? 'Aggregation — build a pipeline on this collection (click again for documents)' : 'Aggregation — needs a server connection (not in demo mode)'), needsQuery: true },
+  { kind: 'aggregation', icon: Workflow, label: 'Aggregation', tip: (ok) => (ok ? 'Aggregation — saved and recent pipelines, across collections' : 'Aggregation — needs a server connection (not in demo mode)'), needsQuery: true },
   { kind: 'references', icon: Link, label: 'References', tip: () => REFS_TIP, needsQuery: false },
   { kind: 'bookmarks', icon: Bookmark, label: 'Bookmarks', tip: () => BOOKMARKS_TIP, needsQuery: false },
 ];
@@ -118,8 +116,7 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
       <nav className={styles.nav} aria-label="Tools">
         {PANEL_ITEMS.map(({ kind, icon: Icon, label, tip, needsQuery }) => {
           const enabled = !needsQuery || tree.panels.canQuery;
-          const open = kind === 'aggregation' ? tree.panels.aggregationOpen : tree.panels.open === kind;
-          const closable = kind === 'aggregation' && open;
+          const open = tree.panels.open === kind;
           return (
             <button
               key={kind}
@@ -127,13 +124,12 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
               data-sidebar-panel-toggle=""
               aria-expanded={open}
               aria-disabled={!enabled}
-              className={cn(styles.navButton, !enabled ? styles.navButtonDisabled : open ? styles.navButtonActive : styles.navButtonIdle, closable && 'group hover:bg-emerald-100/70')}
-              data-tt={closable ? AGGREGATION_CLOSE_TIP : tip(tree.panels.canQuery)}
+              className={cn(styles.navButton, !enabled ? styles.navButtonDisabled : open ? styles.navButtonActive : styles.navButtonIdle)}
+              data-tt={tip(tree.panels.canQuery)}
               onClick={(e) => enabled && tree.panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
             >
               <Icon size={15} />
               <span>{label}</span>
-              {closable && <X size={13} className="ml-auto shrink-0 opacity-60 transition-opacity group-hover:opacity-100" />}
             </button>
           );
         })}
@@ -180,8 +176,7 @@ function RailContent({ onExpand, onHide, panels, onOpenSettings }: { onExpand: (
       <nav className={`${styles.railList} pt-3`} aria-label="Tools">
         {PANEL_ITEMS.map(({ kind, icon: Icon, label, tip, needsQuery }) => {
           const enabled = !needsQuery || panels.canQuery;
-          const open = kind === 'aggregation' ? panels.aggregationOpen : panels.open === kind;
-          const closable = kind === 'aggregation' && open;
+          const open = panels.open === kind;
           return (
             <button
               key={kind}
@@ -190,13 +185,11 @@ function RailContent({ onExpand, onHide, panels, onOpenSettings }: { onExpand: (
               aria-label={label}
               aria-expanded={open}
               aria-disabled={!enabled}
-              className={cn(!enabled ? styles.railBtnSoon : open ? styles.railBtnActive : styles.railBtn, closable && 'group relative hover:bg-emerald-100/70')}
-              data-tt={closable ? AGGREGATION_CLOSE_TIP : tip(panels.canQuery)}
+              className={!enabled ? styles.railBtnSoon : open ? styles.railBtnActive : styles.railBtn}
+              data-tt={tip(panels.canQuery)}
               onClick={(e) => enabled && panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
             >
-              {/* 켜진 Aggregation — 올리면 아이콘이 X로 바뀐다 */}
-              <Icon size={16} className={closable ? 'group-hover:hidden' : undefined} />
-              {closable && <X size={16} className="hidden group-hover:block" />}
+              <Icon size={16} />
             </button>
           );
         })}

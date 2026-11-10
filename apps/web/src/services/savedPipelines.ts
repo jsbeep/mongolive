@@ -3,7 +3,8 @@
 //   history 붙인 파이프라인이 바뀌어 다시 셀 때마다 남는 최근 버전(같은 버전은 하나만, 최근 것이 앞 — 15개까지)
 // 스테이지는 글자와 켜짐만 둔다(id는 불러올 때 새로 만든다 — 지금 파이프라인과 섞이지 않게).
 import { useSyncExternalStore } from 'react';
-import { pipelineKey, type PipelineStage } from './pipelines';
+import { getPipelineStages, INPUT_STAGE_ID, isRunnable, newStageId, pipelineKey, setPipelineStages, type PipelineStage } from './pipelines';
+import { getPipelineDrafts, updatePipelineDrafts } from './pipelineDrafts';
 
 export interface StoredStage {
   text: string;
@@ -22,7 +23,7 @@ export interface PipelineVersion {
   at: number;
 }
 
-interface Store {
+export interface SavedPipelineStore {
   saved: Record<string, SavedPipeline[]>;
   history: Record<string, PipelineVersion[]>;
 }
@@ -36,11 +37,11 @@ const MAX_HISTORY_TARGETS = 100;
 const isStored = (s: unknown): s is StoredStage =>
   !!s && typeof s === 'object' && typeof (s as StoredStage).text === 'string' && typeof (s as StoredStage).enabled === 'boolean';
 
-const read = (): Store => {
+const read = (): SavedPipelineStore => {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Store>;
-    const saved: Store['saved'] = {};
-    const history: Store['history'] = {};
+    const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<SavedPipelineStore>;
+    const saved: SavedPipelineStore['saved'] = {};
+    const history: SavedPipelineStore['history'] = {};
     for (const [key, list] of Object.entries(raw.saved ?? {})) {
       if (Array.isArray(list)) {
         saved[key] = list.filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string' && Array.isArray(p.stages))
@@ -58,7 +59,7 @@ const read = (): Store => {
 
 let store = read();
 const listeners = new Set<() => void>();
-const write = (next: Store) => {
+const write = (next: SavedPipelineStore) => {
   store = next;
   try {
     localStorage.setItem(KEY, JSON.stringify(next));
@@ -100,6 +101,25 @@ export const recordPipelineVersion = (database: string, collection: string, stag
   write({ ...store, history });
 };
 
+// 저장한 것·최근 버전으로 그 컬렉션의 파이프라인을 통째로 바꾼다(초안·아직 안 돌린 스테이지도 비운다).
+// 이미 그대로면(붙인 스테이지가 같고 바꾸던 것도 없으면) null. lastId = 보여 줄 스테이지(마지막으로 돌리는 것, 없으면 원본), undo = 바꾸기 전으로
+export const replacePipeline = (database: string, collection: string, stored: StoredStage[]): { lastId: string; undo: () => void } | null => {
+  const before = getPipelineStages(database, collection);
+  const drafts = getPipelineDrafts(database, collection);
+  const untouched = !before.some((s) => s.pending) && !Object.keys(drafts.drafts).length;
+  if (untouched && sameStages(toStored(before), stored)) return null;
+  const next: PipelineStage[] = stored.map((s) => ({ id: newStageId(), text: s.text, enabled: s.enabled }));
+  setPipelineStages(database, collection, next);
+  updatePipelineDrafts(database, collection, () => ({ drafts: {}, collected: {}, editingId: null, lastCollectedId: null, focus: null }));
+  return {
+    lastId: [...next].reverse().find(isRunnable)?.id ?? INPUT_STAGE_ID,
+    undo: () => {
+      setPipelineStages(database, collection, before);
+      updatePipelineDrafts(database, collection, () => ({ ...drafts, focus: null }));
+    },
+  };
+};
+
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
   const onStorage = (e: StorageEvent) => {
@@ -120,3 +140,5 @@ export const useSavedPipelines = (database: string | null, collection: string | 
   useSyncExternalStore(subscribe, () => (database && collection ? store.saved[pipelineKey(database, collection)] ?? NO_SAVED : NO_SAVED));
 export const usePipelineHistory = (database: string | null, collection: string | null): PipelineVersion[] =>
   useSyncExternalStore(subscribe, () => (database && collection ? store.history[pipelineKey(database, collection)] ?? NO_HISTORY : NO_HISTORY));
+// 모든 컬렉션의 저장·기록(키 = pipelineKey) — 사이드바 Aggregation 패널
+export const useAllSavedPipelines = (): SavedPipelineStore => useSyncExternalStore(subscribe, () => store);

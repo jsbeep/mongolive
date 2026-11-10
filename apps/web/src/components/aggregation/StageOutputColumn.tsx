@@ -27,7 +27,7 @@ interface StageOutputColumnProps {
   collections: CollectionSummary[];
   reduceMotion: boolean;
   onSelectResult: (document: Document, title: string, index: number) => void;
-  // 맨 왼쪽 컬럼 노릇(고정된 Pipeline 바로 오른쪽) — 펼쳐 둔 결과를 다시 누르면 경로 하나 빼기(onStepBack)
+  // 맨 왼쪽 컬럼 노릇(고정된 Pipeline 바로 오른쪽) — 펼쳐 둔 결과를 다시 누르면 경로 하나 빼기(onStepBack). 그 결과가 경로의 끝이면 아무것도 안 한다
   leftEdge: boolean;
   onStepBack: () => void;
   // 펼쳐 둔 결과 오른쪽에 더 깊이 열려 있다(그 결과를 다시 누르면 접는다 — 없으면 아무것도 안 한다)
@@ -168,10 +168,11 @@ export function StageOutputColumn({ path, navIndex, activeResultIndex, collectio
                     variant="document"
                     reduceMotion={reduceMotion}
                     onSelect={() => {
-                      // 펼쳐 둔 결과를 다시 — 맨 왼쪽 노릇이면 하나 빼기, 그 결과가 경로의 끝이면 아무것도 안 한다, 아니면 접는다
+                      // 펼쳐 둔 결과를 다시 — 그 결과가 경로의 끝이면 아무것도 안 한다(맨 왼쪽 노릇이어도),
+                      // 더 깊이 열려 있으면 맨 왼쪽 노릇일 때 하나 빼기, 아니면 접는다
                       if (activeResultIndex === at) {
-                        if (leftEdge) return onStepBack();
                         if (!hasDeeper) return;
+                        if (leftEdge) return onStepBack();
                       }
                       onSelectResult(row.doc, row.title, at);
                     }}

@@ -21,6 +21,8 @@ interface StatusBarProps {
   setTreeMode: (on: boolean) => void;
   minColumns: number;
   defaultColumns: number;
+  // 컬럼 수를 못 바꿀 때(집계 Tree는 늘 3패널) — ± 버튼을 끈다
+  columnCountFixed: boolean;
   unreadChanges: number;
   unseenErrors: number;
   isCenterOpen: boolean;
@@ -54,6 +56,7 @@ export function StatusBar({
   setTreeMode,
   minColumns,
   defaultColumns,
+  columnCountFixed,
   unreadChanges,
   unseenErrors,
   isCenterOpen,
@@ -138,7 +141,7 @@ export function StatusBar({
             type="button"
             className={cn(styles.item, styles.itemIdle, styles.square)}
             onClick={() => setMaxVisibleColumns(maxVisibleColumns - 1)}
-            disabled={maxVisibleColumns <= minColumns}
+            disabled={columnCountFixed || maxVisibleColumns <= minColumns}
             aria-label="Show fewer columns"
           >
             <Minus size={16} />
@@ -147,8 +150,9 @@ export function StatusBar({
             type="button"
             className={cn(styles.item, styles.itemIdle, styles.square, styles.count)}
             onClick={() => setMaxVisibleColumns(defaultColumns)}
-            aria-label={`${maxVisibleColumns} columns — reset to ${defaultColumns}`}
-            data-tt={`Visible columns — click to reset to ${defaultColumns}`}
+            disabled={columnCountFixed}
+            aria-label={columnCountFixed ? `${maxVisibleColumns} panels in tree mode` : `${maxVisibleColumns} columns — reset to ${defaultColumns}`}
+            data-tt={columnCountFixed ? 'Tree mode always shows 3 panels — switch to Columns to change' : `Visible columns — click to reset to ${defaultColumns}`}
           >
             {maxVisibleColumns}
           </button>
@@ -156,7 +160,7 @@ export function StatusBar({
             type="button"
             className={cn(styles.item, styles.itemIdle, styles.square)}
             onClick={() => setMaxVisibleColumns(maxVisibleColumns + 1)}
-            disabled={maxVisibleColumns >= MAX_VISIBLE_COLUMNS}
+            disabled={columnCountFixed || maxVisibleColumns >= MAX_VISIBLE_COLUMNS}
             aria-label="Show more columns"
           >
             <Plus size={16} />

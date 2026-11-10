@@ -20,8 +20,8 @@ interface PipelineMenuProps {
   onCopy: () => Promise<void>;
 }
 
-// "$match → $group → $sort" — 스테이지 이름만 차례로
-const outline = (stages: StoredStage[]): string => {
+// "$match → $group → $sort" — 스테이지 이름만 차례로(사이드바 Aggregation 패널도 쓴다)
+export const outline = (stages: StoredStage[]): string => {
   const names = stages.map((s) => {
     const parsed = parseStageText(s.text);
     return parsed.ok ? stageName(parsed.stage) : 'stage';
@@ -29,7 +29,7 @@ const outline = (stages: StoredStage[]): string => {
   return names.length ? names.join(' → ') : 'empty';
 };
 
-const ago = (at: number): string => {
+export const ago = (at: number): string => {
   const s = Math.round((Date.now() - at) / 1000);
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)} min ago`;

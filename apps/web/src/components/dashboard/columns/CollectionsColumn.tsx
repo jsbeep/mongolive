@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Folder } from 'lucide-react';
+import { Folder, Workflow } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { ActivePath, CollectionSummary, Document, JsonValue, MutationRequest } from '../../../types/explorer';
 import { ColumnItem, ColumnSkeletonList } from './ColumnItem';
@@ -16,6 +16,13 @@ import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../../utils/motionPresets';
 import { HeaderTitle } from './HeaderTitle';
 import { BookmarkIcon } from './BookmarkIcon';
 import { canEditIn, useServerSettings } from '../../../services/serverSettings';
+import { dataSourceKind } from '../../../services/api';
+import { pipelineKey, useAllPipelines, usePipelineStages } from '../../../services/pipelines';
+import { cn } from '../../../utils/cn';
+
+// Aggregation 버튼의 점 — 고른 컬렉션에 만들던 파이프라인이 있다
+const PIPELINE_DOT_CLASS = 'absolute -top-1 -right-1 h-2 w-2 rounded-full bg-slate-400 ring-2 ring-white';
+
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -30,6 +37,9 @@ interface CollectionsColumnProps {
   onSelectCollection: (name: string, label: string) => Promise<void>;
   onMutate: (op: MutationRequest) => Promise<unknown>;
   onSetEditingId: (id: string | null) => void;
+  // 헤더의 Aggregation 버튼(서버 연결일 때만) — 고른 컬렉션의 파이프라인 ⇄ 문서 목록. 켜져 있으면 active.
+  // onOpen = 파이프라인이 있는 컬렉션 item의 표시 — 그 컬렉션의 집계 모드로 바로
+  aggregation?: { active: boolean; onToggle: () => void; onOpen: (database: string, collection: string, label: string) => void };
 }
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────────────────
@@ -45,6 +55,7 @@ export function CollectionsColumn({
   onSelectCollection,
   onMutate,
   onSetEditingId,
+  aggregation,
 }: CollectionsColumnProps) {
   const [deleteTarget, setDeleteTarget] = useState<CollectionSummary | null>(null);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
@@ -52,7 +63,41 @@ export function CollectionsColumn({
   const databaseName = path.kind === 'normal' ? (path.databaseName ?? '') : '';
   // 안전장치(설정 창 › Safety): read-only거나 이 DB가 보호 대상이면 추가·파일 드롭을, 컬렉션이 보호 대상이면 그 행의 편집을 숨긴다
   const safety = useServerSettings();
-  const canEditDb = canEditIn(safety, databaseName);
+  // 집계 모드에선 읽기만 — 컬렉션 추가·이름 바꾸기·지우기·파일 드롭을 막는다(고치는 건 문서 모드에서)
+  const readOnly = !!aggregation?.active;
+  const canEditDb = !readOnly && canEditIn(safety, databaseName);
+  const canEditCollection = (name: string) => !readOnly && canEditIn(safety, databaseName, name);
+  const pipelineStages = usePipelineStages(databaseName || null, activeCollectionName);
+  // 컬렉션마다 지금 파이프라인(이 브라우저에 남은 것 — 스테이지를 다 지우면 없어진다)이 있는가
+  const pipelines = useAllPipelines();
+  const showAggregation = !!aggregation && dataSourceKind === 'remote';
+  const pipelineBadge = (name: string, label: string, active: boolean) => {
+    const count = pipelines[pipelineKey(databaseName, name)]?.stages.length ?? 0;
+    if (!showAggregation || !count) return undefined;
+    const tip = `Pipeline with ${count} stage${count > 1 ? 's' : ''} — open Aggregation on ${name}`;
+    return (
+      <button
+        type="button"
+        aria-label={tip}
+        data-tt={tip}
+        className={cn(
+          'rounded-md p-1 transition-colors',
+          active ? 'text-emerald-500 hover:bg-emerald-100/70 hover:text-emerald-700' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600',
+        )}
+        onClick={(e) => {
+          e.stopPropagation();
+          aggregation?.onOpen(databaseName, name, label);
+        }}
+      >
+        <Workflow size={12} />
+      </button>
+    );
+  };
+  const aggregationTip = aggregation?.active
+    ? 'Close Aggregation — back to the documents'
+    : activeCollectionName
+      ? `Aggregation — build a pipeline on ${activeCollectionName}${pipelineStages.length ? ` (${pipelineStages.length} stage${pipelineStages.length > 1 ? 's' : ''} so far)` : ''}`
+      : 'Aggregation — pick a collection, then build a pipeline on it';
 
   // 컬럼 전체에 파일을 드롭하면 "컬렉션 추가" 에디터를 열고 그 파일을 업로드한 것처럼 처리
   const { isDragOver: isColumnDragOver, dragHandlers } = useFileDrop((file) => {
@@ -88,6 +133,22 @@ export function CollectionsColumn({
       <div className={styles.header}>
         <BookmarkIcon icon={<Folder size={15} className={styles.headerIcon} />} location={databaseName ? { database: databaseName } : null} what="this database" size={15} />
         <HeaderTitle title="Collections" total={collections.length} />
+        {aggregation && showAggregation && (
+          <button
+            type="button"
+            aria-label="Aggregation"
+            aria-pressed={aggregation.active}
+            data-tt={aggregationTip}
+            className={cn(
+              'relative shrink-0 rounded-lg p-1.5 transition-colors',
+              aggregation.active ? 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200/70' : 'bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600',
+            )}
+            onClick={aggregation.onToggle}
+          >
+            {!aggregation.active && pipelineStages.length > 0 && <span className={PIPELINE_DOT_CLASS} />}
+            <Workflow size={12} />
+          </button>
+        )}
       </div>
 
       {/* 목록 */}
@@ -96,7 +157,7 @@ export function CollectionsColumn({
           <ColumnSkeletonList count={4} />
         ) : (
           collections.map((col) => {
-            const isEditing = editingId === `collection:${col.name}`;
+            const isEditing = !readOnly && editingId === `collection:${col.name}`;
             const isHighlighted = isPathChanged(changedPaths, `databases.${databaseName}.collections.${col.name}`);
 
             if (isEditing) {
@@ -139,15 +200,16 @@ export function CollectionsColumn({
                 variant="collection"
                 reduceMotion={reduceMotion}
                 onSelect={() => void onSelectCollection(col.name, col.label)}
-                onEdit={canEditIn(safety, databaseName, col.name) ? () => onSetEditingId(`collection:${col.name}`) : undefined}
-                onDelete={canEditIn(safety, databaseName, col.name) ? () => setDeleteTarget(col) : undefined}
+                onEdit={canEditCollection(col.name) ? () => onSetEditingId(`collection:${col.name}`) : undefined}
+                onDelete={canEditCollection(col.name) ? () => setDeleteTarget(col) : undefined}
+                badge={pipelineBadge(col.name, col.label, activeCollectionName === col.name)}
               />
             );
           })
         )}
 
         {/* 추가 카드 */}
-        {editingId === 'collection:__new__' ? (
+        {canEditDb && editingId === 'collection:__new__' ? (
           <InlineSegmentEditor
             mode="add"
             level="collection"

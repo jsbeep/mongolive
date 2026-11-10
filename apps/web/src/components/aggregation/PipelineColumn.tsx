@@ -7,7 +7,7 @@
 // 그동안 출력·개수는 그대로 — Run이 초안과 새 스테이지를 한 번에 붙이고 돌린다. 맨 위 'Original documents'는 원본(빈 파이프라인).
 import { useEffect, useMemo, useState } from 'react';
 import { Reorder } from 'framer-motion';
-import { Braces, Database, Folder, List, Play, Plus, Workflow } from 'lucide-react';
+import { Braces, Database, Folder, List, Play, Plus, Workflow, X } from 'lucide-react';
 import {
   fieldPaths,
   formatStageText,
@@ -36,8 +36,8 @@ import {
   usePipelineStages,
   type PipelineStage,
 } from '../../services/pipelines';
-import { getPipelineDrafts, pendingChangeCount, requestEditorFocus, updatePipelineDrafts, usePipelineDrafts, type PipelineDrafts } from '../../services/pipelineDrafts';
-import { recordPipelineVersion, type StoredStage } from '../../services/savedPipelines';
+import { pendingChangeCount, requestEditorFocus, updatePipelineDrafts, usePipelineDrafts, type PipelineDrafts } from '../../services/pipelineDrafts';
+import { recordPipelineVersion, replacePipeline, type StoredStage } from '../../services/savedPipelines';
 import { mongoshAggregateCommand } from '../../utils/mongoshQuery';
 import { copyToClipboard } from '../../utils/clipboard';
 import { forgetRuns, loadCounts, setPreview, useCounts, useOutput } from '../../services/aggregateRuns';
@@ -121,11 +121,13 @@ interface PipelineColumnProps {
   onClearStage: () => void;
   // 알림(저장한 파이프라인을 열면 Undo와 함께)
   onToast: (message: string, type: 'success' | 'error', undo?: () => void) => void;
+  // 헤더의 × — 집계를 닫고 그 컬렉션의 문서 목록으로
+  onClose: () => void;
   // 같은 DB의 컬렉션 이름 — Form의 $lookup from
   collectionNames: string[];
 }
 
-export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, reduceMotion, onSelectStage, onClearStage, onToast, collectionNames }: PipelineColumnProps) {
+export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, reduceMotion, onSelectStage, onClearStage, onToast, onClose, collectionNames }: PipelineColumnProps) {
   const database = path.databaseName ?? '';
   const collection = path.collectionName ?? null;
   const target = collection ? pipelineKey(database, collection) : '';
@@ -444,18 +446,16 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
   // 저장한 것·최근 버전 열기 — 지금 파이프라인(과 초안)을 통째로 바꾸고 마지막 스테이지의 출력으로. Undo로 되돌린다
   const openStored = (stored: StoredStage[], label: string) => {
     if (!collection) return;
-    const before = { stages, drafts: getPipelineDrafts(database, collection), selected: selectedStageId };
-    const next: PipelineStage[] = stored.map((s) => ({ id: newStageId(), text: s.text, enabled: s.enabled }));
-    save(next);
-    updateDrafts(() => ({ drafts: {}, collected: {}, editingId: null, lastCollectedId: null, focus: null }));
+    const selectedBefore = selectedStageId;
+    const replaced = replacePipeline(database, collection, stored);
+    if (!replaced) return onToast(`${label[0].toUpperCase()}${label.slice(1)} is already the current pipeline`, 'success');
     setErrors({});
     setTextDraft(null);
     clearPreview();
-    onSelectStage([...next].reverse().find(isRunnable)?.id ?? INPUT_STAGE_ID);
+    onSelectStage(replaced.lastId);
     onToast(`Opened ${label}`, 'success', () => {
-      setPipelineStages(database, collection, before.stages);
-      updatePipelineDrafts(database, collection, () => ({ ...before.drafts, focus: null }));
-      onSelectStage(before.selected ?? INPUT_STAGE_ID);
+      replaced.undo();
+      onSelectStage(selectedBefore ?? INPUT_STAGE_ID);
     });
   };
 
@@ -563,6 +563,16 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
             </button>
           </>
         )}
+        {/* 집계 닫기 — 그 컬렉션의 문서 목록으로(Collections 헤더의 Aggregation 버튼으로도 켜고 끈다) */}
+        <button
+          type="button"
+          aria-label="Close Aggregation"
+          data-tt="Close Aggregation — back to the documents"
+          className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+          onClick={onClose}
+        >
+          <X size={13} />
+        </button>
       </div>
 
       {!collection ? (

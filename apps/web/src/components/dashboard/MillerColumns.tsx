@@ -81,6 +81,7 @@ type MillerColumnsProps = Pick<
   | 'setEditingId'
   | 'clearChangedPaths'
   | 'openPipeline'
+  | 'toggleAggregation'
   | 'selectStage'
   | 'selectAggregateResult'
 >;
@@ -118,6 +119,7 @@ export function MillerColumns({
   clearChangedPaths,
   showToast,
   openPipeline,
+  toggleAggregation,
   selectStage,
   selectAggregateResult,
 }: MillerColumnsProps) {
@@ -163,7 +165,7 @@ export function MillerColumns({
   // 컬럼 수가 최소(MIN_VISIBLE_COLUMNS)일 때 — Collections/Documents를 한 패널에서
   // navigate하고, json 체인은(있으면) 가로 슬라이딩 대신 재귀적으로 한 패널 안에
   // 중첩해서 보여준다
-  // aggregation 모드는 따로(aggregationSlots) — Pipeline을 왼쪽에 고정하고, Tree면 결과 상세만 한 칸에 접는다
+  // aggregation 모드는 따로(aggregationSlots) — Pipeline을 왼쪽에 고정하고, Tree(따로인 토글)면 결과 상세만 한 칸에 접는다
   const twoColMode = maxVisibleColumns === MIN_VISIBLE_COLUMNS && !isAggregation;
   const inlineMode = twoColMode && jsonChainPaths.length > 0;
 
@@ -267,6 +269,7 @@ export function MillerColumns({
                   onMutate={mutate}
                   onSetEditingId={setEditingId}
                   onBackToCollections={() => popToIndex(0)}
+                  aggregation={{ active: false, onToggle: () => void toggleAggregation(), onOpen: (database, name, label) => void openPipeline(database, name, label) }}
                 />
               ) : (
                 <ColumnContent
@@ -307,6 +310,7 @@ export function MillerColumns({
                   showToast={showToast}
                   isAggregation={isAggregation}
                   openPipeline={openPipeline}
+                  toggleAggregation={toggleAggregation}
                   selectStage={selectStage}
                   selectAggregateResult={selectAggregateResult}
                 />
@@ -339,12 +343,17 @@ interface RenderSlot {
 
 // aggregation 모드의 칸 — 경로는 [Collections, Pipeline, Output, 결과 상세(json)…].
 // 다 들어가면 그대로 왼쪽부터, 넘치면 Pipeline을 맨 왼쪽에 고정하고 그 뒤의 마지막 (n−1)개만
-// (Collections가 먼저 밀려나고, 더 깊어지면 Output도). Tree(최소 3칸)면 결과 상세를 한 칸에 중첩한다.
+// (Collections가 먼저 밀려나고, 더 깊어지면 Output도 — 기본 3칸이면 문서 쪽은 2칸으로 탐색).
+// Tree(늘 3칸)면 결과 상세를 한 칸에 중첩하고, 컬렉션을 고른 뒤엔 Collections를 빼서 [Pipeline, Output, 결과 트리]로 둔다
+// (컬렉션은 breadcrumb·사이드바로 바꾼다).
 // slotIndex는 늘 경로의 실제 번호다(jsonVisibleLength = activePaths.length와 짝).
 // 고정됐을 때 Pipeline 바로 오른쪽 칸이 '맨 왼쪽 컬럼'(누르면 경로 하나 빼기) — Tree는 빼고
 function aggregationSlots(activePaths: ActivePath[], chainStart: number, n: number, tree: boolean): RenderSlot[] {
+  const pipeline = activePaths[1];
+  const hideCollections = tree && pipeline?.kind === 'normal' && !!pipeline.collectionName;
   const units: RenderSlot[] = [];
   activePaths.forEach((p, i) => {
+    if (hideCollections && p.columnKind === 'collections') return;
     if (!tree || i < chainStart) units.push({ key: `col-${p.comp.id}`, col: p, slotIndex: i });
   });
   if (tree && chainStart < activePaths.length) {
@@ -404,6 +413,7 @@ function ColumnContent({ col, visibleLength, slotIndex, jsonChainTail, leftEdge,
           : rest.selectCollection}
         onMutate={rest.mutate}
         onSetEditingId={rest.setEditingId}
+        aggregation={{ active: rest.isAggregation, onToggle: () => void rest.toggleAggregation(), onOpen: (database, name, label) => void rest.openPipeline(database, name, label) }}
       />
     );
   }
@@ -422,6 +432,7 @@ function ColumnContent({ col, visibleLength, slotIndex, jsonChainTail, leftEdge,
         // 고른 스테이지가 없어지면(마지막 하나를 지움 등) 원본 문서로
         onClearStage={() => rest.selectStage(INPUT_STAGE_ID)}
         onToast={rest.showToast}
+        onClose={() => void rest.toggleAggregation()}
         collectionNames={rest.collections.map((c) => c.name)}
       />
     );

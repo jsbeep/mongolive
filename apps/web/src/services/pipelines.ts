@@ -15,7 +15,7 @@ export interface PipelineStage {
 // 출력 컬럼이 '원본 문서'(빈 파이프라인 = 컬렉션 그대로)를 보일 때의 스테이지 자리
 export const INPUT_STAGE_ID = '@input';
 
-interface SavedPipeline {
+export interface CurrentPipeline {
   stages: PipelineStage[];
   at: number;
 }
@@ -25,6 +25,10 @@ const KEY = 'mongolive.pipelines.v1';
 const MAX_TARGETS = 100;
 
 export const pipelineKey = (database: string, collection: string) => `${database}\u0000${collection}`;
+export const splitPipelineKey = (key: string): { database: string; collection: string } => {
+  const at = key.indexOf('\u0000');
+  return { database: key.slice(0, at), collection: key.slice(at + 1) };
+};
 
 const isStage = (s: unknown): s is PipelineStage =>
   !!s && typeof s === 'object'
@@ -32,13 +36,13 @@ const isStage = (s: unknown): s is PipelineStage =>
   && typeof (s as PipelineStage).text === 'string'
   && typeof (s as PipelineStage).enabled === 'boolean';
 
-const read = (): Record<string, SavedPipeline> => {
+const read = (): Record<string, CurrentPipeline> => {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as unknown;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-    const out: Record<string, SavedPipeline> = {};
+    const out: Record<string, CurrentPipeline> = {};
     for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-      const v = value as SavedPipeline;
+      const v = value as CurrentPipeline;
       if (v && Array.isArray(v.stages) && typeof v.at === 'number') out[key] = { stages: v.stages.filter(isStage), at: v.at };
     }
     return out;
@@ -51,7 +55,7 @@ let saved = read();
 const listeners = new Set<() => void>();
 const EMPTY: PipelineStage[] = [];
 
-const write = (next: Record<string, SavedPipeline>) => {
+const write = (next: Record<string, CurrentPipeline>) => {
   saved = next;
   try {
     localStorage.setItem(KEY, JSON.stringify(next));
@@ -131,6 +135,8 @@ const subscribe = (listener: () => void) => {
 
 export const usePipelineStages = (database: string | null, collection: string | null): PipelineStage[] =>
   useSyncExternalStore(subscribe, () => (database && collection ? getPipelineStages(database, collection) : EMPTY));
+// 모든 컬렉션의 지금 파이프라인(키 = pipelineKey) — 사이드바 Aggregation 패널
+export const useAllPipelines = (): Record<string, CurrentPipeline> => useSyncExternalStore(subscribe, () => saved);
 
 // 출력 컬럼·breadcrumb의 이름 — "2 · $group"(번호는 1부터, 꺼진 스테이지도 센다). 원본은 'Original documents'
 export const stageLabel = (stages: PipelineStage[], id: string): string => {

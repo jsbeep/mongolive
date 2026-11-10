@@ -31,6 +31,8 @@ interface CollectionsDocumentsColumnProps {
   onMutate: (op: MutationRequest) => Promise<unknown>;
   onSetEditingId: (id: string | null) => void;
   onBackToCollections: () => void;
+  // Collections 헤더의 Aggregation 버튼
+  aggregation?: { active: boolean; onToggle: () => void; onOpen: (database: string, collection: string, label: string) => void };
 }
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────────────────
@@ -55,6 +57,7 @@ export function CollectionsDocumentsColumn({
   onMutate,
   onSetEditingId,
   onBackToCollections,
+  aggregation,
 }: CollectionsDocumentsColumnProps) {
   const direction = documentsPath ? 1 : -1;
 
@@ -101,6 +104,7 @@ export function CollectionsDocumentsColumn({
               onSelectCollection={onSelectCollection}
               onMutate={onMutate}
               onSetEditingId={onSetEditingId}
+              aggregation={aggregation}
             />
           )}
         </m.div>

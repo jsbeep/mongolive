@@ -23,6 +23,8 @@ import { useMillerKeyboard } from '../hooks/useMillerKeyboard';
 import { QueryHistoryPanel } from '../components/query/QueryHistoryPanel';
 import { ReferencesPanel } from '../components/references/ReferencesPanel';
 import { BookmarksPanel } from '../components/bookmarks/BookmarksPanel';
+import { AggregationPanel } from '../components/aggregation/AggregationPanel';
+import { replacePipeline } from '../services/savedPipelines';
 import { useBookmarks } from '../services/bookmarks';
 import { CollectContext, QbeContext, type CollectHandler, type QbeHandler } from '../components/query/QbeMenu';
 import { collectToPipeline } from '../services/pipelineCollect';
@@ -97,6 +99,7 @@ export default function ExplorerPage() {
     setTreeMode,
     minColumns,
     defaultColumns,
+    columnCountFixed,
     selectDatabase,
     selectCollection,
     selectDocument,
@@ -136,6 +139,7 @@ export default function ExplorerPage() {
   const historyAnchor = sidebarPanel?.kind === 'history' ? sidebarPanel.anchor : null;
   const referencesAnchor = sidebarPanel?.kind === 'references' ? sidebarPanel.anchor : null;
   const bookmarksAnchor = sidebarPanel?.kind === 'bookmarks' ? sidebarPanel.anchor : null;
+  const aggregationAnchor = sidebarPanel?.kind === 'aggregation' ? sidebarPanel.anchor : null;
   const bookmarks = useBookmarks();
   const qbeHandler = useCallback<QbeHandler>((database, collection, conditions) => {
     void queryByExample(database, collection, conditions).then((ok) => ok && openSearchPanel('query'));
@@ -270,15 +274,8 @@ export default function ExplorerPage() {
             onOpenSettings={() => openSettings()}
             panels={{
               open: sidebarPanel?.kind ?? null,
-              aggregationOpen: isAggregation,
               canQuery: dataSourceKind === 'remote',
               onToggle: (kind, anchor) => {
-                // Aggregation은 떠 있는 패널이 아니라 컬럼 전환(문서 목록 ⇄ 파이프라인)
-                if (kind === 'aggregation') {
-                  setSidebarPanel(null);
-                  void toggleAggregation();
-                  return;
-                }
                 // 같은 버튼 = 닫기, 다른 버튼 = 그 패널로
                 setSidebarPanel((open) => (open?.kind === kind ? null : { kind, anchor }));
               },
@@ -334,6 +331,7 @@ export default function ExplorerPage() {
                 clearChangedPaths={clearChangedPaths}
                 showToast={showToast}
                 openPipeline={openPipeline}
+                toggleAggregation={toggleAggregation}
                 selectStage={selectStage}
                 selectAggregateResult={selectAggregateResult}
               />
@@ -352,6 +350,7 @@ export default function ExplorerPage() {
           setTreeMode={setTreeMode}
           minColumns={minColumns}
           defaultColumns={defaultColumns}
+          columnCountFixed={columnCountFixed}
           unreadChanges={activityLog.unread}
           unseenErrors={systemLog.unseenErrors}
           isCenterOpen={centerOpen}
@@ -471,6 +470,23 @@ export default function ExplorerPage() {
             closeSidebarPanel();
             if (sidebar.isOverlay) sidebar.setMode('rail');
             void openLocation(b);
+          }}
+          onClose={closeSidebarPanel}
+        />
+      )}
+
+      {/* Aggregation — 모든 컬렉션의 저장·최근 파이프라인. 누르면 그 컬렉션의 집계 모드로(저장한 것·버전이면 파이프라인을 바꾸고 Undo) */}
+      {aggregationAnchor && (
+        <AggregationPanel
+          anchor={aggregationAnchor}
+          current={pipelinePath?.databaseName && pipelinePath.collectionName ? { database: pipelinePath.databaseName, collection: pipelinePath.collectionName } : null}
+          onOpen={(database, collection, stored, label) => {
+            closeSidebarPanel();
+            if (sidebar.isOverlay) sidebar.setMode('rail');
+            const replaced = stored ? replacePipeline(database, collection, stored) : null;
+            // 같은 파이프라인이 열려 있었으면 고른 스테이지가 없어졌을 수 있다 — 바꿨으면 마지막 스테이지의 출력으로
+            void openPipeline(database, collection, collection).then(() => replaced && selectStage(replaced.lastId));
+            if (replaced) showToast(`Opened ${label} on ${collection}`, 'success', replaced.undo);
           }}
           onClose={closeSidebarPanel}
         />

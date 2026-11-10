@@ -73,9 +73,9 @@ export const MIN_VISIBLE_COLUMNS = 2;
 export const MAX_VISIBLE_COLUMNS = 6;
 // 폰 너비 — 이보다 좁으면 Tree 모드로 연다
 const MOBILE_QUERY = '(max-width: 767px)';
-// 집계 모드의 기본 컬럼 수 — Collections │ Pipeline │ Stage Output │ 결과 상세
-export const AGGREGATION_COLUMNS = 4;
-// 집계 모드의 최소 — 이때가 Tree(Pipeline │ Output │ 결과 트리). 문서 탐색의 최소(2)와 같은 자리
+// 집계 모드의 기본·최소 컬럼 수 — Pipeline을 왼쪽에 고정하고 나머지 2칸에서 문서를 탐색한다(Collections │ Pipeline │ Output으로 시작).
+// Tree는 컬럼 수와 따로 켜고 끄는 토글이고, 켜면 늘 3패널(Pipeline │ Output │ 결과 트리)
+export const AGGREGATION_COLUMNS = 3;
 export const AGGREGATION_MIN_COLUMNS = 3;
 
 let pathIdCounter = 0;
@@ -196,12 +196,14 @@ export interface UseExplorerStateResult {
   // 파생값
   visibleColumns: (ActivePath | null)[];
   breadcrumbs: ExplorerPathSegment[];
-  // 지금 모드(문서 탐색 / 집계)의 컬럼 수 — 두 모드가 따로 기억한다. 최소일 때가 Tree
+  // 지금 모드(문서 탐색 / 집계)의 컬럼 수 — 두 모드가 따로 기억한다. 문서 탐색은 최소(2)일 때가 Tree, 집계는 Tree가 따로인 토글
   maxVisibleColumns: number;
   treeMode: boolean;
-  // 컬럼 수 버튼의 최소·'처음 값'(문서 2·3, 집계 3·4)
+  // 컬럼 수 버튼의 최소·'처음 값'(문서 2·3, 집계 3·3)
   minColumns: number;
   defaultColumns: number;
+  // 컬럼 수를 못 바꾸는 때 — 집계 Tree(늘 3패널)
+  columnCountFixed: boolean;
 
   // 액션
   setMaxVisibleColumns: (count: number) => void;
@@ -354,17 +356,16 @@ export function useExplorerState(): UseExplorerStateResult {
   const [documentColumns, setDocumentColumns] = useState(() =>
     window.matchMedia(MOBILE_QUERY).matches ? MIN_VISIBLE_COLUMNS : MIN_VISIBLE_COLUMNS + 1,
   );
-  // 집계 모드의 컬럼 수는 따로 — 최소(3)면 Tree(결과 상세만 한 칸에 접는다)
-  const [aggregationColumns, setAggregationColumns] = useState(() =>
-    window.matchMedia(MOBILE_QUERY).matches ? AGGREGATION_MIN_COLUMNS : AGGREGATION_COLUMNS,
-  );
+  // 집계 모드의 컬럼 수와 Tree는 따로 — Tree를 껐다 켜도 컬럼 수는 그대로
+  const [aggregationColumns, setAggregationColumns] = useState(AGGREGATION_COLUMNS);
+  const [aggregationTree, setAggregationTree] = useState(() => window.matchMedia(MOBILE_QUERY).matches);
 
   // 쓰는 중에 폰 너비로 좁아지면(창 크기 조절 등) Tree로 바꾸고, 다시 넓어지면 바꾸기 전 컬럼 수로 돌려놓는다.
   // 폰 너비에서도 상태 표시줄 버튼으로 Columns로 바꿀 수 있다.
   useEffect(() => {
     const query = window.matchMedia(MOBILE_QUERY);
     let beforeMobile = MIN_VISIBLE_COLUMNS + 1;
-    let aggregationBeforeMobile = AGGREGATION_COLUMNS;
+    let aggregationTreeBeforeMobile = false;
     const onChange = () => {
       setDocumentColumns((current) => {
         if (query.matches) {
@@ -373,12 +374,12 @@ export function useExplorerState(): UseExplorerStateResult {
         }
         return beforeMobile;
       });
-      setAggregationColumns((current) => {
+      setAggregationTree((current) => {
         if (query.matches) {
-          aggregationBeforeMobile = current;
-          return AGGREGATION_MIN_COLUMNS;
+          aggregationTreeBeforeMobile = current;
+          return true;
         }
-        return aggregationBeforeMobile;
+        return aggregationTreeBeforeMobile;
       });
     };
     query.addEventListener('change', onChange);
@@ -412,19 +413,21 @@ export function useExplorerState(): UseExplorerStateResult {
   const isAggregation = pipelinePath !== null;
   const aggregationStages = usePipelineStages(pipelinePath?.databaseName ?? null, pipelinePath?.collectionName ?? null);
 
-  // 지금 모드의 컬럼 수·Tree — 어느 모드든 '최소 = Tree'(문서 2, 집계 3)
-  const maxVisibleColumns = isAggregation ? aggregationColumns : documentColumns;
+  // 지금 모드의 컬럼 수·Tree — 문서 탐색은 '최소(2) = Tree', 집계는 Tree가 따로인 토글(켜면 늘 3패널, 컬럼 수는 기억해 둔다)
+  const maxVisibleColumns = isAggregation ? (aggregationTree ? AGGREGATION_MIN_COLUMNS : aggregationColumns) : documentColumns;
   const minColumns = isAggregation ? AGGREGATION_MIN_COLUMNS : MIN_VISIBLE_COLUMNS;
   const defaultColumns = isAggregation ? AGGREGATION_COLUMNS : MIN_VISIBLE_COLUMNS + 1;
-  const treeMode = maxVisibleColumns === minColumns;
+  const treeMode = isAggregation ? aggregationTree : documentColumns === MIN_VISIBLE_COLUMNS;
+  const columnCountFixed = isAggregation && aggregationTree;
   const setMaxVisibleColumns = useCallback((count: number) => {
     const clamped = Math.min(MAX_VISIBLE_COLUMNS, Math.max(minColumns, count));
     if (isAggregation) setAggregationColumns(clamped);
     else setDocumentColumns(clamped);
   }, [isAggregation, minColumns]);
   const setTreeMode = useCallback((on: boolean) => {
-    setMaxVisibleColumns(on ? minColumns : defaultColumns);
-  }, [setMaxVisibleColumns, minColumns, defaultColumns]);
+    if (isAggregation) setAggregationTree(on);
+    else setDocumentColumns(on ? MIN_VISIBLE_COLUMNS : MIN_VISIBLE_COLUMNS + 1);
+  }, [isAggregation]);
 
   // 문서 탐색의 보이는 컬럼(끝의 N개). 집계 모드는 MillerColumns가 Pipeline을 고정해 따로 고른다
   const visibleColumns = useMemo<(ActivePath | null)[]>(() => {
@@ -1585,6 +1588,7 @@ export function useExplorerState(): UseExplorerStateResult {
     treeMode,
     minColumns,
     defaultColumns,
+    columnCountFixed,
     setMaxVisibleColumns,
     setTreeMode,
     initialize,
