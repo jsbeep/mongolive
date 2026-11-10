@@ -4,6 +4,8 @@
 //   $sort          마지막이 $sort면 더한다 — 같은 필드는 방향만 바꾸고, 새 필드는 보조 정렬 키(뒤에)
 //   $project       마지막이 $project이고 포함/제외 방식이 같을 때만 더한다 — 섞이면(MongoDB가 거절) 새 스테이지
 //   $group · $sortByCount · $lookup   늘 새 스테이지
+//   타입별: 배열 → $unwind / 배열 크기($addFields + $size), 날짜 → 일·월·년으로 묶기($dateToString — 오래된 MongoDB에서도 된다),
+//          ObjectId → 만든 시각($addFields + $toDate)   늘 새 스테이지
 import { isPlainObject, isWrapperObject, makeInt32, numericValue, type EjsonObject, type EjsonValue } from './ejson';
 import { addCondition, CONDITION_OP_LABEL, formatQueryValue, type Condition } from './queryConditions';
 
@@ -13,7 +15,13 @@ export type CollectAction =
   | { kind: 'project'; field: string; include: boolean }
   | { kind: 'group'; field: string }
   | { kind: 'count'; field: string }
-  | { kind: 'lookup'; from: string; localField: string; foreignField: string; as: string };
+  | { kind: 'lookup'; from: string; localField: string; foreignField: string; as: string }
+  | { kind: 'unwind'; field: string }
+  | { kind: 'arraySize'; field: string; as: string }
+  | { kind: 'groupByDate'; field: string; unit: 'day' | 'month' | 'year'; timezone: string }
+  | { kind: 'oidTime'; field: string; as: string };
+
+const DATE_FORMAT = { day: '%Y-%m-%d', month: '%Y-%m', year: '%Y' } as const;
 
 export type CollectResult =
   // 마지막 스테이지에 쌓았다 — replaced: 조건이 바뀐 필드(같은 비교를 새 값으로), unchanged: 이미 그대로 있었다
@@ -108,6 +116,23 @@ export const collectInto = (last: EjsonObject | null, action: CollectAction): Co
         mode: 'new',
         stage: { $lookup: { from: action.from, localField: action.localField, foreignField: action.foreignField, as: action.as } },
       };
+    case 'unwind':
+      return { mode: 'new', stage: { $unwind: `$${action.field}` } };
+    case 'arraySize':
+      // 배열이 없는 문서는 0(없으면 $size가 오류)
+      return { mode: 'new', stage: { $addFields: { [action.as]: { $size: { $ifNull: [`$${action.field}`, []] } } } } };
+    case 'groupByDate':
+      return {
+        mode: 'new',
+        stage: {
+          $group: {
+            _id: { $dateToString: { format: DATE_FORMAT[action.unit], date: `$${action.field}`, timezone: action.timezone } },
+            count: { $sum: makeInt32(1) },
+          },
+        },
+      };
+    case 'oidTime':
+      return { mode: 'new', stage: { $addFields: { [action.as]: { $toDate: `$${action.field}` } } } };
   }
 };
 
@@ -120,5 +145,9 @@ export const describeCollectAction = (action: CollectAction): string => {
     case 'group': return `group by ${action.field}`;
     case 'count': return `count ${action.field} values`;
     case 'lookup': return `lookup ${action.from}`;
+    case 'unwind': return `unwind ${action.field}`;
+    case 'arraySize': return `size of ${action.field}`;
+    case 'groupByDate': return `group ${action.field} by ${action.unit}`;
+    case 'oidTime': return `creation time of ${action.field}`;
   }
 };

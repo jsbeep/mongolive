@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { validatePipelineStage } from './pipeline';
 import { collectInto, type CollectAction } from './pipelineCollect';
 import { formatStageText } from './queryConditions';
 import { parseStageText } from './queryParser';
@@ -109,5 +110,35 @@ describe('collectInto — 늘 새 스테이지', () => {
   it('만든 스테이지는 글자로 바꿔도 다시 읽힌다', () => {
     const result = collectInto(stage('{ $match: { score: { $gt: 100 } } }'), match('type', 'eq', 'comment'));
     expect(stage(formatStageText(result.stage))).toEqual(result.stage);
+  });
+});
+
+describe('collectInto — 타입별(늘 새 스테이지)', () => {
+  const last = stage('{ $match: { a: 1 } }');
+  it('배열 → $unwind · 크기', () => {
+    expect(collectInto(last, { kind: 'unwind', field: 'tags' })).toEqual({ mode: 'new', stage: { $unwind: '$tags' } });
+    expect(collectInto(last, { kind: 'arraySize', field: 'tags', as: 'tags_size' }))
+      .toEqual({ mode: 'new', stage: { $addFields: { tags_size: { $size: { $ifNull: ['$tags', []] } } } } });
+  });
+  it('날짜 → 일·월·년으로 묶기', () => {
+    expect(collectInto(last, { kind: 'groupByDate', field: 'at', unit: 'month', timezone: 'Asia/Seoul' })).toEqual({
+      mode: 'new',
+      stage: { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$at', timezone: 'Asia/Seoul' } }, count: { $sum: int(1) } } },
+    });
+  });
+  it('ObjectId → 만든 시각', () => {
+    expect(collectInto(last, { kind: 'oidTime', field: '_id', as: '_id_time' })).toEqual({ mode: 'new', stage: { $addFields: { _id_time: { $toDate: '$_id' } } } });
+  });
+  it('만든 스테이지는 허용 검사를 통과하고 글자로 바꿔도 다시 읽힌다', () => {
+    for (const action of [
+      { kind: 'unwind', field: 'tags' },
+      { kind: 'arraySize', field: 'tags', as: 'n' },
+      { kind: 'groupByDate', field: 'at', unit: 'day', timezone: 'UTC' },
+      { kind: 'oidTime', field: '_id', as: 't' },
+    ] as CollectAction[]) {
+      const made = collectInto(null, action).stage;
+      expect(validatePipelineStage(made)).toBeNull();
+      expect(stage(formatStageText(made))).toEqual(made);
+    }
   });
 });

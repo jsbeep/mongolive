@@ -8,7 +8,8 @@
 // 정렬·그룹·값 세기·포함/제외·$lookup. 실제로 쌓는 건 page.tsx가 넣어 준 CollectContext(services/pipelineCollect).
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDownWideNarrow, ArrowUpNarrowWide, Eye, EyeOff, Group, Info, Link2, ListFilterPlus, ListPlus, Route, Sigma } from 'lucide-react';
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, CalendarDays, Clock, Eye, EyeOff, Group, Hash, Info, Link2, ListFilterPlus, ListPlus, Route, Sigma, UnfoldVertical } from 'lucide-react';
+import { getPreferences } from '../../services/preferences';
 import {
   CONDITION_OP_LABEL,
   dateMs,
@@ -51,8 +52,41 @@ export const CollectContext = createContext<CollectHandler | null>(null);
 // 필드 이름의 끝(a.b.c → c) — $lookup 결과 이름(as)에
 const leafOf = (field: string) => field.split('.').pop() || field;
 
+// 타입별 동작 — 배열(또는 배열 안의 값) → 펼치기·크기, 날짜 → 일·월·년으로 묶기, ObjectId → 만든 시각.
+// 배열 안의 값(items.3.name)이면 그 배열(items)을 펼친다. 날짜 묶기의 시간대는 설정 › 값 표시를 따른다
+type ShapeItem = { label: string; icon: typeof Group; request: CollectRequest };
+const typeSection = (path: string[], field: string, value: JsonValue): { title: string; items: ShapeItem[] } | null => {
+  const kind = valueKind(value);
+  const lastIndex = path.map((seg, i) => (isIndex(seg) ? i : -1)).filter((i) => i >= 0).pop();
+  const arrayField = kind === 'array' ? field : lastIndex !== undefined ? path.slice(0, lastIndex).filter((seg) => !isIndex(seg)).join('.') : null;
+  if (kind === 'date') {
+    const timezone = getPreferences().dateDisplay === 'local' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC';
+    return {
+      title: 'Date',
+      items: (['day', 'month', 'year'] as const).map((unit) => ({
+        label: `Group by ${unit}`,
+        icon: CalendarDays,
+        request: { kind: 'groupByDate', field, unit, timezone },
+      })),
+    };
+  }
+  if (kind === 'oid') {
+    return { title: 'ObjectId', items: [{ label: 'Creation time', icon: Clock, request: { kind: 'oidTime', field, as: `${leafOf(field)}_time` } }] };
+  }
+  if (arrayField) {
+    return {
+      title: `Array · ${arrayField}`,
+      items: [
+        { label: 'Unwind (one document per element)', icon: UnfoldVertical, request: { kind: 'unwind', field: arrayField } },
+        { label: 'Array size', icon: Hash, request: { kind: 'arraySize', field: arrayField, as: `${leafOf(arrayField)}_size` } },
+      ],
+    };
+  }
+  return null;
+};
+
 // Shape 칸 — 필드 자체로 하는 것
-const shapeItems = (field: string, lookup: QbeTarget['lookup']): { label: string; icon: typeof Group; request: CollectRequest }[] => [
+const shapeItems = (field: string, lookup: QbeTarget['lookup']): ShapeItem[] => [
   { label: 'Sort ascending', icon: ArrowUpNarrowWide, request: { kind: 'sort', field, direction: 1 } },
   { label: 'Sort descending', icon: ArrowDownWideNarrow, request: { kind: 'sort', field, direction: -1 } },
   { label: 'Group by this field', icon: Group, request: { kind: 'group', field } },
@@ -301,6 +335,31 @@ export function QbeMenu({ target }: { target: QbeTarget }) {
                   <span className="truncate">{label}</span>
                 </button>
               ))}
+              {(() => {
+                const extra = typeSection(target.path, field, target.value);
+                if (!extra) return null;
+                return (
+                  <>
+                    <div className="my-0.5 h-px bg-slate-100" />
+                    <p className={sectionTitle}>{extra.title}</p>
+                    {extra.items.map(({ label, icon: Icon, request }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        role="menuitem"
+                        className="flex items-center gap-2 truncate rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
+                        onClick={() => {
+                          setAnchor(null);
+                          collect!(request);
+                        }}
+                      >
+                        <Icon size={13} className="shrink-0 text-slate-400" />
+                        <span className="truncate">{label}</span>
+                      </button>
+                    ))}
+                  </>
+                );
+              })()}
             </>
           )}
           <div className="my-0.5 h-px bg-slate-100" />
