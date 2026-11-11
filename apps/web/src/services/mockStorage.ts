@@ -6,7 +6,7 @@ import {
   type MockDatabaseRecord,
   type MockSnapshot,
 } from '../types/explorer';
-import { createEmptyWorkspaceSnapshot } from '../data/sampleData';
+import { createDemoSnapshot, createEmptyWorkspaceSnapshot } from '../data/sampleData';
 import { canonicalDocument, cloneDocument } from './mockClone';
 
 const STORAGE_KEY = 'mongolive_snapshot';
@@ -190,6 +190,10 @@ const writeSnapshot = (snapshot: MockSnapshot): void => {
   }
 };
 
+// 처음(또는 저장분이 깨졌을 때) 쓰는 스냅샷 — 공개 데모 빌드면 샘플 DB 둘, 아니면 빈 Workspace
+const freshSnapshot = (): MockSnapshot =>
+  import.meta.env.VITE_DEMO === 'true' ? validateSnapshot(createDemoSnapshot()) : createEmptyWorkspaceSnapshot();
+
 const loadInitialSnapshot = (): MockSnapshot => {
   const storage = readStorage();
   if (storage) {
@@ -198,7 +202,7 @@ const loadInitialSnapshot = (): MockSnapshot => {
       try {
         return validateSnapshot(JSON.parse(raw) as unknown);
       } catch {
-        const seed = createEmptyWorkspaceSnapshot();
+        const seed = freshSnapshot();
         // 초기화 시점의 쓰기 실패로 앱이 죽지는 않게 한다 — 메모리 스냅샷으로 계속 진행
         try {
           writeSnapshot(seed);
@@ -210,7 +214,7 @@ const loadInitialSnapshot = (): MockSnapshot => {
     }
   }
 
-  const seed = createEmptyWorkspaceSnapshot();
+  const seed = freshSnapshot();
   try {
     writeSnapshot(seed);
   } catch {

@@ -688,6 +688,23 @@ export const buildForumJsonSample = () => {
   };
 };
 
+// 공개 데모(VITE_DEMO)의 첫 화면 — 샘플 DB 둘(EJSON이 먼저 열린다). 문서는 아직 원본 모양이라
+// Mock 저장소의 validateSnapshot이 canonical로 맞추며 읽는다(그래서 unknown)
+export const createDemoSnapshot = (): unknown => {
+  const now = Date.now();
+  const ejson = buildForumEjsonSample();
+  const json = buildForumJsonSample();
+  return {
+    version: SNAPSHOT_VERSION,
+    activeDatabase: ejson.name,
+    databases: {
+      [ejson.name]: { ...ejson, updatedAt: now },
+      [json.name]: { ...json, updatedAt: now },
+    },
+    updatedAt: now,
+  };
+};
+
 export const createEmptyWorkspaceSnapshot = (): MockSnapshot => {
   const now = Date.now();
   return {

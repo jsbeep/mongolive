@@ -1,0 +1,50 @@
+# 공개 데모 — main에 푸시하면 웹을 Mock 모드로 빌드해서 GitHub Pages(https://jsbeep.github.io/mongolive/)에 올린다.
+# 서버·MongoDB 없이 브라우저 안에서만 돈다(데이터는 방문자 브라우저의 localStorage). 첫 방문엔 샘플 DB 둘이 들어 있다(VITE_DEMO).
+name: Demo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 연달아 푸시하면 이전 배포는 취소하고 마지막 것만
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # package.json의 packageManager(pnpm 버전)를 그대로 쓴다
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Build the demo (mock data, served under /mongolive/)
+        run: pnpm --filter @mongolive/web exec vite build --base=/mongolive/
+        env:
+          VITE_DEMO: 'true'
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
