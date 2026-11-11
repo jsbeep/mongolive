@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import { thirdPartyLicenses } from './thirdPartyLicenses';
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -10,7 +11,8 @@ export default defineConfig(({ mode }) => {
   const apiTarget = env.VITE_API_TARGET || 'http://127.0.0.1:4000';
 
   return {
-    plugins: [react()],
+    // thirdPartyLicenses — 빌드 결과에 THIRD-PARTY-LICENSES.txt(번들에 들어간 라이브러리의 라이선스 문구)를 함께 낸다
+    plugins: [react(), thirdPartyLicenses()],
     server: {
       // 기본은 로컬 전용. 외부 노출은 인증 단계(7단계)에서 프록시/인증과 함께 연다.
       host: env.VITE_HOST || '127.0.0.1',
