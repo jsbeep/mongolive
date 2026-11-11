@@ -30,7 +30,7 @@ import { CollectContext, QbeContext, type CollectHandler, type QbeHandler } from
 import { collectToPipeline } from '../services/pipelineCollect';
 import { clearQueryHistory, removeQueryHistory, useQueryHistory, type QueryHistoryEntry } from '../services/queryHistory';
 import { openSearchPanel } from '../services/queryPanel';
-import { api, dataSourceKind } from '../services/api';
+import { api } from '../services/api';
 
 // ── 스타일 ────────────────────────────────────────────────────────────────────
 
@@ -274,7 +274,6 @@ export default function ExplorerPage() {
             onOpenSettings={() => openSettings()}
             panels={{
               open: sidebarPanel?.kind ?? null,
-              canQuery: dataSourceKind === 'remote',
               onToggle: (kind, anchor) => {
                 // 같은 버튼 = 닫기, 다른 버튼 = 그 패널로
                 setSidebarPanel((open) => (open?.kind === kind ? null : { kind, anchor }));

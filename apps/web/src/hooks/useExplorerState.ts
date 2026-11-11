@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, dataSourceKind } from '../services/api';
+import { api } from '../services/api';
 import { recordQuery } from '../services/queryHistory';
 import { getPipelineStages, INPUT_STAGE_ID, stageLabel, usePipelineStages } from '../services/pipelines';
 import { useToast, type ToastMessage } from './useToast';
@@ -147,7 +147,7 @@ const readSavedQueries = (): Record<string, SavedQuery> => {
 };
 const savedQueryFor = (database: string, collection: string): DocumentListQuery => {
   const saved = readSavedQueries()[collectionKey(database, collection)];
-  const mongoFilter = dataSourceKind === 'remote' && saved?.mongoFilter && !validateQueryFilter(saved.mongoFilter)
+  const mongoFilter = saved?.mongoFilter && !validateQueryFilter(saved.mongoFilter)
     ? saved.mongoFilter
     : undefined;
   return {

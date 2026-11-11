@@ -16,7 +16,6 @@ import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../../utils/motionPresets';
 import { HeaderTitle } from './HeaderTitle';
 import { BookmarkIcon } from './BookmarkIcon';
 import { canEditIn, useServerSettings } from '../../../services/serverSettings';
-import { dataSourceKind } from '../../../services/api';
 import { pipelineKey, useAllPipelines, usePipelineStages } from '../../../services/pipelines';
 import { cn } from '../../../utils/cn';
 
@@ -70,7 +69,7 @@ export function CollectionsColumn({
   const pipelineStages = usePipelineStages(databaseName || null, activeCollectionName);
   // 컬렉션마다 지금 파이프라인(이 브라우저에 남은 것 — 스테이지를 다 지우면 없어진다)이 있는가
   const pipelines = useAllPipelines();
-  const showAggregation = !!aggregation && dataSourceKind === 'remote';
+  const showAggregation = !!aggregation;
   const pipelineBadge = (name: string, label: string, active: boolean) => {
     const count = pipelines[pipelineKey(databaseName, name)]?.stages.length ?? 0;
     if (!showAggregation || !count) return undefined;

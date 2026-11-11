@@ -55,6 +55,11 @@ import {
   emitDatabaseSnapshot,
 } from './mockEventBus';
 import { generateObjectId } from '../utils/objectId';
+import { validatePipeline, validateQueryFilter, type AggregateCounts, type AggregateResult, type EjsonObject } from '@mongolive/shared';
+
+// 사용자 쿼리(MongoDB filter)·집계는 mingo로 흉내 낸다(services/mockMongo) — 처음 쓸 때 따로 받아 온다(첫 화면을 가볍게)
+const loadEngine = () => import('./mockMongo');
+const messageOf = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
 
 
 const rejectWith = <T>(message: string): Promise<T> => Promise.reject(new Error(message));
@@ -120,15 +125,55 @@ export const getDocuments = async (collectionId: string, query?: DocumentQuery):
     return rejectWith('Collection not found');
   }
 
-  // 사용자 쿼리(MongoDB filter)는 서버 연결에서만 — Mock은 MongoDB 매칭 규칙을 흉내 내지 않는다
-  if (query?.mongoFilter) {
-    return rejectWith('Queries need a server connection (not available in demo mode)');
-  }
-
   const summaries = location.collection.documents.map((document, index) =>
     summarizeDocument(document, location.collection.updatedAt, location.collection.titleKey, location.collection.primaryKey, index),
   );
+
+  // 사용자 쿼리(MongoDB filter) — 서버와 같은 검사 뒤 mingo로 거른다. 전체 개수는 거르기 전 컬렉션 크기
+  if (query?.mongoFilter) {
+    const invalid = validateQueryFilter(query.mongoFilter);
+    if (invalid) return rejectWith(`Invalid query: ${invalid.message}`);
+    const { matchingIndexes } = await loadEngine();
+    let hits: Set<number>;
+    try {
+      hits = new Set(matchingIndexes(location.collection.documents, query.mongoFilter));
+    } catch (e) {
+      return rejectWith(messageOf(e, 'Query failed'));
+    }
+    return { ...queryDocuments(summaries.filter((_, i) => hits.has(i)), query), totalUnfiltered: summaries.length };
+  }
   return queryDocuments(summaries, query);
+};
+
+// 집계 — 서버(routes/aggregate.ts)와 같은 검사·상한. $lookup 등의 from은 같은 DB의 컬렉션(없으면 빈 컬렉션)
+const aggregateTarget = (database: string, collection: string) => {
+  const db = getSnapshot().databases[database];
+  const target = db?.collections[collection];
+  return target ? { documents: target.documents as EjsonObject[], source: (name: string) => db.collections[name]?.documents as EjsonObject[] | undefined } : null;
+};
+
+export const aggregateData = async (database: string, collection: string, pipeline: JsonValue[]): Promise<AggregateResult> => {
+  const invalid = validatePipeline(pipeline);
+  if (invalid) return rejectWith(`Invalid pipeline: ${invalid.message}`);
+  const target = aggregateTarget(database, collection);
+  if (!target) return rejectWith('Collection not found');
+  const { aggregateDocuments } = await loadEngine();
+  const started = performance.now();
+  try {
+    return { ...aggregateDocuments(target.documents, pipeline as EjsonObject[], target.source), elapsedMs: Math.round(performance.now() - started) };
+  } catch (e) {
+    return rejectWith(messageOf(e, 'Aggregation failed'));
+  }
+};
+
+export const aggregateCountsData = async (database: string, collection: string, pipeline: JsonValue[]): Promise<AggregateCounts> => {
+  const invalid = validatePipeline(pipeline);
+  if (invalid) return rejectWith(`Invalid pipeline: ${invalid.message}`);
+  const target = aggregateTarget(database, collection);
+  if (!target) return rejectWith('Collection not found');
+  const { countPipelineStages } = await loadEngine();
+  const started = performance.now();
+  return { ...countPipelineStages(target.documents, pipeline as EjsonObject[], target.source), elapsedMs: Math.round(performance.now() - started) };
 };
 
 export const mutateData = async (op: MutationRequest): Promise<MutationResult> => {

@@ -30,9 +30,9 @@ interface SidebarProps {
   onOpenCollection: (database: string, name: string, label: string) => Promise<void>;
   onMutate: (op: MutationRequest) => Promise<unknown>;
   // 떠 있는 패널(누른 버튼 옆) — Query = 쿼리 기록, Aggregation = 저장·최근 파이프라인, References = 선언한 참조 전체,
-  // Bookmarks = 북마크. 한 번에 하나만. canQuery가 false면(Mock) Query·Aggregation만 흐리게
+  // Bookmarks = 북마크. 한 번에 하나만. 서버 연결이든 Mock(데모 — mingo로 흉내)이든 다 된다
   // (집계 모드를 켜고 끄는 건 Collections 헤더의 Aggregation 버튼, Pipeline 헤더의 ×로도 나온다)
-  panels: { open: SidebarPanelKind | null; canQuery: boolean; onToggle: (kind: SidebarPanelKind, anchor: DOMRect) => void };
+  panels: { open: SidebarPanelKind | null; onToggle: (kind: SidebarPanelKind, anchor: DOMRect) => void };
   // 맨 아래(VSCode처럼 앱·계정은 사이드바 아래) — 설정 창, 로그아웃(로그인 모드일 때만)
   onOpenSettings: () => void;
 }
@@ -43,18 +43,12 @@ type TreeProps = Omit<SidebarProps, 'sidebar'>;
 
 // 아직 없는 기능 — 눌러도 아무 일이 없으니 흐리게 + 'Soon' 표시
 const SOON_ITEMS: { icon: LucideIcon; label: string }[] = [];
-const QUERY_TIP = 'Query history — run a past query on this collection';
-const QUERY_TIP_MOCK = 'Query history — needs a server connection (not in demo mode)';
-const REFS_TIP = 'References — everything you declared, across databases';
-const BOOKMARKS_TIP = 'Bookmarks — places you saved from a column’s icon';
-
 // 패널을 여는 사이드바 버튼들(전체·레일 공통)
-
-const PANEL_ITEMS: { kind: SidebarPanelKind; icon: LucideIcon; label: string; tip: (canQuery: boolean) => string; needsQuery: boolean }[] = [
-  { kind: 'history', icon: Search, label: 'Query', tip: (ok) => (ok ? QUERY_TIP : QUERY_TIP_MOCK), needsQuery: true },
-  { kind: 'aggregation', icon: Workflow, label: 'Aggregation', tip: (ok) => (ok ? 'Aggregation — saved and recent pipelines, across collections' : 'Aggregation — needs a server connection (not in demo mode)'), needsQuery: true },
-  { kind: 'references', icon: Link, label: 'References', tip: () => REFS_TIP, needsQuery: false },
-  { kind: 'bookmarks', icon: Bookmark, label: 'Bookmarks', tip: () => BOOKMARKS_TIP, needsQuery: false },
+const PANEL_ITEMS: { kind: SidebarPanelKind; icon: LucideIcon; label: string; tip: string }[] = [
+  { kind: 'history', icon: Search, label: 'Query', tip: 'Query history — run a past query on this collection' },
+  { kind: 'aggregation', icon: Workflow, label: 'Aggregation', tip: 'Aggregation — saved and recent pipelines, across collections' },
+  { kind: 'references', icon: Link, label: 'References', tip: 'References — everything you declared, across databases' },
+  { kind: 'bookmarks', icon: Bookmark, label: 'Bookmarks', tip: 'Bookmarks — places you saved from a column’s icon' },
 ];
 
 const styles = {
@@ -77,7 +71,6 @@ const styles = {
   navButton: 'flex h-8 items-center gap-2.5 rounded-md px-2 text-left text-[13px] transition-colors',
   navButtonIdle: 'text-slate-600 hover:bg-slate-100 hover:text-slate-800',
   navButtonActive: 'bg-emerald-50 text-emerald-700',
-  navButtonDisabled: 'cursor-default text-slate-600 opacity-50',
   railBtnActive: 'inline-flex h-9 w-9 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 transition-colors',
   soon: 'ml-auto rounded px-1.5 py-px text-[10px] font-medium text-slate-400 ring-1 ring-slate-200',
   divider: 'mx-3 my-2.5 h-px shrink-0 bg-slate-100',
@@ -114,8 +107,7 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
         </div>
       </div>
       <nav className={styles.nav} aria-label="Tools">
-        {PANEL_ITEMS.map(({ kind, icon: Icon, label, tip, needsQuery }) => {
-          const enabled = !needsQuery || tree.panels.canQuery;
+        {PANEL_ITEMS.map(({ kind, icon: Icon, label, tip }) => {
           const open = tree.panels.open === kind;
           return (
             <button
@@ -123,10 +115,9 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
               type="button"
               data-sidebar-panel-toggle=""
               aria-expanded={open}
-              aria-disabled={!enabled}
-              className={cn(styles.navButton, !enabled ? styles.navButtonDisabled : open ? styles.navButtonActive : styles.navButtonIdle)}
-              data-tt={tip(tree.panels.canQuery)}
-              onClick={(e) => enabled && tree.panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
+              className={cn(styles.navButton, open ? styles.navButtonActive : styles.navButtonIdle)}
+              data-tt={tip}
+              onClick={(e) => tree.panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
             >
               <Icon size={15} />
               <span>{label}</span>
@@ -174,8 +165,7 @@ function RailContent({ onExpand, onHide, panels, onOpenSettings }: { onExpand: (
         <MlButton hoverIcon={PanelLeftOpen} label="Expand sidebar" onClick={onExpand} />
       </div>
       <nav className={`${styles.railList} pt-3`} aria-label="Tools">
-        {PANEL_ITEMS.map(({ kind, icon: Icon, label, tip, needsQuery }) => {
-          const enabled = !needsQuery || panels.canQuery;
+        {PANEL_ITEMS.map(({ kind, icon: Icon, label, tip }) => {
           const open = panels.open === kind;
           return (
             <button
@@ -184,10 +174,9 @@ function RailContent({ onExpand, onHide, panels, onOpenSettings }: { onExpand: (
               data-sidebar-panel-toggle=""
               aria-label={label}
               aria-expanded={open}
-              aria-disabled={!enabled}
-              className={!enabled ? styles.railBtnSoon : open ? styles.railBtnActive : styles.railBtn}
-              data-tt={tip(panels.canQuery)}
-              onClick={(e) => enabled && panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
+              className={open ? styles.railBtnActive : styles.railBtn}
+              data-tt={tip}
+              onClick={(e) => panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
             >
               <Icon size={16} />
             </button>

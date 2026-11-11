@@ -28,7 +28,7 @@ import { usePreferences } from '../../../services/preferences';
 import { canEditIn, useServerSettings } from '../../../services/serverSettings';
 import { dateTooltip, formatDate, formatOid, oidTooltip } from '../../../utils/formatValue';
 import type { QbeTarget } from '../../query/QbeMenu';
-import { api, dataSourceKind } from '../../../services/api';
+import { api } from '../../../services/api';
 import { InlineSegmentEditor } from '../../editors/InlineSegmentEditor';
 import { DeleteConfirmModal } from '../../common/DeleteConfirmModal';
 import { AddItemButton } from './AddItemButton';
@@ -363,7 +363,7 @@ export function JsonLevelColumn({
     return config ? { kind: 'field', collection: config.targetCollection, key: config.targetKey } : undefined;
   };
   const qbeFor = (fieldKey: string, value: JsonValue): QbeTarget | undefined =>
-    (!readOnly || collecting) && dataSourceKind === 'remote' && mutateDatabaseName && mutateCollectionName
+    (!readOnly || collecting) && mutateDatabaseName && mutateCollectionName
       ? {
           path: [...projectionPath, fieldKey],
           value,

@@ -208,6 +208,9 @@ importers:
       lucide-react:
         specifier: ^0.469.0
         version: 0.469.0(react@18.3.1)
+      mingo:
+        specifier: ^7.2.7
+        version: 7.2.7
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -245,6 +248,9 @@ importers:
       vite:
         specifier: ^6.3.1
         version: 6.4.5(@types/node@22.20.5)(jiti@1.21.7)(tsx@4.23.15)
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@types/node@22.20.5)(vite@6.4.5(@types/node@22.20.5)(jiti@1.21.7)(tsx@4.23.15))
 
   packages/shared:
     devDependencies:
@@ -1349,6 +1355,9 @@ packages:
   mime-types@3.0.2:
     resolution: {integrity: sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A==}
     engines: {node: '>=18'}
+
+  mingo@7.2.7:
+    resolution: {integrity: sha512-4IRY2mkJlAv/RmnLrXJyP01T6JW9tmD8NmOC7ANgTUW6B1AU8enDySHWREdMvY2yBv0xuQ1hzA1d4fEHYgDoXw==}
 
   mongodb-connection-string-url@7.0.2:
     resolution: {integrity: sha512-ZoS07RoFqpKYQwAk59qmrx8+jJHNHU30UjlU96QktiGn1ltvDr+vCznLX5DiUBLEpMAHatHNWV1nM/74ul66kA==}
@@ -2804,6 +2813,8 @@ snapshots:
   mime-types@3.0.2:
     dependencies:
       mime-db: 1.54.0
+
+  mingo@7.2.7: {}
 
   mongodb-connection-string-url@7.0.2:
     dependencies:

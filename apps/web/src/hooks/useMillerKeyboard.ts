@@ -11,7 +11,6 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { navActionsOf } from '../utils/keyboardNav';
 import { openSearchPanel } from '../services/queryPanel';
-import { dataSourceKind } from '../services/api';
 
 interface Cursor {
   col: number;
@@ -137,10 +136,10 @@ export function useMillerKeyboard(containerRef: RefObject<HTMLElement | null>, o
         showShortcutsRef.current();
         return;
       }
-      // 쿼리는 커서가 어느 컬럼에 있든 문서 목록(컬럼 1)의 것 — 문서 목록이 열려 있고 서버 연결일 때만
+      // 쿼리는 커서가 어느 컬럼에 있든 문서 목록(컬럼 1)의 것 — 문서 목록이 열려 있을 때만
       if (key === 'q') {
         // aggregation 모드(컬럼 1이 파이프라인)엔 쿼리 패널이 없다 — 필터 버튼이 있는 문서 목록일 때만
-        if (dataSourceKind !== 'remote' || !columnEl(1)?.querySelector('button[data-tt^="Filter"]')) return;
+        if (!columnEl(1)?.querySelector('button[data-tt^="Filter"]')) return;
         e.preventDefault();
         openSearchPanel('query');
         return;

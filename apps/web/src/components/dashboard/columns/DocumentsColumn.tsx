@@ -25,7 +25,6 @@ import { closeSearchPanel, openSearchPanel, useSearchPanel } from '../../../serv
 import { useHeaderFold } from '../../../hooks/useHeaderFold';
 import { HeaderOverflowMenu } from './HeaderOverflowMenu';
 import { BookmarkIcon } from './BookmarkIcon';
-import { dataSourceKind } from '../../../services/api';
 
 const DOCUMENT_SORT_OPTIONS: SortOption[] = [
   { value: 'none', label: 'Default order', icon: ArrowUpDown },
@@ -109,8 +108,6 @@ export function DocumentsColumn({
   const searchPanel = useSearchPanel();
   const { page: pageInfo, query, onQueryChange, onApplyMongoFilter } = documentList;
   const isQueryActive = !!query.mongoFilter;
-  // Mock은 MongoDB 매칭을 흉내 내지 않는다 — 쿼리는 서버 연결에서만
-  const canQuery = dataSourceKind === 'remote';
   const [filterInput, setFilterInput] = useState(query.filter);
   // 컬렉션이 바뀌어 검색어가 초기화되면 입력창도 맞춘다
   useEffect(() => { setFilterInput(query.filter); }, [query.filter]);
@@ -287,7 +284,7 @@ export function DocumentsColumn({
                   searchPanel.open || isDocFilterActive || isQueryActive ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600',
                 )}
                 // '/' 단축키(useMillerKeyboard)가 data-tt가 "Filter"로 시작하는 버튼을 찾아 누른다
-                data-tt={canQuery ? 'Filter & query — / to filter, q to query' : 'Filter / sort documents in this collection'}
+                data-tt="Filter & query — / to filter, q to query"
                 onClick={() => (searchPanel.open ? closeSearchPanel() : openSearchPanel('filter'))}
               >
                 {(isDocFilterActive || isQueryActive) && !searchPanel.open && <span className={FILTER_DOT_CLASS} />}
@@ -313,8 +310,7 @@ export function DocumentsColumn({
             autoFocus={false}
             focusSignal={searchPanel.focus === 'filter' ? searchPanel.seq : undefined}
           />
-          {canQuery && (
-            <QueryBar
+          <QueryBar
               key={`${activeDatabaseName}.${activeCollectionName}`}
               appliedText={query.mongoFilter ? query.mongoFilterText : undefined}
               isApplied={isQueryActive}
@@ -326,7 +322,6 @@ export function DocumentsColumn({
               // 필드 자동완성 — 이 컬렉션 문서 몇 개(지금 연 문서 먼저)의 경로들
               loadFieldSuggestions={() => (activeDatabaseName ? loadQueryFieldPaths(activeDatabaseName, activeCollectionName, activeDocumentOid) : Promise.resolve([]))}
             />
-          )}
         </>
       )}
 
