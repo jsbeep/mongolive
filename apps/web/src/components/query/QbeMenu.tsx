@@ -274,8 +274,9 @@ export function QbeMenu({ target }: { target: QbeTarget }) {
           style={{ top, left: Math.max(8, Math.min(anchor.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8)), width: MENU_WIDTH }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* 둥근 모서리·여백은 바깥, 스크롤은 여기 — 스크롤바가 모서리 밖으로 삐져나오지 않게 */}
-          <div className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
+          {/* 둥근 모서리·여백은 바깥, 스크롤은 여기 — 스크롤바가 모서리 밖으로 삐져나오지 않게.
+              항목은 줄어들지 않게(shrink-0) — truncate(overflow hidden) 항목은 flex 안에서 납작해져 스크롤 대신 겹쳤다 */}
+          <div className="flex min-h-0 flex-col gap-0.5 overflow-y-auto [&>*]:shrink-0 [&>.contents>*]:shrink-0">
             <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-1.5">
               <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-slate-600" title={field}>{field}</span>
               {target.elsewhere && (

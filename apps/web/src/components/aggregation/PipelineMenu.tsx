@@ -114,8 +114,9 @@ export function PipelineMenu({ database, collection, stages, changeCount, onOpen
           className="fixed z-[120] flex max-h-[calc(100vh-16px)] flex-col overflow-hidden rounded-xl bg-white p-1 shadow-elevated ring-1 ring-slate-100"
           style={{ top, left: Math.max(8, Math.min(anchor.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8)), width: MENU_WIDTH }}
         >
-          {/* 둥근 모서리·여백은 바깥, 스크롤은 여기 — 스크롤바가 모서리 밖으로 삐져나오지 않게 */}
-          <div className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
+          {/* 둥근 모서리·여백은 바깥, 스크롤은 여기 — 스크롤바가 모서리 밖으로 삐져나오지 않게.
+              항목은 줄어들지 않게(shrink-0) — truncate(overflow hidden) 항목은 flex 안에서 납작해져 스크롤 대신 겹쳤다 */}
+          <div className="flex min-h-0 flex-col gap-0.5 overflow-y-auto [&>*]:shrink-0">
             {/* 이름 붙여 저장 — 같은 이름이면 덮어쓴다 */}
             <p className={section}>Save as</p>
             <form
