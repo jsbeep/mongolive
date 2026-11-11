@@ -25,7 +25,9 @@ const styles = {
   chevron: 'h-3 w-3 shrink-0 text-slate-300',
   pathInputWrap: 'flex h-7 shrink-0 items-center my-1',
   pathInput: 'h-7 min-w-[140px] rounded-lg bg-slate-100/80 px-2.5 text-[13px] font-mono font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 focus:bg-white transition-all',
-  dropdownPanel: 'fixed z-[101] max-h-[320px] min-w-[220px] overflow-y-auto rounded-2xl bg-white shadow-elevated ring-1 ring-slate-100 p-1.5 flex flex-col gap-0.5',
+  // 둥근 모서리·여백은 바깥, 스크롤은 안쪽 — 한 요소가 둘 다 하면 스크롤바가 둥근 모서리 밖으로 삐져나온다
+  dropdownPanel: 'fixed z-[101] flex max-h-[320px] min-w-[220px] flex-col overflow-hidden rounded-2xl bg-white shadow-elevated ring-1 ring-slate-100 p-1.5',
+  dropdownList: 'flex min-h-0 flex-col gap-0.5 overflow-y-auto',
   dropdownItem: 'relative flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer select-none transition-colors',
   dropdownItemActive: 'bg-selected',
   dropdownKey: 'flex-1 min-w-0 truncate text-[13px] font-mono font-medium text-slate-700',
@@ -85,6 +87,9 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFie
   const trackRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  // 방향키로 하이라이트를 옮겼을 때만 그 항목까지 스크롤한다(마우스로 올렸을 때 목록이 움직이지 않게)
+  const keyNavRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -184,7 +189,15 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFie
   // 누르면 첫 후보가 자동완성되는 기존 흐름을 유지한다. 뒤로가기는 ArrowUp으로 한 번 더 올라가면 닿는다.
   useEffect(() => {
     setHighlightIndex(candidates.length > 0 ? candidateOffset : 0);
+    // 목록이 바뀌었으니 맨 위부터(첫 후보가 하이라이트)
+    if (listRef.current) listRef.current.scrollTop = 0;
   }, [inputValue]);
+
+  useEffect(() => {
+    if (!keyNavRef.current) return;
+    keyNavRef.current = false;
+    listRef.current?.querySelector(`[data-item="${highlightIndex}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [highlightIndex]);
 
   const goBack = () => {
     const parent = confirmed.slice(0, -1);
@@ -254,11 +267,13 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFie
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
+      keyNavRef.current = true;
       if (itemCount > 0) setHighlightIndex((i) => (i + 1) % itemCount);
       return;
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault();
+      keyNavRef.current = true;
       if (itemCount > 0) setHighlightIndex((i) => (i - 1 + itemCount) % itemCount);
       return;
     }
@@ -428,71 +443,75 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFie
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.1 }}
         >
-          {showBack && (
-            <>
-              <div
-                className={cn(styles.dropdownBack, backIndex === highlightIndex && styles.dropdownItemActive)}
-                onMouseEnter={() => setHighlightIndex(backIndex)}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  goBack();
-                }}
-              >
-                <CornerUpLeft size={13} className="shrink-0 text-slate-400" />
-                <span className="text-[13px] font-mono">.{confirmed.slice(0, -1).join('.')}</span>
-              </div>
-              <div className={styles.dropdownDivider} />
-            </>
-          )}
-          {candidates.length > 0 ? (
-            candidates.map((entry, index) => {
-              const type = getFieldType(entry.value);
-              const badge = TYPE_BADGE[type];
-              const itemIndex = index + candidateOffset;
-              return (
+          <div ref={listRef} className={styles.dropdownList}>
+            {showBack && (
+              <>
                 <div
-                  key={entry.key}
-                  className={cn(styles.dropdownItem, itemIndex === highlightIndex && styles.dropdownItemActive)}
-                  onMouseEnter={() => setHighlightIndex(itemIndex)}
+                  data-item={backIndex}
+                  className={cn(styles.dropdownBack, backIndex === highlightIndex && styles.dropdownItemActive)}
+                  onMouseEnter={() => setHighlightIndex(backIndex)}
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    acceptCandidate(entry);
+                    goBack();
                   }}
                 >
-                  <span className={styles.dropdownKey}>{entry.key}</span>
-                  {badge && (
-                    <span className={cn(styles.typeBadge, badge.bg, badge.text)}>
-                      <badge.icon size={11} className={badge.iconColor} />
-                      {badge.label}
-                    </span>
-                  )}
-                  {type === 'string' && (
-                    <span className="text-[13px] font-serif text-emerald-400 shrink-0">{'“ ”'}</span>
-                  )}
-                  {type === 'number' && (
-                    <Hash size={12} className="text-sky-400 shrink-0" />
-                  )}
-                  {type === 'boolean' && (
-                    <ToggleLeft size={12} className="text-violet-400 shrink-0" />
-                  )}
-                  {type === 'null' && (
-                    <Ban size={12} className="text-slate-300 shrink-0" />
-                  )}
-                  {type === 'object' && (
-                    <span className={styles.countBadge}>{'{ '}{Object.keys(entry.value as Record<string, unknown>).length}{' }'}</span>
-                  )}
-                  {type === 'array' && (
-                    <span className={styles.countBadge}>{'[ '}{(entry.value as JsonValue[]).length}{' ]'}</span>
-                  )}
-                  {isExpandableType(type) && (
-                    <CornerDownLeft size={12} className={styles.enterHint} />
-                  )}
+                  <CornerUpLeft size={13} className="shrink-0 text-slate-400" />
+                  <span className="text-[13px] font-mono">.{confirmed.slice(0, -1).join('.')}</span>
                 </div>
-              );
-            })
-          ) : (
-            <div className={styles.dropdownEmpty}>No matching keys</div>
-          )}
+                <div className={styles.dropdownDivider} />
+              </>
+            )}
+            {candidates.length > 0 ? (
+              candidates.map((entry, index) => {
+                const type = getFieldType(entry.value);
+                const badge = TYPE_BADGE[type];
+                const itemIndex = index + candidateOffset;
+                return (
+                  <div
+                    key={entry.key}
+                    data-item={itemIndex}
+                    className={cn(styles.dropdownItem, itemIndex === highlightIndex && styles.dropdownItemActive)}
+                    onMouseEnter={() => setHighlightIndex(itemIndex)}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      acceptCandidate(entry);
+                    }}
+                  >
+                    <span className={styles.dropdownKey}>{entry.key}</span>
+                    {badge && (
+                      <span className={cn(styles.typeBadge, badge.bg, badge.text)}>
+                        <badge.icon size={11} className={badge.iconColor} />
+                        {badge.label}
+                      </span>
+                    )}
+                    {type === 'string' && (
+                      <span className="text-[13px] font-serif text-emerald-400 shrink-0">{'“ ”'}</span>
+                    )}
+                    {type === 'number' && (
+                      <Hash size={12} className="text-sky-400 shrink-0" />
+                    )}
+                    {type === 'boolean' && (
+                      <ToggleLeft size={12} className="text-violet-400 shrink-0" />
+                    )}
+                    {type === 'null' && (
+                      <Ban size={12} className="text-slate-300 shrink-0" />
+                    )}
+                    {type === 'object' && (
+                      <span className={styles.countBadge}>{'{ '}{Object.keys(entry.value as Record<string, unknown>).length}{' }'}</span>
+                    )}
+                    {type === 'array' && (
+                      <span className={styles.countBadge}>{'[ '}{(entry.value as JsonValue[]).length}{' ]'}</span>
+                    )}
+                    {isExpandableType(type) && (
+                      <CornerDownLeft size={12} className={styles.enterHint} />
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <div className={styles.dropdownEmpty}>No matching keys</div>
+            )}
+          </div>
         </motion.div>,
         document.body,
       )}

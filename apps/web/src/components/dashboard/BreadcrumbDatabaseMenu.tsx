@@ -24,7 +24,9 @@ const styles = {
   triggerIdle: 'text-slate-600 hover:bg-slate-100/70 hover:text-slate-800',
   triggerLast: 'bg-slate-100/60 font-semibold text-slate-900 hover:bg-slate-100',
   triggerOpen: 'bg-slate-100 text-slate-900',
-  panel: 'fixed z-[101] flex max-h-[360px] min-w-[240px] flex-col gap-0.5 overflow-y-auto rounded-xl bg-white p-1.5 shadow-elevated ring-1 ring-slate-100',
+  // 둥근 모서리·여백은 바깥, 스크롤은 안쪽(list) — 스크롤바가 모서리 밖으로 삐져나오지 않게
+  panel: 'fixed z-[101] flex max-h-[360px] min-w-[240px] flex-col overflow-hidden rounded-xl bg-white p-1.5 shadow-elevated ring-1 ring-slate-100',
+  list: 'flex min-h-0 flex-col gap-0.5 overflow-y-auto',
   item: 'flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors',
   itemIdle: 'text-slate-700 hover:bg-slate-50',
   itemActive: 'bg-selected font-semibold text-emerald-700',
@@ -102,30 +104,30 @@ export function BreadcrumbDatabaseMenu({ label, isLast, databases, activeDatabas
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -6, scale: 0.98 }}
               transition={{ duration: 0.1 }}
-              role="listbox"
-              aria-label="Databases"
             >
-              {databases.length === 0 ? (
-                <p className={styles.empty}>No databases.</p>
-              ) : (
-                databases.map((db) => {
-                  const isActive = db.name === activeDatabase;
-                  return (
-                    <button
-                      key={db.name}
-                      type="button"
-                      role="option"
-                      aria-selected={isActive}
-                      className={cn(styles.item, isActive ? styles.itemActive : styles.itemIdle)}
-                      onClick={() => pick(db.name)}
-                    >
-                      {isActive ? <Check size={14} className="shrink-0" /> : <Database size={14} className="shrink-0 text-slate-400" />}
-                      <span className="min-w-0 truncate">{db.label}</span>
-                      <span className={styles.meta}>{db.collectionCount}</span>
-                    </button>
-                  );
-                })
-              )}
+              <div className={styles.list} role="listbox" aria-label="Databases">
+                {databases.length === 0 ? (
+                  <p className={styles.empty}>No databases.</p>
+                ) : (
+                  databases.map((db) => {
+                    const isActive = db.name === activeDatabase;
+                    return (
+                      <button
+                        key={db.name}
+                        type="button"
+                        role="option"
+                        aria-selected={isActive}
+                        className={cn(styles.item, isActive ? styles.itemActive : styles.itemIdle)}
+                        onClick={() => pick(db.name)}
+                      >
+                        {isActive ? <Check size={14} className="shrink-0" /> : <Database size={14} className="shrink-0 text-slate-400" />}
+                        <span className="min-w-0 truncate">{db.label}</span>
+                        <span className={styles.meta}>{db.collectionCount}</span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
             </m.div>
           )}
         </AnimatePresence>,

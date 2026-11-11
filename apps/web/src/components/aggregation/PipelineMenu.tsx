@@ -111,96 +111,99 @@ export function PipelineMenu({ database, collection, stages, changeCount, onOpen
           ref={menuRef}
           role="menu"
           aria-label="Pipeline menu"
-          className="fixed z-[120] flex max-h-[calc(100vh-16px)] flex-col gap-0.5 overflow-y-auto rounded-xl bg-white p-1 shadow-elevated ring-1 ring-slate-100"
+          className="fixed z-[120] flex max-h-[calc(100vh-16px)] flex-col overflow-hidden rounded-xl bg-white p-1 shadow-elevated ring-1 ring-slate-100"
           style={{ top, left: Math.max(8, Math.min(anchor.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8)), width: MENU_WIDTH }}
         >
-          {/* 이름 붙여 저장 — 같은 이름이면 덮어쓴다 */}
-          <p className={section}>Save as</p>
-          <form
-            className="flex items-center gap-1 px-1.5 pb-1"
-            onSubmit={(e) => {
-              e.preventDefault();
-              save();
-            }}
-          >
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={applied.length ? 'Name this pipeline' : 'No stages to save'}
-              disabled={!applied.length}
-              aria-label="Pipeline name"
-              className="min-w-0 flex-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[13px] text-slate-700 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400/60 disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={!name.trim() || !applied.length}
-              aria-label="Save"
-              className="shrink-0 rounded-lg p-1.5 text-emerald-600 transition-colors hover:bg-emerald-50 disabled:opacity-30"
+          {/* 둥근 모서리·여백은 바깥, 스크롤은 여기 — 스크롤바가 모서리 밖으로 삐져나오지 않게 */}
+          <div className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
+            {/* 이름 붙여 저장 — 같은 이름이면 덮어쓴다 */}
+            <p className={section}>Save as</p>
+            <form
+              className="flex items-center gap-1 px-1.5 pb-1"
+              onSubmit={(e) => {
+                e.preventDefault();
+                save();
+              }}
             >
-              <Save size={14} />
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={applied.length ? 'Name this pipeline' : 'No stages to save'}
+                disabled={!applied.length}
+                aria-label="Pipeline name"
+                className="min-w-0 flex-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[13px] text-slate-700 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400/60 disabled:opacity-50"
+              />
+              <button
+                type="submit"
+                disabled={!name.trim() || !applied.length}
+                aria-label="Save"
+                className="shrink-0 rounded-lg p-1.5 text-emerald-600 transition-colors hover:bg-emerald-50 disabled:opacity-30"
+              >
+                <Save size={14} />
+              </button>
+            </form>
+            {changeCount > 0 && (
+              <p className="px-2.5 pb-1 text-[11px] leading-snug text-amber-600">
+                {changeCount} unapplied change{changeCount > 1 ? 's' : ''} won’t be saved — Run first
+              </p>
+            )}
+
+            {saved.length > 0 && (
+              <>
+                <p className={section}>Saved</p>
+                {saved.map((p) => (
+                  <div key={p.id} className={row}>
+                    <button type="button" role="menuitem" className="min-w-0 flex-1 text-left" onClick={() => open(p.stages, `“${p.name}”`)}>
+                      <span className="block truncate text-[13px] font-medium text-slate-700">{p.name}</span>
+                      <span className="block truncate font-mono text-[11px] text-slate-400">{outline(p.stages)} · {ago(p.at)}</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${p.name}`}
+                      data-tt="Delete this saved pipeline"
+                      className="shrink-0 rounded-md p-1 text-slate-300 opacity-0 transition hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
+                      onClick={() => deleteSavedPipeline(database, collection, p.id)}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {history.length > 0 && (
+              <>
+                <p className={section}>Recent versions</p>
+                {history.map((v, i) => (
+                  <button key={v.at} type="button" role="menuitem" className={row} onClick={() => open(v.stages, `the version from ${ago(v.at)}`)}>
+                    <History size={13} className="shrink-0 text-slate-300" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-slate-600">{outline(v.stages)}</span>
+                    <span className="shrink-0 text-[11px] text-slate-400">{i === 0 ? 'current' : ago(v.at)}</span>
+                  </button>
+                ))}
+              </>
+            )}
+
+            <div className="my-0.5 h-px bg-slate-100" />
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!applied.length}
+              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-40"
+              onClick={() => {
+                void onCopy().then(() => {
+                  setCopied(true);
+                  setTimeout(() => {
+                    setCopied(false);
+                    setAnchor(null);
+                  }, 700);
+                });
+              }}
+            >
+              {copied ? <Check size={13} className="shrink-0 text-emerald-500" /> : <ClipboardCopy size={13} className="shrink-0 text-slate-400" />}
+              <span className="flex-1">{copied ? 'Copied' : 'Copy as a mongosh command'}</span>
             </button>
-          </form>
-          {changeCount > 0 && (
-            <p className="px-2.5 pb-1 text-[11px] leading-snug text-amber-600">
-              {changeCount} unapplied change{changeCount > 1 ? 's' : ''} won’t be saved — Run first
-            </p>
-          )}
-
-          {saved.length > 0 && (
-            <>
-              <p className={section}>Saved</p>
-              {saved.map((p) => (
-                <div key={p.id} className={row}>
-                  <button type="button" role="menuitem" className="min-w-0 flex-1 text-left" onClick={() => open(p.stages, `“${p.name}”`)}>
-                    <span className="block truncate text-[13px] font-medium text-slate-700">{p.name}</span>
-                    <span className="block truncate font-mono text-[11px] text-slate-400">{outline(p.stages)} · {ago(p.at)}</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Delete ${p.name}`}
-                    data-tt="Delete this saved pipeline"
-                    className="shrink-0 rounded-md p-1 text-slate-300 opacity-0 transition hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
-                    onClick={() => deleteSavedPipeline(database, collection, p.id)}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </>
-          )}
-
-          {history.length > 0 && (
-            <>
-              <p className={section}>Recent versions</p>
-              {history.map((v, i) => (
-                <button key={v.at} type="button" role="menuitem" className={row} onClick={() => open(v.stages, `the version from ${ago(v.at)}`)}>
-                  <History size={13} className="shrink-0 text-slate-300" />
-                  <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-slate-600">{outline(v.stages)}</span>
-                  <span className="shrink-0 text-[11px] text-slate-400">{i === 0 ? 'current' : ago(v.at)}</span>
-                </button>
-              ))}
-            </>
-          )}
-
-          <div className="my-0.5 h-px bg-slate-100" />
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!applied.length}
-            className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-40"
-            onClick={() => {
-              void onCopy().then(() => {
-                setCopied(true);
-                setTimeout(() => {
-                  setCopied(false);
-                  setAnchor(null);
-                }, 700);
-              });
-            }}
-          >
-            {copied ? <Check size={13} className="shrink-0 text-emerald-500" /> : <ClipboardCopy size={13} className="shrink-0 text-slate-400" />}
-            <span className="flex-1">{copied ? 'Copied' : 'Copy as a mongosh command'}</span>
-          </button>
+          </div>
         </div>,
         document.body,
       )}

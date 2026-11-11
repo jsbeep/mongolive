@@ -80,8 +80,11 @@ export const createRemoteDataSource = (): DataSource => {
   const oidCache = new Map<string, { at: number; promise: Promise<OidLocation | null> }>();
 
   const locateOid = (oid: string): Promise<OidLocation | null> => {
+    const now = Date.now();
     const cached = oidCache.get(oid);
-    if (cached && Date.now() - cached.at < OID_CACHE_MS) return cached.promise;
+    if (cached && now - cached.at < OID_CACHE_MS) return cached.promise;
+    // 시간이 지난 것은 지운다 — 안 지우면 변경 알림이 없는 동안 열어 본 참조 문서가 계속 쌓인다
+    for (const [key, entry] of oidCache) if (now - entry.at >= OID_CACHE_MS) oidCache.delete(key);
     const promise = request<OidLocation>(`/oid/${enc(oid)}`).catch((e: unknown) => {
       if ((e as { status?: number }).status === 404) return null;
       oidCache.delete(oid);

@@ -270,117 +270,120 @@ export function QbeMenu({ target }: { target: QbeTarget }) {
           ref={menuRef}
           role="menu"
           aria-label={collecting ? 'Add to pipeline' : 'Query by example'}
-          className="fixed z-[120] flex max-h-[calc(100vh-16px)] flex-col gap-0.5 overflow-y-auto rounded-xl bg-white p-1 shadow-elevated ring-1 ring-slate-100"
+          className="fixed z-[120] flex max-h-[calc(100vh-16px)] flex-col overflow-hidden rounded-xl bg-white p-1 shadow-elevated ring-1 ring-slate-100"
           style={{ top, left: Math.max(8, Math.min(anchor.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8)), width: MENU_WIDTH }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-1.5">
-            <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-slate-600" title={field}>{field}</span>
-            {target.elsewhere && (
-              <span
-                className="shrink-0 text-sky-500"
-                aria-label={`Opens ${target.collection}`}
-                data-tt={`Opens ${target.database}.${target.collection} and adds the condition there`}
-              >
-                <Info size={13} />
-              </span>
-            )}
-          </div>
-          {hasIndex && (
-            <div className="mx-1 mb-1 flex rounded-lg bg-slate-100 p-0.5 text-xs">
-              {[false, true].map((exact) => (
-                <button
-                  key={String(exact)}
-                  type="button"
-                  className={cn('flex-1 rounded-md px-1.5 py-0.5 transition-colors', exactPosition === exact ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
-                  onClick={() => setExactPosition(exact)}
+          {/* 둥근 모서리·여백은 바깥, 스크롤은 여기 — 스크롤바가 모서리 밖으로 삐져나오지 않게 */}
+          <div className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
+            <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-1.5">
+              <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-slate-600" title={field}>{field}</span>
+              {target.elsewhere && (
+                <span
+                  className="shrink-0 text-sky-500"
+                  aria-label={`Opens ${target.collection}`}
+                  data-tt={`Opens ${target.database}.${target.collection} and adds the condition there`}
                 >
-                  {exact ? 'This position only' : 'Any element'}
-                </button>
-              ))}
+                  <Info size={13} />
+                </span>
+              )}
             </div>
-          )}
-          {collecting && <p className={sectionTitle}>Filter · $match</p>}
-          {items.map((item, index) => (
-            <div key={item.label} className="contents">
-              {index > 0 && items[index - 1].group !== item.group && <div className="mx-2 my-0.5 h-px bg-slate-100" />}
-              <button
-                type="button"
-                role="menuitem"
-                className="truncate rounded-lg px-2.5 py-1.5 text-left font-mono text-[13px] text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
-                title={item.label}
-                onClick={() => pick(item.conditions)}
-              >
-                {item.label}
-              </button>
-            </div>
-          ))}
-          {/* 파이프라인에 넣기 — 필드 자체로 하는 것(정렬·그룹·값 세기·포함/제외·$lookup) */}
-          {collecting && (
-            <>
-              <div className="my-0.5 h-px bg-slate-100" />
-              <p className={sectionTitle}>Shape</p>
-              {shapeItems(field, target.lookup).map(({ label, icon: Icon, request }) => (
+            {hasIndex && (
+              <div className="mx-1 mb-1 flex rounded-lg bg-slate-100 p-0.5 text-xs">
+                {[false, true].map((exact) => (
+                  <button
+                    key={String(exact)}
+                    type="button"
+                    className={cn('flex-1 rounded-md px-1.5 py-0.5 transition-colors', exactPosition === exact ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
+                    onClick={() => setExactPosition(exact)}
+                  >
+                    {exact ? 'This position only' : 'Any element'}
+                  </button>
+                ))}
+              </div>
+            )}
+            {collecting && <p className={sectionTitle}>Filter · $match</p>}
+            {items.map((item, index) => (
+              <div key={item.label} className="contents">
+                {index > 0 && items[index - 1].group !== item.group && <div className="mx-2 my-0.5 h-px bg-slate-100" />}
                 <button
-                  key={label}
                   type="button"
                   role="menuitem"
-                  className="flex items-center gap-2 truncate rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
-                  onClick={() => {
-                    setAnchor(null);
-                    collect!(request);
-                  }}
+                  className="truncate rounded-lg px-2.5 py-1.5 text-left font-mono text-[13px] text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
+                  title={item.label}
+                  onClick={() => pick(item.conditions)}
                 >
-                  <Icon size={13} className="shrink-0 text-slate-400" />
-                  <span className="truncate">{label}</span>
+                  {item.label}
                 </button>
-              ))}
-              {(() => {
-                const extra = typeSection(target.path, field, target.value);
-                if (!extra) return null;
-                return (
-                  <>
-                    <div className="my-0.5 h-px bg-slate-100" />
-                    <p className={sectionTitle}>{extra.title}</p>
-                    {extra.items.map(({ label, icon: Icon, request }) => (
-                      <button
-                        key={label}
-                        type="button"
-                        role="menuitem"
-                        className="flex items-center gap-2 truncate rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
-                        onClick={() => {
-                          setAnchor(null);
-                          collect!(request);
-                        }}
-                      >
-                        <Icon size={13} className="shrink-0 text-slate-400" />
-                        <span className="truncate">{label}</span>
-                      </button>
-                    ))}
-                  </>
-                );
-              })()}
-            </>
-          )}
-          <div className="my-0.5 h-px bg-slate-100" />
-          <button
-            type="button"
-            role="menuitem"
-            className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-500 transition-colors hover:bg-slate-100"
-            onClick={() => {
-              void copyToClipboard(exactPathText).then(() => {
-                setCopied(true);
-                setTimeout(() => {
-                  setCopied(false);
-                  setAnchor(null);
-                }, 700);
-              });
-            }}
-          >
-            <Route size={13} className="shrink-0 text-slate-400" />
-            <span className="flex-1">{copied ? 'Copied' : 'Copy path'}</span>
-            <span className="max-w-[10ch] truncate font-mono text-xs text-slate-400">{exactPathText}</span>
-          </button>
+              </div>
+            ))}
+            {/* 파이프라인에 넣기 — 필드 자체로 하는 것(정렬·그룹·값 세기·포함/제외·$lookup) */}
+            {collecting && (
+              <>
+                <div className="my-0.5 h-px bg-slate-100" />
+                <p className={sectionTitle}>Shape</p>
+                {shapeItems(field, target.lookup).map(({ label, icon: Icon, request }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    role="menuitem"
+                    className="flex items-center gap-2 truncate rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
+                    onClick={() => {
+                      setAnchor(null);
+                      collect!(request);
+                    }}
+                  >
+                    <Icon size={13} className="shrink-0 text-slate-400" />
+                    <span className="truncate">{label}</span>
+                  </button>
+                ))}
+                {(() => {
+                  const extra = typeSection(target.path, field, target.value);
+                  if (!extra) return null;
+                  return (
+                    <>
+                      <div className="my-0.5 h-px bg-slate-100" />
+                      <p className={sectionTitle}>{extra.title}</p>
+                      {extra.items.map(({ label, icon: Icon, request }) => (
+                        <button
+                          key={label}
+                          type="button"
+                          role="menuitem"
+                          className="flex items-center gap-2 truncate rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
+                          onClick={() => {
+                            setAnchor(null);
+                            collect!(request);
+                          }}
+                        >
+                          <Icon size={13} className="shrink-0 text-slate-400" />
+                          <span className="truncate">{label}</span>
+                        </button>
+                      ))}
+                    </>
+                  );
+                })()}
+              </>
+            )}
+            <div className="my-0.5 h-px bg-slate-100" />
+            <button
+              type="button"
+              role="menuitem"
+              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-slate-500 transition-colors hover:bg-slate-100"
+              onClick={() => {
+                void copyToClipboard(exactPathText).then(() => {
+                  setCopied(true);
+                  setTimeout(() => {
+                    setCopied(false);
+                    setAnchor(null);
+                  }, 700);
+                });
+              }}
+            >
+              <Route size={13} className="shrink-0 text-slate-400" />
+              <span className="flex-1">{copied ? 'Copied' : 'Copy path'}</span>
+              <span className="max-w-[10ch] truncate font-mono text-xs text-slate-400">{exactPathText}</span>
+            </button>
+          </div>
         </div>,
         document.body,
       )}

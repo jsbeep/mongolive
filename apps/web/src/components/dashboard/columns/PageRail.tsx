@@ -1,7 +1,7 @@
 // 컬럼 오른쪽(스크롤바 옆)에 세로로 붙는 페이지 이동 레일.
 // 목록을 어디까지 스크롤했든 항상 보이므로 맨 아래까지 내리지 않고도 페이지를 바꿀 수 있다.
 // 페이지가 1개뿐이면 그리지 않는다.
-import { useId, useRef, type ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '../../../utils/cn';
@@ -30,8 +30,16 @@ const pageSlots = (page: number, count: number): Slot[] => {
   return [0, 'gap-start', page - 1, page, page + 1, 'gap-end', last];
 };
 
+// 칸 높이(px) — 아래 styles.page의 h-6, styles.gap의 h-3, 칸 사이 gap-0.5와 맞춘다
+const PAGE_H = 24;
+const GAP_H = 12;
+const SPACING = 2;
+const slotTop = (slots: Slot[], index: number) =>
+  slots.slice(0, index).reduce<number>((y, s) => y + (typeof s === 'number' ? PAGE_H : GAP_H) + SPACING, 0);
+
 const styles = {
   rail: 'shrink-0 w-8 flex flex-col items-center gap-0.5 py-2 border-l border-slate-100/80 select-none',
+  slots: 'relative flex flex-col items-center gap-0.5',
   arrow:
     'w-6 h-6 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors disabled:opacity-25 disabled:pointer-events-none',
   page: 'relative w-6 h-6 flex items-center justify-center rounded-lg text-[11px] font-mono tabular-nums transition-colors',
@@ -39,7 +47,7 @@ const styles = {
   pageMarked: 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100',
   pageActiveMarked: 'text-emerald-700 font-semibold',
   pageActive: 'text-slate-700 font-semibold',
-  activeBg: 'absolute inset-0 rounded-lg bg-slate-100',
+  activeBg: 'absolute left-0 top-0 h-6 w-6 rounded-lg bg-slate-100',
   // 색은 둘 중 하나만 붙인다 — cn은 클래스를 이어 붙이기만 해서 같은 속성(text-색)이 둘이면
   // CSS 파일 안의 순서로 승자가 정해진다(코드에 쓴 순서가 아님)
   gap: 'w-6 h-3 flex items-center justify-center text-[10px] leading-none',
@@ -48,8 +56,6 @@ const styles = {
 } as const;
 
 export function PageRail({ page, pageCount, onChange, markedPage, isBusy, className }: PageRailProps) {
-  // 같은 화면에 레일이 여러 개(문서 목록 + 필드 목록들) 있어도 활성 표시 애니메이션이 섞이지 않게
-  const layoutId = `page-rail-active-${useId()}`;
   if (pageCount <= 1) return null;
 
   const go = (next: number) => {
@@ -77,23 +83,33 @@ export function PageRail({ page, pageCount, onChange, markedPage, isBusy, classN
         <ChevronUp size={14} />
       </button>
 
-      {slots.map((slot, index) =>
-        typeof slot === 'number' ? (
-          <button
-            key={slot}
-            type="button"
-            className={cn(styles.page, pageClass(slot))}
-            aria-current={slot === page ? 'page' : undefined}
-            onClick={() => go(slot)}
-            data-tt={`Page ${slot + 1} of ${pageCount}`}
-          >
-            {slot === page && <m.span layoutId={layoutId} className={styles.activeBg} transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
-            <span className="relative">{slot + 1}</span>
-          </button>
-        ) : (
-          <span key={slot} className={cn(styles.gap, gapHidesMarked(index) ? styles.gapMarked : styles.gapIdle)} aria-hidden="true">⋮</span>
-        ),
-      )}
+      <div className={styles.slots}>
+        {/* 현재 페이지 배경 — 하나를 두고 y로 옮긴다. layoutId를 쓰면 framer-motion이 id마다 기록을 남기는데
+            레일은 컬럼마다 새로 생겨 id가 계속 늘고, 지워지지 않은 기록이 닫힌 컬럼을 붙잡아 메모리가 샜다 */}
+        <m.span
+          className={styles.activeBg}
+          initial={false}
+          animate={{ y: slotTop(slots, slots.indexOf(page)) }}
+          transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+          aria-hidden="true"
+        />
+        {slots.map((slot, index) =>
+          typeof slot === 'number' ? (
+            <button
+              key={slot}
+              type="button"
+              className={cn(styles.page, pageClass(slot))}
+              aria-current={slot === page ? 'page' : undefined}
+              onClick={() => go(slot)}
+              data-tt={`Page ${slot + 1} of ${pageCount}`}
+            >
+              <span className="relative">{slot + 1}</span>
+            </button>
+          ) : (
+            <span key={slot} className={cn(styles.gap, gapHidesMarked(index) ? styles.gapMarked : styles.gapIdle)} aria-hidden="true">⋮</span>
+          ),
+        )}
+      </div>
 
       <button type="button" className={styles.arrow} disabled={page === pageCount - 1} onClick={() => go(page + 1)} data-tt="Next page">
         <ChevronDown size={14} />
