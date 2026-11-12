@@ -21,7 +21,7 @@
 
 ---
 
-![탐색 → 참조 따라가기 → 결과에서 파이프라인 모으기](docs/images/demo.gif)
+![탐색 → 참조 따라가기 → 결과에서 파이프라인 모으기](demo.mp4)
 
 - localStorage에 저장되는 샘플 데이터 시식
 - 데모에 없는 것: 실시간 반영, 변경 기록, 로그인
@@ -33,40 +33,32 @@
 | [Mongolive_legacy](https://github.com/jsbeep/Mongolive_legacy) | changeStream-websocket 클라이언트 경로 구독 기반  MongoDB 실시간 감시 |
 | [Json-explorer](https://github.com/jsbeep/Json-explorer) | Miller Column 탐색기, 인라인 에디터, PK/FK 참조 모델 |
 
-## 🎯 왜
-> Firebase 쓰다가 MongoDB Compass 쓰려니 구림
-
-> MongoDB Compass:
-> - 컬렉션 하나하나 들어가서 문서 봐야 함
-> - 문서 편집하려면 JSON 통째로 열어서 필요한 부분만 고쳐야 함
->
-> Firestore 콘솔:
-> - 눌러 들어가며 탐색, 원하는 데이터만 골라서 바로 편집
-
-> => 재귀적 인터렉션 기반 JSON 탐색 + 실시간 감지를 MongoDB에
-
-## 💡기능
-### 🧭 탐색
+## 기능
+### 탐색
 - Miller Column 드릴다운 — DB → 컬렉션 → 문서 → 중첩 필드
     - 컬럼 개수 조절, 한 패널에 중첩해서 보는 트리 모드 포함 🪾
 - 키보드로만 이동(↑↓←→ / hjkl), Ctrl+K 빠른 이동(DB·컬렉션 이름, ObjectId 붙여넣기), 북마크, breadcrumb 경로 직접 입력
 
-### ✏️ 편집
+### 편집
 - BSON 타입별 편집기 — ObjectId, Date(표시 시간대 기준), Int32 / Long / Double / Decimal128
 - Canonical EJSON 사용
 - 배열 항목·객체 키 드래그로 순서 바꾸기, 여러 단계 Undo(Ctrl+Z)
 - 동시 수정 충돌 감지 — 수정 중 현재 값이 오래된 경우(외부 수정) 덮어쓰기 전 확인
 
-### 🔗 참조
+![alt text](docs/images/탐색.png)
+
+### 참조
 - ObjectId는 어느 컬렉션 문서인지 알아서 찾아 점프
 - 문자열·숫자 id 참조(예: `authorId` → `users.id`)도 PK/FK 선언해두면 똑같이 점프
 
-### 🔍 쿼리
+![alt text](docs/images/참조.png)
+
+### 쿼리
 - mongosh 모양 그대로 쓰는 쿼리 입력(Ctrl+Enter) + 조건 칩
 - 필드 값 메뉴에서 바로 찾기 — `=`, `≠`, 범위, 같은 날, 배열 크기 등
 - 쿼리 기록, mongosh 명령으로 복사
 
-![쿼리 — 조건 칩과 mongosh 모양 입력](docs/images/query.png)
+![쿼리 — 조건 칩과 mongosh 모양 입력](docs/images/쿼리.png)
 
 ### 🧪 집계 (Aggregation)
 - 스테이지 카드 + 스테이지마다 지나간 문서 수(`12 → 9 docs`), 카드 ⇄ 통 JSON 전환
@@ -75,7 +67,7 @@
 - 집계 저장/최근 버전/mongosh 명령으로 복사하기
 - 읽기 전용 출력, DB에 쓰는 스테이지(`$out`·`$merge`) 블락
 
-![집계 — 스테이지 카드, 스테이지별 개수, 결과](docs/images/aggregation.png)
+![집계 — 스테이지 카드, 스테이지별 개수, 결과](docs/images/집계.png)
 
 ### ⚡ 실시간
 - MongoDB changeStream 실시간 감시
