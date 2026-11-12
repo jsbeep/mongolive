@@ -21,7 +21,7 @@
 
 ---
 
-![탐색 → 참조 따라가기 → 결과에서 파이프라인 모으기](demo.mp4)
+[demo.mp4](https://github.com/user-attachments/assets/ef931da9-9cf5-483c-8684-c254a1ba115c)
 
 - localStorage에 저장되는 샘플 데이터 시식
 - 데모에 없는 것: 실시간 반영, 변경 기록, 로그인
@@ -73,7 +73,7 @@
 - MongoDB changeStream 실시간 감시
 - 알림 센터
 
-![실시간 — 앱 밖에서 문서를 고치면 바로 반영](docs/images/realtime.gif)
+[실시간 — 앱 밖에서 문서를 고치면 바로 반영](https://github.com/user-attachments/assets/34b95a21-75f0-4a48-a471-6eca4e308fcd)
 
 ### 🛡️ 안전
 - 읽기 전용 모드/보호할 DB·컬렉션 지정/지우기 전 확인
