@@ -51,7 +51,7 @@
 - ObjectId는 어느 컬렉션 문서인지 알아서 찾아 점프
 - 문자열·숫자 id 참조(예: `authorId` → `users.id`)도 PK/FK 선언해두면 똑같이 점프
 
-![alt text](docs/images/참조.png)
+https://github.com/user-attachments/assets/918f102d-6519-4949-b653-bb587b5ea0ef
 
 ### 쿼리
 - mongosh 모양 그대로 쓰는 쿼리 입력(Ctrl+Enter) + 조건 칩
