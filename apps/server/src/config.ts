@@ -4,14 +4,6 @@ import { authFilePath, connectionsFilePath, metaFilePath, settingsFilePath } fro
 // 환경변수 → 설정 객체. 서버 전체에서 process.env를 직접 읽지 말고 이 모듈만 쓴다.
 // 값은 apps/server/.env(커밋 안 됨)에서 Node의 --env-file로 들어온다. 예시는 .env.example.
 
-const required = (name: string): string => {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`환경변수 ${name}가 없습니다. apps/server/.env.example을 복사해 .env를 만드세요.`);
-  }
-  return value;
-};
-
 const port = (name: string, fallback: number): number => {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -69,7 +61,8 @@ if (!loopbackOnly && !tlsFiles && !allowInsecureHttp) {
 }
 
 export const config = {
-  mongoUri: required('MONGODB_URI'),
+  // (선택) 기본 연결. 있으면 화면에 id 'env'인 읽기 전용 연결로 보인다. 없으면 화면에서 연결을 추가한다
+  mongoUri: process.env.MONGODB_URI || null,
   // 기본은 이 기기에서만 접속 가능
   host,
   loopbackOnly,

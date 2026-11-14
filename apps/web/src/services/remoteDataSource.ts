@@ -1,6 +1,6 @@
 // 실제 서버(apps/server)에 붙는 DataSource 구현. 서버는 Canonical EJSON을 주고받으므로 변환 없이 그대로 쓴다.
 // 개발 중에는 Vite가 /api 요청을 서버로 넘겨준다(vite.config.ts의 proxy).
-import { projectDocument, summarizeDocument } from '@mongolive/shared';
+import { ENV_CONNECTION_ID, projectDocument, summarizeDocument } from '@mongolive/shared';
 import { io, type Socket } from 'socket.io-client';
 import type {
   CollectionExport,
@@ -34,11 +34,20 @@ import type { ClientMetrics, DataSource } from './dataSource';
 
 const BASE = '/api';
 
+// 요청마다 어느 연결인지 알린다 — 서버는 이 헤더 없이 온 Mongo 요청을 받지 않는다.
+// (8-4 전까지 임시) 지금은 .env 연결로 고정. 8-4에서 탭마다 고른 연결(sessionStorage)로 바뀐다
+const CONNECTION_HEADER = 'X-Mongolive-Connection';
+const connectionId = (): string => ENV_CONNECTION_ID;
+
 // 서버 에러 응답은 { error: "..." } — 메시지를 그대로 Error로 올려 토스트에 보이게 한다
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: init?.body ? { 'Content-Type': 'application/json', ...init.headers } : init?.headers,
+    headers: {
+      [CONNECTION_HEADER]: connectionId(),
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init?.headers,
+    },
   });
   if (!response.ok) {
     // 출입증이 무효(만료, 다른 곳에서 비밀번호 변경) — 로그인 화면으로

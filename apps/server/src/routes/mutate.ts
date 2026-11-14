@@ -7,7 +7,7 @@
 // 문서 쓰기는 writes/documents.ts(6-1), 컬렉션/DB 쓰기는 writes/structure.ts(6-2).
 import { Router } from 'express';
 import { collectionKey, writeBlockedReason, type MutationRequest, type MutationResult } from '@mongolive/shared';
-import { getClient } from '../db';
+import { connOf, type MongoConn } from '../db';
 import { listOwnedOids, setOwnedOid, updateCollectionMeta } from '../meta';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
 import { DOCUMENT_OPS, runDocumentOp } from '../writes/documents';
@@ -25,8 +25,8 @@ const optionalStr = (value: unknown, field: string): string | undefined =>
   value === undefined || value === null ? undefined : str(value, field);
 
 // 존재하지 않는 컬렉션에 메타를 쌓지 않도록 확인 (Mock의 'Collection not found'와 같은 동작)
-const requireCollection = async (database: string, collection: string): Promise<void> => {
-  const db = (await getClient()).db(checkDatabaseName(database));
+const requireCollection = async (conn: MongoConn, database: string, collection: string): Promise<void> => {
+  const db = conn.client.db(checkDatabaseName(database));
   const found = await db.listCollections({ name: checkCollectionName(collection) }, { nameOnly: true }).hasNext();
   if (!found) throw new HttpError(404, 'Collection not found');
 };
@@ -53,11 +53,11 @@ mutateRouter.post('/mutate', async (req, res) => {
   if (blocked) throw new HttpError(403, blocked);
 
   if (typeof op.type === 'string' && DOCUMENT_OPS.has(op.type)) {
-    res.json(await runDocumentOp(op as Parameters<typeof runDocumentOp>[0]));
+    res.json(await runDocumentOp(await connOf(res), op as Parameters<typeof runDocumentOp>[1]));
     return;
   }
   if (typeof op.type === 'string' && STRUCTURE_OPS.has(op.type)) {
-    res.json(await runStructureOp(op as Parameters<typeof runStructureOp>[0]));
+    res.json(await runStructureOp(await connOf(res), op as Parameters<typeof runStructureOp>[1]));
     return;
   }
 
@@ -66,7 +66,7 @@ mutateRouter.post('/mutate', async (req, res) => {
       const database = str(op.database, 'database');
       const collection = str(op.collection, 'collection');
       const titleKey = str(op.titleKey, 'titleKey').trim();
-      await requireCollection(database, collection);
+      await requireCollection(await connOf(res), database, collection);
       await updateCollectionMeta(database, collection, (m) => ({ ...m, titleKey: titleKey || undefined }));
       res.json(collectionResult(database, collection));
       return;
@@ -75,7 +75,7 @@ mutateRouter.post('/mutate', async (req, res) => {
       const database = str(op.database, 'database');
       const collection = str(op.collection, 'collection');
       const primaryKey = str(op.primaryKey, 'primaryKey').trim();
-      await requireCollection(database, collection);
+      await requireCollection(await connOf(res), database, collection);
       await updateCollectionMeta(database, collection, (m) => ({ ...m, primaryKey: primaryKey || undefined }));
       res.json(collectionResult(database, collection));
       return;
@@ -86,7 +86,7 @@ mutateRouter.post('/mutate', async (req, res) => {
       const field = str(op.field, 'field');
       const targetCollection = optionalStr(op.targetCollection, 'targetCollection');
       const targetKey = optionalStr(op.targetKey, 'targetKey');
-      await requireCollection(database, collection);
+      await requireCollection(await connOf(res), database, collection);
       await updateCollectionMeta(database, collection, (m) => {
         const referenceFields = { ...m.referenceFields };
         // 대상이 비어 있으면 선언 해제 (Mock과 동일)

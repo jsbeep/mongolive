@@ -15,7 +15,7 @@ import {
 } from '@mongolive/shared';
 import type { Document as BsonDocument } from 'mongodb';
 import type { Collection } from 'mongodb';
-import { getClient } from '../db';
+import { clientOf } from '../db';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
 import { toQueryHttpError, toValueHttpError } from '../queryErrors';
 import { fromWire, READ_OPTIONS, toWire } from '../wire';
@@ -35,7 +35,7 @@ aggregateRouter.post('/databases/:db/collections/:col/aggregate', async (req, re
     throw toValueHttpError(e);
   }
 
-  const collection = (await getClient()).db(checkDatabaseName(req.params.db)).collection(checkCollectionName(req.params.col));
+  const collection = (await clientOf(res)).db(checkDatabaseName(req.params.db)).collection(checkCollectionName(req.params.col));
   const options = { ...READ_OPTIONS, maxTimeMS: QUERY_MAX_TIME_MS };
   const started = Date.now();
   try {

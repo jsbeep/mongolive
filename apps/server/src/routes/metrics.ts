@@ -4,7 +4,8 @@
 // 없으면 mongo.error로 알리고 나머지(실시간 통계)는 그대로 보낸다.
 import { Router } from 'express';
 import type { ServerMetrics } from '@mongolive/shared';
-import { getClient } from '../db';
+import { clientOf } from '../db';
+import type { MongoClient } from 'mongodb';
 import { realtimeMetrics } from '../realtime';
 
 export const metricsRouter = Router();
@@ -18,9 +19,9 @@ const num = (value: unknown): number | undefined => {
   return undefined;
 };
 
-const mongoStatus = async (): Promise<ServerMetrics['mongo']> => {
+const mongoStatus = async (client: Promise<MongoClient>): Promise<ServerMetrics['mongo']> => {
   try {
-    const admin = (await getClient()).db('admin');
+    const admin = (await client).db('admin');
     // 필요 없는 큰 섹션은 빼고 받는다
     const s = await admin.command({
       serverStatus: 1, repl: 0, metrics: 0, locks: 0, wiredTiger: 0, tcmalloc: 0, storageEngine: 0, transactions: 0, logicalSessionRecordCache: 0,
@@ -49,6 +50,6 @@ const mongoStatus = async (): Promise<ServerMetrics['mongo']> => {
 };
 
 metricsRouter.get('/metrics', async (_req, res) => {
-  const result: ServerMetrics = { at: Date.now(), realtime: realtimeMetrics(), mongo: await mongoStatus() };
+  const result: ServerMetrics = { at: Date.now(), realtime: realtimeMetrics(), mongo: await mongoStatus(clientOf(res)) };
   res.json(result);
 });

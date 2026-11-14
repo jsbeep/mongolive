@@ -19,7 +19,8 @@ import {
   type FieldReferenceCandidate,
   type FieldValueCandidate,
 } from '@mongolive/shared';
-import { getClient } from '../db';
+import type { MongoClient } from 'mongodb';
+import { clientOf } from '../db';
 import { getCollectionMeta } from '../meta';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES, HttpError } from '../names';
 import { fromWire, READ_OPTIONS, toWire } from '../wire';
@@ -27,8 +28,8 @@ import { DOCUMENT_LIST_LIMIT, listCollectionNames } from './read';
 
 export const refsRouter = Router();
 
-const collectionFrom = async (dbName: string, colName: string) =>
-  (await getClient()).db(checkDatabaseName(dbName)).collection(checkCollectionName(colName));
+const collectionFrom = async (client: MongoClient, dbName: string, colName: string) =>
+  client.db(checkDatabaseName(dbName)).collection(checkCollectionName(colName));
 
 // 필드 이름 검사 — '$'로 시작하면 쿼리 연산자로 해석될 수 있으므로 거부
 const checkKey = (key: unknown): string => {
@@ -44,8 +45,7 @@ const checkKey = (key: unknown): string => {
 const locationCache = new Map<string, { database: string; collection: string }>();
 const LOCATION_CACHE_MAX = 2000;
 
-const findByOid = async (oid: string) => {
-  const client = await getClient();
+const findByOid = async (client: MongoClient, oid: string) => {
   const filter = { _id: fromWire(makeOid(oid)) } as never;
 
   const cached = locationCache.get(oid);
@@ -74,7 +74,7 @@ const findByOid = async (oid: string) => {
 refsRouter.get('/oid/:oid', async (req, res) => {
   const oid = req.params.oid.toLowerCase();
   if (!/^[0-9a-f]{24}$/.test(oid)) throw new HttpError(400, `잘못된 ObjectId: ${req.params.oid}`);
-  const found = await findByOid(oid);
+  const found = await findByOid(await clientOf(res), oid);
   if (!found) throw new HttpError(404, 'Document not found');
   res.json(found);
 });
@@ -82,7 +82,7 @@ refsRouter.get('/oid/:oid', async (req, res) => {
 // ── 내보내기 ──────────────────────────────────────────────────────────────────
 
 refsRouter.get('/databases/:db/collections/:col/export', async (req, res) => {
-  const collection = await collectionFrom(req.params.db, req.params.col);
+  const collection = await collectionFrom(await clientOf(res), req.params.db, req.params.col);
   const meta = await getCollectionMeta(req.params.db, req.params.col);
   const documents = (await collection.find({}, READ_OPTIONS).toArray()).map((d) => toWire<Document>(d));
   const result: CollectionExport = {
@@ -99,7 +99,7 @@ refsRouter.get('/databases/:db/collections/:col/export', async (req, res) => {
 
 refsRouter.post('/databases/:db/collections/:col/find-by-field', async (req, res) => {
   const { db: dbName, col: colName } = req.params;
-  const collection = await collectionFrom(dbName, colName);
+  const collection = await collectionFrom(await clientOf(res), dbName, colName);
   const key = checkKey(req.body?.key);
   const value = toCanonical(req.body?.value) as EjsonValue;
   const meta = await getCollectionMeta(dbName, colName);
@@ -145,7 +145,7 @@ refsRouter.post('/databases/:db/collections/:col/find-by-field', async (req, res
 
 refsRouter.get('/databases/:db/collections/:col/field-values', async (req, res) => {
   const { db: dbName, col: colName } = req.params;
-  const collection = await collectionFrom(dbName, colName);
+  const collection = await collectionFrom(await clientOf(res), dbName, colName);
   const key = checkKey(req.query.key);
   const meta = await getCollectionMeta(dbName, colName);
 

@@ -20,8 +20,8 @@ import {
   type ReferenceFieldConfig,
 } from '@mongolive/shared';
 import { MongoServerError, ObjectId, type Db, type Document as BsonDocument } from 'mongodb';
-import { getClient } from '../db';
-import { emptyDatabases } from '../emptyDatabases';
+import type { MongoConn } from '../db';
+import { emptyDatabasesOf } from '../emptyDatabases';
 import { copyCollectionMeta, deleteCollectionMeta, moveCollectionMeta, updateCollectionMeta } from '../meta';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
 import { listCollectionNames } from '../routes/read';
@@ -47,8 +47,8 @@ const str = (value: unknown, field: string): string => {
   return value;
 };
 
-const existingDatabaseNames = async (): Promise<Set<string>> => {
-  const { databases } = await (await getClient()).db('admin').admin().listDatabases({ nameOnly: true });
+const existingDatabaseNames = async (conn: MongoConn): Promise<Set<string>> => {
+  const { databases } = await conn.client.db('admin').admin().listDatabases({ nameOnly: true });
   return new Set(databases.map((d) => d.name));
 };
 
@@ -86,7 +86,7 @@ const createWithDocuments = async (db: Db, name: string, documents: BsonDocument
   }
 };
 
-const openDb = async (database: string): Promise<Db> => (await getClient()).db(checkDatabaseName(database));
+const openDb = async (conn: MongoConn, database: string): Promise<Db> => conn.client.db(checkDatabaseName(database));
 
 const requireCollection = async (db: Db, name: string): Promise<void> => {
   const found = await db.listCollections({ name: checkCollectionName(name) }, { nameOnly: true }).hasNext();
@@ -102,16 +102,16 @@ const collectionResult = (database: string, collection: string, changedPath?: st
 
 // ── 연산 ─────────────────────────────────────────────────────────────────────
 
-const createDatabase = async (op: Extract<StructureOp, { type: 'createDatabase' }>): Promise<MutationResult> => {
+const createDatabase = async (conn: MongoConn, op: Extract<StructureOp, { type: 'createDatabase' }>): Promise<MutationResult> => {
   if (!op.database || typeof op.database !== 'object') throw new HttpError(400, 'database가 없습니다');
   const name = checkDatabaseName(str(op.database.name, 'database.name').trim());
-  if ((await existingDatabaseNames()).has(name) || emptyDatabases.has(name)) throw new HttpError(409, 'Database already exists');
+  if ((await existingDatabaseNames(conn)).has(name) || emptyDatabasesOf(conn.id).has(name)) throw new HttpError(409, 'Database already exists');
 
   const seeds = Object.entries(op.database.collections ?? {});
   if (seeds.length === 0) {
-    emptyDatabases.add(name);
+    emptyDatabasesOf(conn.id).add(name);
   } else {
-    const db = await openDb(name);
+    const db = await openDb(conn, name);
     try {
       for (const [collectionName, seed] of seeds) {
         await createWithDocuments(db, collectionName, prepareDocuments(seed.documents));
@@ -131,30 +131,30 @@ const createDatabase = async (op: Extract<StructureOp, { type: 'createDatabase' 
   return { status: 'ok', changedPaths: [`databases.${name}`], tracePath: [name] };
 };
 
-const deleteDatabase = async (op: Extract<StructureOp, { type: 'deleteDatabase' }>): Promise<MutationResult> => {
+const deleteDatabase = async (conn: MongoConn, op: Extract<StructureOp, { type: 'deleteDatabase' }>): Promise<MutationResult> => {
   const name = checkDatabaseName(str(op.database, 'database'));
-  if (emptyDatabases.delete(name)) return { status: 'ok', changedPaths: [`databases.${name}`], tracePath: [name] };
-  if (!(await existingDatabaseNames()).has(name)) throw new HttpError(404, 'DB not found');
-  await (await openDb(name)).dropDatabase();
+  if (emptyDatabasesOf(conn.id).delete(name)) return { status: 'ok', changedPaths: [`databases.${name}`], tracePath: [name] };
+  if (!(await existingDatabaseNames(conn)).has(name)) throw new HttpError(404, 'DB not found');
+  await (await openDb(conn, name)).dropDatabase();
   await deleteCollectionMeta(name);
   return { status: 'ok', changedPaths: [`databases.${name}`], tracePath: [name] };
 };
 
-const createCollection = async (op: Extract<StructureOp, { type: 'createCollection' }>): Promise<MutationResult> => {
+const createCollection = async (conn: MongoConn, op: Extract<StructureOp, { type: 'createCollection' }>): Promise<MutationResult> => {
   const database = str(op.database, 'database');
   if (!op.collection || typeof op.collection !== 'object') throw new HttpError(400, 'collection이 없습니다');
   const name = checkCollectionName(str(op.collection.name, 'collection.name').trim());
-  const db = await openDb(database);
+  const db = await openDb(conn, database);
   await createWithDocuments(db, name, prepareDocuments(op.collection.documents));
-  emptyDatabases.delete(database);
+  emptyDatabasesOf(conn.id).delete(database);
   return collectionResult(database, name);
 };
 
-const renameCollection = async (op: Extract<StructureOp, { type: 'renameCollection' }>): Promise<MutationResult> => {
+const renameCollection = async (conn: MongoConn, op: Extract<StructureOp, { type: 'renameCollection' }>): Promise<MutationResult> => {
   const database = str(op.database, 'database');
   const oldName = checkCollectionName(str(op.oldName, 'oldName'));
   const newName = checkCollectionName(str(op.newName, 'newName').trim());
-  const db = await openDb(database);
+  const db = await openDb(conn, database);
   await requireCollection(db, oldName);
   if (newName !== oldName) {
     // dropTarget: false(기본) — 같은 이름이 있으면 덮지 않고 에러
@@ -164,10 +164,10 @@ const renameCollection = async (op: Extract<StructureOp, { type: 'renameCollecti
   return collectionResult(database, newName);
 };
 
-const duplicateCollection = async (op: Extract<StructureOp, { type: 'duplicateCollection' }>): Promise<MutationResult> => {
+const duplicateCollection = async (conn: MongoConn, op: Extract<StructureOp, { type: 'duplicateCollection' }>): Promise<MutationResult> => {
   const database = str(op.database, 'database');
   const source = checkCollectionName(str(op.collection, 'collection'));
-  const db = await openDb(database);
+  const db = await openDb(conn, database);
   await requireCollection(db, source);
   const target = uniqueKey(source, new Set(await listCollectionNames(db)));
 
@@ -183,10 +183,10 @@ const duplicateCollection = async (op: Extract<StructureOp, { type: 'duplicateCo
   return collectionResult(database, target);
 };
 
-const deleteCollection = async (op: Extract<StructureOp, { type: 'deleteCollection' }>): Promise<MutationResult> => {
+const deleteCollection = async (conn: MongoConn, op: Extract<StructureOp, { type: 'deleteCollection' }>): Promise<MutationResult> => {
   const database = str(op.database, 'database');
   const name = checkCollectionName(str(op.collection, 'collection'));
-  const db = await openDb(database);
+  const db = await openDb(conn, database);
   await requireCollection(db, name);
   await db.collection(name).drop();
   await deleteCollectionMeta(database, name);
@@ -194,19 +194,19 @@ const deleteCollection = async (op: Extract<StructureOp, { type: 'deleteCollecti
   return collectionResult(database, name, `databases.${database}.collections`, [database]);
 };
 
-export const runStructureOp = (op: StructureOp): Promise<MutationResult> => {
+export const runStructureOp = (conn: MongoConn, op: StructureOp): Promise<MutationResult> => {
   switch (op.type) {
     case 'createDatabase':
-      return createDatabase(op);
+      return createDatabase(conn, op);
     case 'deleteDatabase':
-      return deleteDatabase(op);
+      return deleteDatabase(conn, op);
     case 'createCollection':
-      return createCollection(op);
+      return createCollection(conn, op);
     case 'renameCollection':
-      return renameCollection(op);
+      return renameCollection(conn, op);
     case 'duplicateCollection':
-      return duplicateCollection(op);
+      return duplicateCollection(conn, op);
     case 'deleteCollection':
-      return deleteCollection(op);
+      return deleteCollection(conn, op);
   }
 };

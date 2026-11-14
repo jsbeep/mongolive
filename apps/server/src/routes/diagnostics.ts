@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { Router } from 'express';
 import type { Diagnostics } from '@mongolive/shared';
 import { config } from '../config';
-import { checkMongo, getClient, topologyOf } from '../db';
+import { checkMongo, clientFor, connectionIdOf, topologyOf } from '../db';
 import { realtimeMetrics } from '../realtime';
 
 export const diagnosticsRouter = Router();
@@ -29,10 +29,10 @@ export const maskMongoUri = (uri: string): string => {
   return query ? `${masked} (+ options)` : masked;
 };
 
-const serverStatusAccess = async (): Promise<Diagnostics['serverStatus']> => {
+const serverStatusAccess = async (connectionId: string): Promise<Diagnostics['serverStatus']> => {
   try {
     // 권한만 보면 되므로 큰 섹션은 빼고 받는다
-    await (await getClient()).db('admin').command({ serverStatus: 1, repl: 0, metrics: 0, locks: 0, wiredTiger: 0, tcmalloc: 0 });
+    await (await clientFor(connectionId)).db('admin').command({ serverStatus: 1, repl: 0, metrics: 0, locks: 0, wiredTiger: 0, tcmalloc: 0 });
     return 'ok';
   } catch (e) {
     return (e as { codeName?: string }).codeName === 'Unauthorized' ? 'denied' : 'error';
@@ -40,7 +40,8 @@ const serverStatusAccess = async (): Promise<Diagnostics['serverStatus']> => {
 };
 
 diagnosticsRouter.get('/diagnostics', async (_req, res) => {
-  const [mongo, serverStatus] = await Promise.all([checkMongo(), serverStatusAccess()]);
+  const id = connectionIdOf(res);
+  const [mongo, serverStatus] = await Promise.all([checkMongo(id), serverStatusAccess(id)]);
   const result: Diagnostics = {
     server: { version: VERSION, node: process.version, uptimeSec: Math.round(process.uptime()) },
     mongo: {
@@ -59,7 +60,7 @@ diagnosticsRouter.get('/diagnostics', async (_req, res) => {
       https: config.tls !== null,
       trustProxy: config.trustProxy,
       allowInsecureHttp: config.allowInsecureHttp,
-      mongoUri: maskMongoUri(config.mongoUri),
+      mongoUri: config.mongoUri ? maskMongoUri(config.mongoUri) : '',
       authFile: config.authFile,
       metaFile: config.metaFile,
     },

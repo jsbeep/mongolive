@@ -30,7 +30,7 @@ import {
   type MutationResult,
 } from '@mongolive/shared';
 import { ObjectId, type ClientSession, type Collection, type Document as BsonDocument } from 'mongodb';
-import { getClient } from '../db';
+import type { MongoConn } from '../db';
 import { getCollectionMeta } from '../meta';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
 import { fromWire, READ_OPTIONS, toWire } from '../wire';
@@ -40,8 +40,8 @@ type DocumentOp = Extract<MutationRequest, { type: 'mutateField' | 'upsertDocume
 export const DOCUMENT_OPS = new Set<string>(['mutateField', 'upsertDocument', 'duplicateDocument', 'deleteDocument']);
 
 // 존재하는 컬렉션만 돌려준다
-const openCollection = async (database: string, collection: string): Promise<Collection> => {
-  const db = (await getClient()).db(checkDatabaseName(database));
+const openCollection = async (conn: MongoConn, database: string, collection: string): Promise<Collection> => {
+  const db = conn.client.db(checkDatabaseName(database));
   const name = checkCollectionName(collection);
   const found = await db.listCollections({ name }, { nameOnly: true }).hasNext();
   if (!found) throw new HttpError(404, 'Collection not found');
@@ -118,8 +118,8 @@ const okResult = (
 // 쓰기 한 번을 세션 안에서 실행하고 그 쓰기의 시각 도장(operationTime)을 돌려준다.
 // 같은 쓰기의 changeStream 알림에 똑같은 값(clusterTime)이 실려 오므로, 브라우저가 둘을 맞춰
 // '내가 한 저장의 메아리'를 알아본다. (세션은 도장을 읽으려고 쓸 뿐 트랜잭션이 아니다)
-const withOpTime = async <T>(run: (session: ClientSession) => Promise<T>): Promise<{ value: T; opTime?: string }> => {
-  const session = (await getClient()).startSession();
+const withOpTime = async <T>(conn: MongoConn, run: (session: ClientSession) => Promise<T>): Promise<{ value: T; opTime?: string }> => {
+  const session = conn.client.startSession();
   try {
     const value = await run(session);
     return { value, opTime: session.operationTime?.toString() };
@@ -157,6 +157,7 @@ const slotFilter = (slot: ExpectedValue): unknown => (slot.exists ? { $eq: fromW
 
 // 읽고 → 확인하고 → 조건 걸어 쓰기를 한 번. 읽은 뒤 그 사이 바뀌어 조건이 안 맞으면 null(다시 시도)
 const tryMutateField = async (
+  conn: MongoConn,
   collection: Collection,
   documentId: string,
   field: MutateFieldSpec,
@@ -227,7 +228,7 @@ const tryMutateField = async (
     for (const key of Object.keys(filter)) if (key !== '_id') delete filter[key];
   }
 
-  const { value: { matchedCount }, opTime } = await withOpTime((session) => collection.updateOne(filter, update, { session }));
+  const { value: { matchedCount }, opTime } = await withOpTime(conn, (session) => collection.updateOne(filter, update, { session }));
   if (matchedCount === 0) return null;
   return { changedPaths: mutation.changedPaths, opTime, undo: fieldInverse(spec, wire, next) };
 };
@@ -276,7 +277,7 @@ const fieldInverse = (spec: MutateFieldSpec, before: Document, after: Document):
 
 const MUTATE_ATTEMPTS = 3;
 
-const mutateField = async (op: Extract<DocumentOp, { type: 'mutateField' }>): Promise<MutationResult> => {
+const mutateField = async (conn: MongoConn, op: Extract<DocumentOp, { type: 'mutateField' }>): Promise<MutationResult> => {
   const database = str(op.database, 'database');
   const collectionName = str(op.collection, 'collection');
   const documentId = str(op.documentId, 'documentId');
@@ -284,12 +285,12 @@ const mutateField = async (op: Extract<DocumentOp, { type: 'mutateField' }>): Pr
   if (field.path.length === 0 && (field.key === '_id' || field.nextKey === '_id')) {
     throw new HttpError(400, '_id는 바꿀 수 없습니다 (MongoDB 규칙)');
   }
-  const collection = await openCollection(database, collectionName);
+  const collection = await openCollection(conn, database, collectionName);
 
   // 읽기와 쓰기 사이에 끼어든 변경 때문에 쓰지 못했으면 다시 읽어서 처음부터.
   // 다시 할 땐 충돌 확인이 '내가 본 값'으로 진짜 충돌인지 걸러 준다.
   for (let attempt = 0; attempt < MUTATE_ATTEMPTS; attempt += 1) {
-    const done = await tryMutateField(collection, documentId, field);
+    const done = await tryMutateField(conn, collection, documentId, field);
     if (!done) continue;
     const base = docBase(database, collectionName, documentId);
     return {
@@ -317,10 +318,10 @@ export const hasUsableId = (value: unknown): boolean => {
   return kind !== 'string' || (value as string).trim() !== '';
 };
 
-const upsertDocument = async (op: Extract<DocumentOp, { type: 'upsertDocument' }>): Promise<MutationResult> => {
+const upsertDocument = async (conn: MongoConn, op: Extract<DocumentOp, { type: 'upsertDocument' }>): Promise<MutationResult> => {
   const database = str(op.database, 'database');
   const collectionName = str(op.collection, 'collection');
-  const collection = await openCollection(database, collectionName);
+  const collection = await openCollection(conn, database, collectionName);
 
   const canonical = toCanonical(op.document);
   if (!canonical || typeof canonical !== 'object' || Array.isArray(canonical)) throw new HttpError(400, '문서는 JSON 객체여야 합니다');
@@ -339,7 +340,7 @@ const upsertDocument = async (op: Extract<DocumentOp, { type: 'upsertDocument' }
   if (expected && !sameSlot(expected, was)) throw conflictError([], was);
 
   // 같은 _id가 있으면 교체, 없으면 추가 (Mock과 같은 동작)
-  const { opTime } = await withOpTime((session) => collection.replaceOne({ _id: { $eq: bson._id } }, bson, { upsert: true, session }));
+  const { opTime } = await withOpTime(conn, (session) => collection.replaceOne({ _id: { $eq: bson._id } }, bson, { upsert: true, session }));
 
   const documentId = getDocumentId(document) ?? '';
   const now: ExpectedValue = { exists: true, value: document };
@@ -361,10 +362,10 @@ export const uniqueKey = (base: string, existing: Set<string>): string => {
   return candidate;
 };
 
-const duplicateDocument = async (op: Extract<DocumentOp, { type: 'duplicateDocument' }>): Promise<MutationResult> => {
+const duplicateDocument = async (conn: MongoConn, op: Extract<DocumentOp, { type: 'duplicateDocument' }>): Promise<MutationResult> => {
   const database = str(op.database, 'database');
   const collectionName = str(op.collection, 'collection');
-  const collection = await openCollection(database, collectionName);
+  const collection = await openCollection(conn, database, collectionName);
   const { wire: source } = await findByDocumentId(collection, str(op.documentId, 'documentId'));
   const meta = await getCollectionMeta(database, collectionName);
 
@@ -392,7 +393,7 @@ const duplicateDocument = async (op: Extract<DocumentOp, { type: 'duplicateDocum
   );
   if (titleField && titleField !== '_id') copy[titleField] = `${source[titleField] as string} copy`;
 
-  const { opTime } = await withOpTime((session) => collection.insertOne(fromWire(copy) as BsonDocument, { session }));
+  const { opTime } = await withOpTime(conn, (session) => collection.insertOne(fromWire(copy) as BsonDocument, { session }));
   const documentId = getDocumentId(copy) ?? '';
   return {
     ...okResult(database, collectionName, documentId, [docBase(database, collectionName, documentId)], opTime),
@@ -403,16 +404,16 @@ const duplicateDocument = async (op: Extract<DocumentOp, { type: 'duplicateDocum
 
 // ── deleteDocument ───────────────────────────────────────────────────────────
 
-const deleteDocument = async (op: Extract<DocumentOp, { type: 'deleteDocument' }>): Promise<MutationResult> => {
+const deleteDocument = async (conn: MongoConn, op: Extract<DocumentOp, { type: 'deleteDocument' }>): Promise<MutationResult> => {
   const database = str(op.database, 'database');
   const collectionName = str(op.collection, 'collection');
   const documentId = str(op.documentId, 'documentId');
-  const collection = await openCollection(database, collectionName);
+  const collection = await openCollection(conn, database, collectionName);
   const { bson, wire } = await findByDocumentId(collection, documentId);
   // 확인(되돌리기가 보낸 경우): 지울 문서가 기대한 그대로인가 — 그 사이 누가 고쳤으면 지우지 않는다
   const expected = parseExpected(op.expected);
   if (expected && !sameSlot(expected, { exists: true, value: wire })) throw conflictError([], { exists: true, value: wire });
-  const { opTime } = await withOpTime((session) => collection.deleteOne({ _id: { $eq: bson._id } }, { session }));
+  const { opTime } = await withOpTime(conn, (session) => collection.deleteOne({ _id: { $eq: bson._id } }, { session }));
   return {
     ...okResult(database, collectionName, documentId, [docBase(database, collectionName, documentId)], opTime),
     // 다시 넣기 (그 _id가 비어 있을 때만)
@@ -420,15 +421,15 @@ const deleteDocument = async (op: Extract<DocumentOp, { type: 'deleteDocument' }
   };
 };
 
-export const runDocumentOp = (op: DocumentOp): Promise<MutationResult> => {
+export const runDocumentOp = (conn: MongoConn, op: DocumentOp): Promise<MutationResult> => {
   switch (op.type) {
     case 'mutateField':
-      return mutateField(op);
+      return mutateField(conn, op);
     case 'upsertDocument':
-      return upsertDocument(op);
+      return upsertDocument(conn, op);
     case 'duplicateDocument':
-      return duplicateDocument(op);
+      return duplicateDocument(conn, op);
     case 'deleteDocument':
-      return deleteDocument(op);
+      return deleteDocument(conn, op);
   }
 };

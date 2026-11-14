@@ -6,8 +6,9 @@ import { Server as SocketServer } from 'socket.io';
 import { allowSocket, authRouter, guard, hasValidSession } from './auth';
 import { loadAuthData } from './authFile';
 import { config } from './config';
-import { checkMongo, closeClient } from './db';
+import { checkMongo, closeAllClients, requireConnection } from './db';
 import { HttpError } from './names';
+import { ENV_CONNECTION_ID } from '@mongolive/shared';
 import { startRealtime } from './realtime';
 import { createAppServer } from './tls';
 import { mutateRouter } from './routes/mutate';
@@ -37,20 +38,27 @@ app.use(guard);
 app.use('/api', authRouter);
 app.use(express.json({ limit: '10mb' }));
 
-// 상태 확인용 — 서버가 살아 있는지, Mongo에 닿는지, replica set인지
+// 상태 확인용 — 서버가 살아 있는지, .env 연결(있으면)이 Mongo에 닿는지, replica set인지
 app.get('/api/health', async (_req, res) => {
-  const mongo = await checkMongo();
+  if (!config.mongoUri) {
+    res.json({ server: 'ok', mongo: null });
+    return;
+  }
+  const mongo = await checkMongo(ENV_CONNECTION_ID);
   res.status(mongo.ok ? 200 : 503).json({ server: 'ok', mongo });
 });
 
-app.use('/api', readRouter);
-app.use('/api', aggregateRouter);
-app.use('/api', mutateRouter);
-app.use('/api', refsRouter);
-app.use('/api', metricsRouter);
-app.use('/api', diagnosticsRouter);
+// 연결과 상관없는 API
 app.use('/api', settingsRouter);
 app.use('/api', connectionsRouter);
+
+// Mongo를 쓰는 API — 요청마다 X-Mongolive-Connection 헤더로 연결을 고른다(db.ts).
+// 한 묶음으로 만들어 그 앞에만 연결 확인을 세운다. (라우터마다 use로 걸면 그 라우터에 맞는 경로가 없는
+// 요청도 지나가며 검사를 받는다 — express 라우터는 경로가 안 맞아도 미들웨어는 실행한다)
+const mongoApi = express.Router();
+mongoApi.use(requireConnection);
+mongoApi.use(readRouter, aggregateRouter, mutateRouter, refsRouter, metricsRouter, diagnosticsRouter);
+app.use('/api', mongoApi);
 
 // 위에서 처리하지 못한 /api 요청
 app.use('/api', (_req, res) => {
@@ -101,11 +109,15 @@ const start = async () => {
   await loadConnections();
 
   // 연결이 안 돼도 서버는 띄운다 — /api/health에서 원인을 볼 수 있고, 요청마다 다시 연결을 시도한다.
-  const mongo = await checkMongo();
-  if (mongo.ok) {
-    console.log(`[mongo] 연결됨 — v${mongo.version}, replica set: ${mongo.replicaSet ?? '없음(changeStream 불가)'}`);
+  if (config.mongoUri) {
+    const mongo = await checkMongo(ENV_CONNECTION_ID);
+    if (mongo.ok) {
+      console.log(`[mongo] .env 연결됨 — v${mongo.version}, replica set: ${mongo.replicaSet ?? '없음(changeStream 불가)'}`);
+    } else {
+      console.error('[mongo] .env 연결 실패:', mongo.error);
+    }
   } else {
-    console.error('[mongo] 연결 실패:', mongo.error);
+    console.log('[mongo] MONGODB_URI 없음 — 화면에서 연결을 추가하세요');
   }
 
   const { server, scheme, stop: stopTls } = createAppServer(app, config.tls);
@@ -141,7 +153,7 @@ const start = async () => {
     await realtime.stop();
     io.close();
     server.close();
-    await closeClient();
+    await closeAllClients();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

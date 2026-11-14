@@ -22,8 +22,10 @@ import {
   type LiveStatus,
   type LiveView,
   type ServerMetrics,
+  ENV_CONNECTION_ID,
 } from '@mongolive/shared';
-import { getClient } from './db';
+import { config } from './config';
+import { clientFor, retainClient } from './db';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES } from './names';
 import { toWire } from './wire';
 
@@ -179,7 +181,7 @@ export const startRealtime = (io: Server) => {
   const open = async () => {
     if (stopped) return;
     try {
-      const client = await getClient();
+      const client = await clientFor(ENV_CONNECTION_ID);
       const pipeline: BsonDocument[] = [{ $match: { 'ns.db': { $nin: [...HIDDEN_DATABASES] } } }];
       const next = client.watch(pipeline, {
         // create 같은 구조 이벤트도 받는다(MongoDB 6+)
@@ -273,11 +275,16 @@ export const startRealtime = (io: Server) => {
     });
   });
 
-  void open();
+  // (8-2 임시) 아직은 .env 연결 하나만 본다 — 8-3에서 연결마다 스트림을 연다.
+  // 스트림이 쓰는 동안 클라이언트가 유휴 해제로 닫히지 않게 붙잡아 둔다
+  const release = config.mongoUri ? retainClient(ENV_CONNECTION_ID) : null;
+  if (config.mongoUri) void open();
+  else currentStatus = { state: 'error', error: '연결이 없습니다 — 화면에서 연결을 추가하세요' };
 
   return {
     stop: async () => {
       stopped = true;
+      release?.();
       await stream?.close().catch(() => undefined);
     },
   };

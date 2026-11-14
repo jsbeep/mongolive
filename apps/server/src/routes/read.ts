@@ -19,9 +19,9 @@ import {
   isPlainObject,
   validateQueryFilter,
 } from '@mongolive/shared';
-import type { Db, Filter, Document as BsonDocument } from 'mongodb';
-import { getClient } from '../db';
-import { emptyDatabases } from '../emptyDatabases';
+import type { Db, Filter, MongoClient, Document as BsonDocument } from 'mongodb';
+import { clientOf, connectionIdOf } from '../db';
+import { emptyDatabasesOf } from '../emptyDatabases';
 import { getCollectionMeta } from '../meta';
 import { toQueryHttpError, toValueHttpError } from '../queryErrors';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES, HttpError, isHiddenCollection } from '../names';
@@ -42,7 +42,8 @@ export const listCollectionNames = async (db: Db): Promise<string[]> => {
 };
 
 readRouter.get('/databases', async (_req, res) => {
-  const client = await getClient();
+  const client = await clientOf(res);
+  const emptyDatabases = emptyDatabasesOf(connectionIdOf(res));
   const { databases } = await client.db('admin').admin().listDatabases({ nameOnly: true });
 
   const result: DatabaseSummary[] = [];
@@ -70,7 +71,7 @@ readRouter.get('/databases', async (_req, res) => {
 });
 
 readRouter.get('/databases/:db/collections', async (req, res) => {
-  const db = (await getClient()).db(checkDatabaseName(req.params.db));
+  const db = (await clientOf(res)).db(checkDatabaseName(req.params.db));
   const names = await listCollectionNames(db);
 
   const result: CollectionSummary[] = await Promise.all(
@@ -122,8 +123,8 @@ const parseDocumentQuery = (q: Record<string, unknown>): DocumentQuery => {
 // 문서 목록 한 페이지. 필터가 '제목/미리보기'라는 계산된 값에 걸리고 정렬도 그렇기 때문에
 // 컬렉션 전체(쿼리가 있으면 쿼리 결과 전체)를 요약한 뒤 공유 함수(queryDocuments)로 거르고 자른다 — Mock과 결과가 같다.
 // 목표 규모(~5MB)에선 충분히 빠르다. 훨씬 커지면 여기를 MongoDB 쿼리(skip/limit)로 바꿔야 한다.
-const listDocuments = async (dbName: string, colName: string, query: DocumentQuery, mongoFilter?: Filter<BsonDocument>) => {
-  const db = (await getClient()).db(checkDatabaseName(dbName));
+const listDocuments = async (client: MongoClient, dbName: string, colName: string, query: DocumentQuery, mongoFilter?: Filter<BsonDocument>) => {
+  const db = client.db(checkDatabaseName(dbName));
   const collection = db.collection(checkCollectionName(colName));
 
   const meta = await getCollectionMeta(db.databaseName, collection.collectionName);
@@ -141,7 +142,7 @@ const listDocuments = async (dbName: string, colName: string, query: DocumentQue
 };
 
 readRouter.get('/databases/:db/collections/:col/documents', async (req, res) => {
-  res.json(await listDocuments(req.params.db, req.params.col, parseDocumentQuery(req.query as Record<string, unknown>)));
+  res.json(await listDocuments(await clientOf(res), req.params.db, req.params.col, parseDocumentQuery(req.query as Record<string, unknown>)));
 });
 
 // 사용자 쿼리 — 쿼리가 길 수 있고(주소 길이 제한) 값이 접속 기록에 남지 않게 POST 본문으로 받는다
@@ -159,14 +160,14 @@ readRouter.post('/databases/:db/collections/:col/documents', async (req, res) =>
     throw toValueHttpError(e);
   }
   try {
-    res.json(await listDocuments(req.params.db, req.params.col, parseDocumentQuery(body), filter));
+    res.json(await listDocuments(await clientOf(res), req.params.db, req.params.col, parseDocumentQuery(body), filter));
   } catch (e) {
     throw toQueryHttpError(e, QUERY_MAX_TIME_MS);
   }
 });
 
 readRouter.get('/databases/:db/collections/:col/documents/:id', async (req, res) => {
-  const db = (await getClient()).db(checkDatabaseName(req.params.db));
+  const db = (await clientOf(res)).db(checkDatabaseName(req.params.db));
   const collection = db.collection(checkCollectionName(req.params.col));
 
   // id 문자열 "5"는 문자열 "5"/Int32 5/Long 5/Double 5.0 중 무엇이었는지 모른다 — 후보 전부로 찾는다
