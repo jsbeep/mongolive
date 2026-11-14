@@ -1,10 +1,11 @@
-// 파이프라인 저장·기록 — 컬렉션마다, 이 브라우저(localStorage)에만. 사용자 MongoDB엔 아무것도 남기지 않는다.
+// 파이프라인 저장·기록 — 컬렉션마다, 이 브라우저(localStorage)에만(연결마다 따로). 사용자 MongoDB엔 아무것도 남기지 않는다.
 //   saved   이름 붙여 저장한 것(컬렉션마다 30개까지)
 //   history 붙인 파이프라인이 바뀌어 다시 셀 때마다 남는 최근 버전(같은 버전은 하나만, 최근 것이 앞 — 15개까지)
 // 스테이지는 글자와 켜짐만 둔다(id는 불러올 때 새로 만든다 — 지금 파이프라인과 섞이지 않게).
 import { useSyncExternalStore } from 'react';
 import { getPipelineStages, INPUT_STAGE_ID, isRunnable, newStageId, pipelineKey, setPipelineStages, type PipelineStage } from './pipelines';
 import { getPipelineDrafts, updatePipelineDrafts } from './pipelineDrafts';
+import { connectionScoped } from './connectionStorage';
 
 export interface StoredStage {
   text: string;
@@ -28,7 +29,7 @@ export interface SavedPipelineStore {
   history: Record<string, PipelineVersion[]>;
 }
 
-const KEY = 'mongolive.savedPipelines.v1';
+const storage = connectionScoped('mongolive.savedPipelines.v1');
 const MAX_SAVED = 30;
 const MAX_HISTORY = 15;
 // 기록이 남은 컬렉션 수 — 넘으면 오래된 것부터 잊는다(저장한 것은 지우지 않는다)
@@ -39,7 +40,7 @@ const isStored = (s: unknown): s is StoredStage =>
 
 const read = (): SavedPipelineStore => {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<SavedPipelineStore>;
+    const raw = JSON.parse(storage.read() ?? '{}') as Partial<SavedPipelineStore>;
     const saved: SavedPipelineStore['saved'] = {};
     const history: SavedPipelineStore['history'] = {};
     for (const [key, list] of Object.entries(raw.saved ?? {})) {
@@ -61,13 +62,15 @@ let store = read();
 const listeners = new Set<() => void>();
 const write = (next: SavedPipelineStore) => {
   store = next;
-  try {
-    localStorage.setItem(KEY, JSON.stringify(next));
-  } catch {
-    // 저장 못 해도 이번 탭에선 쓴다
-  }
+  storage.write(JSON.stringify(next));
   listeners.forEach((listener) => listener());
 };
+
+// 연결이 바뀌거나 다른 탭이 이 연결의 저장·기록을 바꾸면 다시 읽는다
+storage.onChange(() => {
+  store = read();
+  listeners.forEach((listener) => listener());
+});
 
 const toStored = (stages: PipelineStage[]): StoredStage[] =>
   stages.filter((s) => !s.pending).map((s) => ({ text: s.text, enabled: s.enabled }));
@@ -122,15 +125,8 @@ export const replacePipeline = (database: string, collection: string, stored: St
 
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
-  const onStorage = (e: StorageEvent) => {
-    if (e.key !== KEY) return;
-    store = read();
-    listener();
-  };
-  window.addEventListener('storage', onStorage);
   return () => {
     listeners.delete(listener);
-    window.removeEventListener('storage', onStorage);
   };
 };
 

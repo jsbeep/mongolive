@@ -7,6 +7,7 @@ import { useSyncExternalStore } from 'react';
 import type { AggregateCounts, AggregateResult, EjsonObject } from '@mongolive/shared';
 import { api } from './api';
 import { pipelineKey } from './pipelines';
+import { onConnectionSwitch } from './connectionStorage';
 
 export type RunState<T> =
   | { status: 'loading' }
@@ -27,6 +28,15 @@ export interface PipelinePreview {
 const previews = new Map<string, PipelinePreview>();
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((listener) => listener());
+
+// 연결을 바꾸면 받아 둔 결과를 버린다(같은 이름의 컬렉션이라도 다른 클러스터). 늦게 온 옛 응답은 run이 버린다
+onConnectionSwitch(() => {
+  outputs.clear();
+  counts.clear();
+  stale.clear();
+  previews.clear();
+  emit();
+});
 
 export const runKey = (database: string, collection: string, pipeline: EjsonObject[]) =>
   `${pipelineKey(database, collection)}\u0000${JSON.stringify(pipeline)}`;

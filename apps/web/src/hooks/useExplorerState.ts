@@ -30,6 +30,7 @@ const conflictInfoOf = (e: unknown): ConflictInfo | null => {
 };
 import { getServerSettingsSnapshot } from '../services/serverSettings';
 import { getPreferences, LIVE_BATCH_MS } from '../services/preferences';
+import { connectionScoped } from '../services/connectionStorage';
 import {
   writeBlockedReason,
   validateQueryFilter,
@@ -131,15 +132,16 @@ export type DocumentPageInfo = Omit<DocumentPage, 'items'> & { markId?: string }
 
 const EMPTY_DOCUMENT_QUERY: DocumentListQuery = { page: 0, filter: '', sort: 'none' };
 
-// 컬렉션별 문서 목록 필터·정렬·쿼리 기억(이 브라우저) — 컬렉션을 직접 고를 때만 꺼내 쓴다.
+// 컬렉션별 문서 목록 필터·정렬·쿼리 기억(이 브라우저, 연결마다 따로) — 컬렉션을 직접 고를 때만 꺼내 쓴다.
 // 참조·변경 기록으로 이동할 때는 빈 조건으로 연다(저장된 필터에 걸려 가려던 문서가 안 보이면 안 되므로).
 // 쿼리는 서버 연결에서만 꺼내고, 허용 연산자 검사를 다시 통과해야 쓴다(손으로 고친 localStorage 대비).
-const COLLECTION_QUERY_KEY = 'mongolive.collectionQuery';
+export const COLLECTION_QUERY_KEY = 'mongolive.collectionQuery';
+const savedQueryStorage = connectionScoped(COLLECTION_QUERY_KEY);
 type SavedQuery = Pick<DocumentListQuery, 'filter' | 'sort' | 'mongoFilter' | 'mongoFilterText'>;
 const SORTS = new Set<DocumentSort>(['none', 'title-asc', 'title-desc', 'fields-desc', 'fields-asc', 'updated-desc', 'updated-asc']);
 const readSavedQueries = (): Record<string, SavedQuery> => {
   try {
-    const raw = JSON.parse(localStorage.getItem(COLLECTION_QUERY_KEY) ?? '{}') as unknown;
+    const raw = JSON.parse(savedQueryStorage.read() ?? '{}') as unknown;
     return raw && typeof raw === 'object' ? (raw as Record<string, SavedQuery>) : {};
   } catch {
     return {};
@@ -163,11 +165,8 @@ const rememberQuery = (database: string, collection: string, query: DocumentList
   const key = collectionKey(database, collection);
   if (!query.filter && query.sort === 'none' && !query.mongoFilter) delete all[key];
   else all[key] = { filter: query.filter, sort: query.sort, mongoFilter: query.mongoFilter, mongoFilterText: query.mongoFilterText };
-  try {
-    localStorage.setItem(COLLECTION_QUERY_KEY, JSON.stringify(all));
-  } catch {
-    // 기억 못 해도 지금 목록엔 적용된다
-  }
+  // 기억 못 해도 지금 목록엔 적용된다
+  savedQueryStorage.write(JSON.stringify(all));
 };
 
 export interface UseExplorerStateResult {

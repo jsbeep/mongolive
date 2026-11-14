@@ -20,7 +20,7 @@ import {
   type FieldValueCandidate,
 } from '@mongolive/shared';
 import type { MongoClient } from 'mongodb';
-import { clientOf } from '../db';
+import { clientOf, connectionIdOf } from '../db';
 import { getCollectionMeta } from '../meta';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES, HttpError } from '../names';
 import { fromWire, READ_OPTIONS, toWire } from '../wire';
@@ -83,7 +83,7 @@ refsRouter.get('/oid/:oid', async (req, res) => {
 
 refsRouter.get('/databases/:db/collections/:col/export', async (req, res) => {
   const collection = await collectionFrom(await clientOf(res), req.params.db, req.params.col);
-  const meta = await getCollectionMeta(req.params.db, req.params.col);
+  const meta = await getCollectionMeta(connectionIdOf(res), req.params.db, req.params.col);
   const documents = (await collection.find({}, READ_OPTIONS).toArray()).map((d) => toWire<Document>(d));
   const result: CollectionExport = {
     name: req.params.col,
@@ -102,7 +102,7 @@ refsRouter.post('/databases/:db/collections/:col/find-by-field', async (req, res
   const collection = await collectionFrom(await clientOf(res), dbName, colName);
   const key = checkKey(req.body?.key);
   const value = toCanonical(req.body?.value) as EjsonValue;
-  const meta = await getCollectionMeta(dbName, colName);
+  const meta = await getCollectionMeta(connectionIdOf(res), dbName, colName);
 
   // 1차: MongoDB 쿼리로 후보를 좁힌다(인덱스가 있으면 탄다).
   // _id 대상은 Mock과 같이 느슨하게 — FK에 oid가 hex 문자열로 저장된 경우도 찾는다.
@@ -147,7 +147,7 @@ refsRouter.get('/databases/:db/collections/:col/field-values', async (req, res) 
   const { db: dbName, col: colName } = req.params;
   const collection = await collectionFrom(await clientOf(res), dbName, colName);
   const key = checkKey(req.query.key);
-  const meta = await getCollectionMeta(dbName, colName);
+  const meta = await getCollectionMeta(connectionIdOf(res), dbName, colName);
 
   const raw = await collection.find({}, { ...READ_OPTIONS, limit: DOCUMENT_LIST_LIMIT }).toArray();
   const result: FieldValueCandidate[] = [];

@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import { createConnection, deleteConnection, listConnections, resolveTestUri, updateConnection } from '../connections';
 import { testMongoUri } from '../db';
+import { dropConnectionMeta } from '../meta';
 
 export const connectionsRouter = Router();
 
@@ -32,5 +33,7 @@ connectionsRouter.put('/connections/:id', async (req, res) => {
 
 connectionsRouter.delete('/connections/:id', async (req, res) => {
   await deleteConnection(req.params.id);
+  // 그 연결의 PK/FK·titleKey 선언도(연결 id는 다시 쓰지 않는다)
+  await dropConnectionMeta(req.params.id);
   res.status(204).end();
 });

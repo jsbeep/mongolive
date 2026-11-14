@@ -115,7 +115,7 @@ const createDatabase = async (conn: MongoConn, op: Extract<StructureOp, { type: 
     try {
       for (const [collectionName, seed] of seeds) {
         await createWithDocuments(db, collectionName, prepareDocuments(seed.documents));
-        await updateCollectionMeta(name, collectionName, () => ({
+        await updateCollectionMeta(conn.id, name, collectionName, () => ({
           titleKey: seed.titleKey,
           primaryKey: seed.primaryKey,
           referenceFields: seed.referenceFields as Record<string, ReferenceFieldConfig> | undefined,
@@ -124,7 +124,7 @@ const createDatabase = async (conn: MongoConn, op: Extract<StructureOp, { type: 
     } catch (e) {
       // 방금 새로 만든 DB이므로 통째로 지워 되돌린다
       await db.dropDatabase().catch(() => undefined);
-      await deleteCollectionMeta(name);
+      await deleteCollectionMeta(conn.id, name);
       throw e;
     }
   }
@@ -136,7 +136,7 @@ const deleteDatabase = async (conn: MongoConn, op: Extract<StructureOp, { type: 
   if (emptyDatabasesOf(conn.id).delete(name)) return { status: 'ok', changedPaths: [`databases.${name}`], tracePath: [name] };
   if (!(await existingDatabaseNames(conn)).has(name)) throw new HttpError(404, 'DB not found');
   await (await openDb(conn, name)).dropDatabase();
-  await deleteCollectionMeta(name);
+  await deleteCollectionMeta(conn.id, name);
   return { status: 'ok', changedPaths: [`databases.${name}`], tracePath: [name] };
 };
 
@@ -159,7 +159,7 @@ const renameCollection = async (conn: MongoConn, op: Extract<StructureOp, { type
   if (newName !== oldName) {
     // dropTarget: false(기본) — 같은 이름이 있으면 덮지 않고 에러
     await db.renameCollection(oldName, newName).catch(translate);
-    await moveCollectionMeta(database, oldName, newName);
+    await moveCollectionMeta(conn.id, database, oldName, newName);
   }
   return collectionResult(database, newName);
 };
@@ -179,7 +179,7 @@ const duplicateCollection = async (conn: MongoConn, op: Extract<StructureOp, { t
     return fromWire(doc) as BsonDocument;
   });
   await createWithDocuments(db, target, documents);
-  await copyCollectionMeta(database, source, target);
+  await copyCollectionMeta(conn.id, database, source, target);
   return collectionResult(database, target);
 };
 
@@ -189,7 +189,7 @@ const deleteCollection = async (conn: MongoConn, op: Extract<StructureOp, { type
   const db = await openDb(conn, database);
   await requireCollection(db, name);
   await db.collection(name).drop();
-  await deleteCollectionMeta(database, name);
+  await deleteCollectionMeta(conn.id, database, name);
   // Mock과 같은 모양 — 강조 대상은 컬렉션 목록
   return collectionResult(database, name, `databases.${database}.collections`, [database]);
 };

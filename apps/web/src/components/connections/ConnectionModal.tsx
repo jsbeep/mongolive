@@ -16,6 +16,7 @@ import {
   type ConnectionTestResult,
 } from '../../types/explorer';
 import { api } from '../../services/api';
+import { forgetConnectionStorage } from '../../services/connectionStorage';
 import { cn } from '../../utils/cn';
 import { CONNECTION_COLOR_CLASSES } from './connectionColors';
 
@@ -148,6 +149,8 @@ function ModalBody({ target, onConnect, onClose }: { target: ConnectionModalTarg
     }
     void run('delete', async () => {
       await api.deleteConnection(editing.id);
+      // 이 브라우저에 남은 그 연결의 북마크·기록·파이프라인도
+      forgetConnectionStorage(editing.id);
       onClose();
     });
   };

@@ -1,7 +1,7 @@
 // 활동 기록(클러스터 전체 변경 로그) — 앱 전체에서 한 번만 구독한다.
 // 패널이 닫혀 있어도 계속 받아야 Activity 버튼에 '안 읽은 개수'를 띄울 수 있다.
 //
-// 기록의 원본은 서버 메모리(최근 200건, 모든 브라우저 공유)다. 브라우저는 두 시점만 기억한다(localStorage):
+// 기록의 원본은 서버 메모리(연결마다 최근 200건, 모든 브라우저 공유)다. 브라우저는 두 시점만 기억한다(localStorage, 연결마다 따로):
 //   clearedAt — '비우기'를 누른 시점. 그 이전 기록은 서버가 다시 보내도 숨긴다(서버 기록은 그대로).
 //   seenAt    — 마지막으로 '모두 읽음'을 누른 시점. 그 이후 기록 = 안 읽음(목록에 하늘색, 버튼에 초록 점).
 //               탭을 연다고 자동으로 읽음 처리하지 않는다 — 어디부터 안 봤는지 보여주기 위해.
@@ -9,22 +9,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { LiveLogEntry } from '../types/explorer';
 import { api, dataSourceKind } from '../services/api';
+import { connectionScoped, type ConnectionScoped } from '../services/connectionStorage';
 
 const MAX_ENTRIES = 300;
-const CLEARED_KEY = 'mongolive.activity.clearedAt';
-const SEEN_KEY = 'mongolive.activity.seenAt';
+// 이 훅을 쓰는 페이지는 연결이 바뀌면 다시 만들어지므로(App의 key) 처음 읽을 때 지금 연결의 값이 나온다
+const CLEARED = connectionScoped('mongolive.activity.clearedAt');
+const SEEN = connectionScoped('mongolive.activity.seenAt');
 
-const readTime = (key: string): number | null => {
-  const n = Number(localStorage.getItem(key));
+const readTime = (storage: ConnectionScoped): number | null => {
+  const n = Number(storage.read());
   return Number.isFinite(n) && n > 0 ? n : null;
 };
-const writeTime = (key: string, value: number) => {
-  try {
-    localStorage.setItem(key, String(value));
-  } catch {
-    // 저장 공간이 꽉 차도 기능은 동작한다(새로고침하면 잊을 뿐)
-  }
-};
+// 저장 공간이 꽉 차도 기능은 동작한다(새로고침하면 잊을 뿐)
+const writeTime = (storage: ConnectionScoped, value: number) => storage.write(String(value));
 
 export interface ActivityLog {
   // 비운 시점 이후의 기록, 최신이 앞
@@ -38,9 +35,9 @@ export interface ActivityLog {
 
 export function useActivityLog(): ActivityLog {
   const [all, setAll] = useState<LiveLogEntry[]>([]);
-  const [clearedAt, setClearedAt] = useState<number>(() => readTime(CLEARED_KEY) ?? 0);
+  const [clearedAt, setClearedAt] = useState<number>(() => readTime(CLEARED) ?? 0);
   // null = 이 브라우저에서 처음 — 첫 기록 묶음(backlog)을 받으면 '다 읽음'으로 시작한다
-  const [seenAt, setSeenAt] = useState<number | null>(() => readTime(SEEN_KEY));
+  const [seenAt, setSeenAt] = useState<number | null>(() => readTime(SEEN));
 
   useEffect(() => {
     if (dataSourceKind !== 'remote') return;
@@ -56,7 +53,7 @@ export function useActivityLog(): ActivityLog {
         const newest = incoming.reduce((max, e) => Math.max(max, e.serverTime), 0);
         setSeenAt((current) => {
           if (current !== null || newest === 0) return current;
-          writeTime(SEEN_KEY, newest);
+          writeTime(SEEN, newest);
           return newest;
         });
       }
@@ -75,14 +72,14 @@ export function useActivityLog(): ActivityLog {
   const clear = useCallback(() => {
     if (newestTime === undefined) return;
     setClearedAt(newestTime);
-    writeTime(CLEARED_KEY, newestTime);
+    writeTime(CLEARED, newestTime);
   }, [newestTime]);
 
   const markSeen = useCallback(() => {
     if (newestTime === undefined) return;
     setSeenAt((current) => {
       if (current !== null && current >= newestTime) return current;
-      writeTime(SEEN_KEY, newestTime);
+      writeTime(SEEN, newestTime);
       return newestTime;
     });
   }, [newestTime]);

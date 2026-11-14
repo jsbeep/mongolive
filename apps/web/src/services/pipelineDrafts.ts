@@ -6,6 +6,7 @@
 //   focus          편집기 입력칸으로 커서를 보내 달라는 한 번짜리 요청(새로 만든 $lookup의 as 자리 등)
 import { useSyncExternalStore } from 'react';
 import { pipelineKey } from './pipelines';
+import { onConnectionSwitch } from './connectionStorage';
 
 export interface PipelineDrafts {
   drafts: Record<string, string>;
@@ -18,6 +19,11 @@ export interface PipelineDrafts {
 const EMPTY: PipelineDrafts = { drafts: {}, collected: {}, editingId: null, lastCollectedId: null, focus: null };
 const states = new Map<string, PipelineDrafts>();
 const listeners = new Set<() => void>();
+// 다른 연결엔 같은 이름의 컬렉션이 있어도 다른 것 — 연결을 바꾸면 초안을 비운다
+onConnectionSwitch(() => {
+  states.clear();
+  listeners.forEach((listener) => listener());
+});
 
 export const getPipelineDrafts = (database: string, collection: string): PipelineDrafts =>
   states.get(pipelineKey(database, collection)) ?? EMPTY;

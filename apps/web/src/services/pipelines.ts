@@ -1,8 +1,9 @@
-// 컬렉션마다의 aggregation 파이프라인(스테이지 글자 + 켜짐) — 이 브라우저(localStorage)에만 둔다.
+// 컬렉션마다의 aggregation 파이프라인(스테이지 글자 + 켜짐) — 이 브라우저(localStorage)에만, 연결마다 따로 둔다.
 // 사용자 MongoDB엔 아무것도 남기지 않는다. 결과는 여기 두지 않는다(크고 금방 낡는다 — services/aggregateRuns가 메모리에).
 // 스테이지 글자는 사용자가 쓴 그대로(줄바꿈·띄어쓰기 유지) — 적용할 때 읽어 보고 맞을 때만 저장하므로 늘 읽힌다.
 import { useSyncExternalStore } from 'react';
 import { formatStageText, parseStageText, stageName, validatePipelineStage, type EjsonObject } from '@mongolive/shared';
+import { connectionScoped } from './connectionStorage';
 
 export interface PipelineStage {
   id: string;
@@ -20,7 +21,7 @@ export interface CurrentPipeline {
   at: number;
 }
 
-const KEY = 'mongolive.pipelines.v1';
+const storage = connectionScoped('mongolive.pipelines.v1');
 // 오래 안 쓴 컬렉션부터 잊는다
 const MAX_TARGETS = 100;
 
@@ -38,7 +39,7 @@ const isStage = (s: unknown): s is PipelineStage =>
 
 const read = (): Record<string, CurrentPipeline> => {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as unknown;
+    const raw = JSON.parse(storage.read() ?? '{}') as unknown;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     const out: Record<string, CurrentPipeline> = {};
     for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
@@ -57,13 +58,15 @@ const EMPTY: PipelineStage[] = [];
 
 const write = (next: Record<string, CurrentPipeline>) => {
   saved = next;
-  try {
-    localStorage.setItem(KEY, JSON.stringify(next));
-  } catch {
-    // 저장 못 해도 이번 탭에선 쓴다
-  }
+  storage.write(JSON.stringify(next));
   listeners.forEach((listener) => listener());
 };
+
+// 연결이 바뀌거나 다른 탭이 이 연결의 파이프라인을 바꾸면 다시 읽는다
+storage.onChange(() => {
+  saved = read();
+  listeners.forEach((listener) => listener());
+});
 
 export const newStageId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -120,16 +123,8 @@ export const stagesFromValues = (values: EjsonObject[], previous: PipelineStage[
 
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
-  // 다른 탭에서 바꾸면 따라간다
-  const onStorage = (e: StorageEvent) => {
-    if (e.key !== KEY) return;
-    saved = read();
-    listener();
-  };
-  window.addEventListener('storage', onStorage);
   return () => {
     listeners.delete(listener);
-    window.removeEventListener('storage', onStorage);
   };
 };
 

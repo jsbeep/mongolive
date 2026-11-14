@@ -1,6 +1,7 @@
-// 경로 북마크(이 브라우저) — DB / 컬렉션 / 문서(+ 그 안의 필드 경로). 컬럼 헤더 아이콘으로 넣고 빼며,
+// 경로 북마크(이 브라우저, 연결마다 따로) — DB / 컬렉션 / 문서(+ 그 안의 필드 경로). 컬럼 헤더 아이콘으로 넣고 빼며,
 // 사이드바 Bookmarks 패널이 DB별로 보여 준다. 사용자 MongoDB에는 아무것도 남기지 않는다(설정 내보내기에는 들어간다).
 import { useSyncExternalStore } from 'react';
+import { connectionScoped } from './connectionStorage';
 
 export interface BookmarkLocation {
   database: string;
@@ -18,7 +19,8 @@ export interface Bookmark extends BookmarkLocation {
   at: number;
 }
 
-const KEY = 'mongolive.bookmarks';
+export const BOOKMARKS_KEY = 'mongolive.bookmarks';
+const storage = connectionScoped(BOOKMARKS_KEY);
 const MAX = 200;
 
 // 같은 자리인가를 가리는 열쇠
@@ -29,7 +31,7 @@ const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s)
 
 const read = (): Bookmark[] => {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? '[]') as unknown;
+    const raw = JSON.parse(storage.read() ?? '[]') as unknown;
     if (!Array.isArray(raw)) return [];
     return raw.filter((b): b is Bookmark =>
       !!b && typeof b === 'object'
@@ -50,13 +52,16 @@ const listeners = new Set<() => void>();
 const save = (next: Bookmark[]) => {
   bookmarks = next;
   keys = new Set(next.map(bookmarkKey));
-  try {
-    localStorage.setItem(KEY, JSON.stringify(next));
-  } catch {
-    // 저장 못 해도 이번 탭에선 보인다
-  }
+  storage.write(JSON.stringify(next));
   listeners.forEach((listener) => listener());
 };
+
+// 연결이 바뀌거나 다른 탭이 이 연결의 북마크를 바꾸면 다시 읽는다
+storage.onChange(() => {
+  bookmarks = read();
+  keys = new Set(bookmarks.map(bookmarkKey));
+  listeners.forEach((listener) => listener());
+});
 
 export const isBookmarked = (loc: BookmarkLocation): boolean => keys.has(bookmarkKey(loc));
 
@@ -84,17 +89,8 @@ export const removeBookmark = (id: string) => save(bookmarks.filter((b) => b.id 
 
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
-  // 다른 탭에서 바꾸면 따라간다
-  const onStorage = (e: StorageEvent) => {
-    if (e.key !== KEY) return;
-    bookmarks = read();
-    keys = new Set(bookmarks.map(bookmarkKey));
-    listener();
-  };
-  window.addEventListener('storage', onStorage);
   return () => {
     listeners.delete(listener);
-    window.removeEventListener('storage', onStorage);
   };
 };
 

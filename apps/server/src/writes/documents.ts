@@ -367,7 +367,7 @@ const duplicateDocument = async (conn: MongoConn, op: Extract<DocumentOp, { type
   const collectionName = str(op.collection, 'collection');
   const collection = await openCollection(conn, database, collectionName);
   const { wire: source } = await findByDocumentId(collection, str(op.documentId, 'documentId'));
-  const meta = await getCollectionMeta(database, collectionName);
+  const meta = await getCollectionMeta(conn.id, database, collectionName);
 
   const copy = cloneValue(source) as Document;
   const idKind = valueKind(source._id);

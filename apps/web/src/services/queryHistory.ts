@@ -1,7 +1,8 @@
-// 쿼리 기록(이 브라우저) — 실행에 성공한 쿼리만. 같은 컬렉션의 같은 쿼리는 하나로(맨 위로 올린다), 최대 MAX개.
+// 쿼리 기록(이 브라우저, 연결마다 따로) — 실행에 성공한 쿼리만. 같은 컬렉션의 같은 쿼리는 하나로(맨 위로 올린다), 최대 MAX개.
 // 사이드바 Query 패널이 보여 주고, 누르면 지금 컬렉션에 다시 실행한다. 사용자 MongoDB에는 아무것도 남기지 않는다.
 import { useSyncExternalStore } from 'react';
 import { validateQueryFilter, type JsonObject } from '../types/explorer';
+import { connectionScoped } from './connectionStorage';
 
 export interface QueryHistoryEntry {
   id: string;
@@ -14,12 +15,12 @@ export interface QueryHistoryEntry {
   at: number;
 }
 
-const KEY = 'mongolive.queryHistory';
+const storage = connectionScoped('mongolive.queryHistory');
 const MAX = 50;
 
 const read = (): QueryHistoryEntry[] => {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? '[]') as unknown;
+    const raw = JSON.parse(storage.read() ?? '[]') as unknown;
     if (!Array.isArray(raw)) return [];
     // 손으로 고친 값 대비 — 모양이 맞고 허용 연산자 검사를 통과한 것만
     return raw.filter((e): e is QueryHistoryEntry =>
@@ -37,13 +38,15 @@ const listeners = new Set<() => void>();
 
 const save = (next: QueryHistoryEntry[]) => {
   entries = next;
-  try {
-    localStorage.setItem(KEY, JSON.stringify(next));
-  } catch {
-    // 저장 못 해도 이번 탭에선 보인다
-  }
+  storage.write(JSON.stringify(next));
   listeners.forEach((listener) => listener());
 };
+
+// 연결이 바뀌거나 다른 탭이 이 연결의 기록을 바꾸면 다시 읽는다
+storage.onChange(() => {
+  entries = read();
+  listeners.forEach((listener) => listener());
+});
 
 const sameQuery = (a: Pick<QueryHistoryEntry, 'database' | 'collection' | 'filter'>, b: typeof a) =>
   a.database === b.database && a.collection === b.collection && JSON.stringify(a.filter) === JSON.stringify(b.filter);
@@ -58,16 +61,8 @@ export const clearQueryHistory = () => save([]);
 
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
-  // 다른 탭에서 바꾸면 따라간다
-  const onStorage = (e: StorageEvent) => {
-    if (e.key !== KEY) return;
-    entries = read();
-    listener();
-  };
-  window.addEventListener('storage', onStorage);
   return () => {
     listeners.delete(listener);
-    window.removeEventListener('storage', onStorage);
   };
 };
 

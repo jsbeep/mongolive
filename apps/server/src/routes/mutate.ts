@@ -7,7 +7,7 @@
 // 문서 쓰기는 writes/documents.ts(6-1), 컬렉션/DB 쓰기는 writes/structure.ts(6-2).
 import { Router } from 'express';
 import { collectionKey, writeBlockedReason, type MutationRequest, type MutationResult } from '@mongolive/shared';
-import { connOf, type MongoConn } from '../db';
+import { connectionIdOf, connOf, type MongoConn } from '../db';
 import { listOwnedOids, setOwnedOid, updateCollectionMeta } from '../meta';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
 import { DOCUMENT_OPS, runDocumentOp } from '../writes/documents';
@@ -67,7 +67,7 @@ mutateRouter.post('/mutate', async (req, res) => {
       const collection = str(op.collection, 'collection');
       const titleKey = str(op.titleKey, 'titleKey').trim();
       await requireCollection(await connOf(res), database, collection);
-      await updateCollectionMeta(database, collection, (m) => ({ ...m, titleKey: titleKey || undefined }));
+      await updateCollectionMeta(connectionIdOf(res), database, collection, (m) => ({ ...m, titleKey: titleKey || undefined }));
       res.json(collectionResult(database, collection));
       return;
     }
@@ -76,7 +76,7 @@ mutateRouter.post('/mutate', async (req, res) => {
       const collection = str(op.collection, 'collection');
       const primaryKey = str(op.primaryKey, 'primaryKey').trim();
       await requireCollection(await connOf(res), database, collection);
-      await updateCollectionMeta(database, collection, (m) => ({ ...m, primaryKey: primaryKey || undefined }));
+      await updateCollectionMeta(connectionIdOf(res), database, collection, (m) => ({ ...m, primaryKey: primaryKey || undefined }));
       res.json(collectionResult(database, collection));
       return;
     }
@@ -87,7 +87,7 @@ mutateRouter.post('/mutate', async (req, res) => {
       const targetCollection = optionalStr(op.targetCollection, 'targetCollection');
       const targetKey = optionalStr(op.targetKey, 'targetKey');
       await requireCollection(await connOf(res), database, collection);
-      await updateCollectionMeta(database, collection, (m) => {
+      await updateCollectionMeta(connectionIdOf(res), database, collection, (m) => {
         const referenceFields = { ...m.referenceFields };
         // 대상이 비어 있으면 선언 해제 (Mock과 동일)
         if (!targetCollection || !targetKey) delete referenceFields[field];
@@ -111,15 +111,15 @@ const checkOid = (oid: string): string => {
 };
 
 mutateRouter.get('/meta/owned-oids', async (_req, res) => {
-  res.json(await listOwnedOids());
+  res.json(await listOwnedOids(connectionIdOf(res)));
 });
 
 mutateRouter.put('/meta/owned-oids/:oid', async (req, res) => {
-  await setOwnedOid(checkOid(req.params.oid), true);
+  await setOwnedOid(connectionIdOf(res), checkOid(req.params.oid), true);
   res.status(204).end();
 });
 
 mutateRouter.delete('/meta/owned-oids/:oid', async (req, res) => {
-  await setOwnedOid(checkOid(req.params.oid), false);
+  await setOwnedOid(connectionIdOf(res), checkOid(req.params.oid), false);
   res.status(204).end();
 });

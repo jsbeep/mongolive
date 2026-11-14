@@ -1,38 +1,55 @@
 // 설정 내보내기/가져오기(설정 › Data) — 다른 브라우저·기기로 옮기거나 되돌려 놓을 때.
 //   local  : 이 브라우저의 설정(localStorage) 중 옮길 만한 것만 — 아래 목록에 있는 키만 쓰고 읽는다
 //            ('어디까지 읽었나' 같은 이 브라우저만의 상태는 넣지 않는다)
+//            연결마다 따로 두는 것(북마크·필터 기억)은 모든 연결의 것을 넣는다 — "mongolive.bookmarks@<연결 id>".
+//            연결을 나누기 전에 만든 백업 파일의 값은 기본 연결(.env / 데모)의 것으로 가져온다.
 //   server : 서버 Safety 설정(read-only·보호 대상) — 모든 브라우저에 영향을 주므로 가져올 때 따로 골라야 적용된다
 // 보안 설정(.env)·비밀번호는 넣지 않는다(화면에서 바꿀 수 없는 것이므로).
 import { normalizeServerSettings, type ServerSettings } from '../types/explorer';
 import { saveServerSettings } from './serverSettings';
+import { connectionIdOfKey, LEGACY_CONNECTION_ID, scopedKey } from './connectionStorage';
 
-const LOCAL_KEYS = [
+const LOCAL_KEYS: readonly string[] = [
   'mongolive.preferences', // 표시·삭제 확인·Undo 단계·반영 간격·애니메이션·글꼴
   'mongolive.activity.hiddenOps', // 변경 기록 배지로 끈 종류
-  'mongolive.collectionQuery', // 컬렉션별 필터·정렬·쿼리
-  'mongolive.bookmarks', // 경로 북마크
   'mongolive.sidebar.mode',
   'mongolive.sidebar.restore',
   'mongolive.sidebar.width',
-] as const;
+];
+
+// 연결마다 따로 두는 것
+const SCOPED_KEYS: readonly string[] = [
+  'mongolive.collectionQuery', // 컬렉션별 필터·정렬·쿼리
+  'mongolive.bookmarks', // 경로 북마크
+];
+
+// 백업에 넣을 키인가 — 그대로 쓸 키를 돌려준다(옛 백업의 연결 구분 없는 키는 기본 연결의 키로). 아니면 null
+const backupKey = (key: string): string | null => {
+  if (LOCAL_KEYS.includes(key)) return key;
+  if (SCOPED_KEYS.includes(key)) return scopedKey(key, LEGACY_CONNECTION_ID);
+  return SCOPED_KEYS.some((base) => connectionIdOfKey(base, key) !== null) ? key : null;
+};
 
 export interface SettingsBackup {
   app: 'mongolive';
   version: 1;
   exportedAt: string;
-  local: Partial<Record<(typeof LOCAL_KEYS)[number], string>>;
+  // 키 → localStorage 값 그대로
+  local: Record<string, string>;
   server?: ServerSettings;
 }
 
 export const buildBackup = (server: ServerSettings | null): SettingsBackup => {
   const local: SettingsBackup['local'] = {};
-  for (const key of LOCAL_KEYS) {
-    try {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key === null || backupKey(key) !== key) continue;
       const value = localStorage.getItem(key);
       if (value !== null) local[key] = value;
-    } catch {
-      // 못 읽으면 빼고 간다
     }
+  } catch {
+    // 못 읽으면 빼고 간다
   }
   return { app: 'mongolive', version: 1, exportedAt: new Date().toISOString(), local, ...(server ? { server } : {}) };
 };
@@ -59,8 +76,9 @@ export const parseBackup = (text: string): SettingsBackup => {
   if (obj.app !== 'mongolive' || obj.version !== 1) throw new Error("This isn't a MongoLive settings file.");
   const local: SettingsBackup['local'] = {};
   const src = obj.local && typeof obj.local === 'object' ? (obj.local as Record<string, unknown>) : {};
-  for (const key of LOCAL_KEYS) {
-    if (typeof src[key] === 'string') local[key] = src[key] as string;
+  for (const [key, value] of Object.entries(src)) {
+    const target = backupKey(key);
+    if (target && typeof value === 'string') local[target] = value;
   }
   return {
     app: 'mongolive',

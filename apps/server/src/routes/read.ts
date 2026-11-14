@@ -19,8 +19,8 @@ import {
   isPlainObject,
   validateQueryFilter,
 } from '@mongolive/shared';
-import type { Db, Filter, MongoClient, Document as BsonDocument } from 'mongodb';
-import { clientOf, connectionIdOf } from '../db';
+import type { Db, Filter, Document as BsonDocument } from 'mongodb';
+import { clientOf, connectionIdOf, connOf, type MongoConn } from '../db';
 import { emptyDatabasesOf } from '../emptyDatabases';
 import { getCollectionMeta } from '../meta';
 import { toQueryHttpError, toValueHttpError } from '../queryErrors';
@@ -77,7 +77,7 @@ readRouter.get('/databases/:db/collections', async (req, res) => {
   const result: CollectionSummary[] = await Promise.all(
     names.map(async (name): Promise<CollectionSummary> => {
       const collection = db.collection(name);
-      const meta = await getCollectionMeta(db.databaseName, name);
+      const meta = await getCollectionMeta(connectionIdOf(res), db.databaseName, name);
       const [documentCount, sizeBytes] = await Promise.all([
         collection.estimatedDocumentCount(),
         collection
@@ -123,11 +123,11 @@ const parseDocumentQuery = (q: Record<string, unknown>): DocumentQuery => {
 // 문서 목록 한 페이지. 필터가 '제목/미리보기'라는 계산된 값에 걸리고 정렬도 그렇기 때문에
 // 컬렉션 전체(쿼리가 있으면 쿼리 결과 전체)를 요약한 뒤 공유 함수(queryDocuments)로 거르고 자른다 — Mock과 결과가 같다.
 // 목표 규모(~5MB)에선 충분히 빠르다. 훨씬 커지면 여기를 MongoDB 쿼리(skip/limit)로 바꿔야 한다.
-const listDocuments = async (client: MongoClient, dbName: string, colName: string, query: DocumentQuery, mongoFilter?: Filter<BsonDocument>) => {
+const listDocuments = async ({ id, client }: MongoConn, dbName: string, colName: string, query: DocumentQuery, mongoFilter?: Filter<BsonDocument>) => {
   const db = client.db(checkDatabaseName(dbName));
   const collection = db.collection(checkCollectionName(colName));
 
-  const meta = await getCollectionMeta(db.databaseName, collection.collectionName);
+  const meta = await getCollectionMeta(id, db.databaseName, collection.collectionName);
   const [raw, collectionTotal] = await Promise.all([
     collection.find(mongoFilter ?? {}, mongoFilter ? { ...READ_OPTIONS, maxTimeMS: QUERY_MAX_TIME_MS } : READ_OPTIONS).toArray(),
     // 쿼리가 있으면 '전체 몇 개 중'의 전체는 따로 — 세지 않고 메타데이터에서 읽는다(빠름)
@@ -142,7 +142,7 @@ const listDocuments = async (client: MongoClient, dbName: string, colName: strin
 };
 
 readRouter.get('/databases/:db/collections/:col/documents', async (req, res) => {
-  res.json(await listDocuments(await clientOf(res), req.params.db, req.params.col, parseDocumentQuery(req.query as Record<string, unknown>)));
+  res.json(await listDocuments(await connOf(res), req.params.db, req.params.col, parseDocumentQuery(req.query as Record<string, unknown>)));
 });
 
 // 사용자 쿼리 — 쿼리가 길 수 있고(주소 길이 제한) 값이 접속 기록에 남지 않게 POST 본문으로 받는다
@@ -160,7 +160,7 @@ readRouter.post('/databases/:db/collections/:col/documents', async (req, res) =>
     throw toValueHttpError(e);
   }
   try {
-    res.json(await listDocuments(await clientOf(res), req.params.db, req.params.col, parseDocumentQuery(body), filter));
+    res.json(await listDocuments(await connOf(res), req.params.db, req.params.col, parseDocumentQuery(body), filter));
   } catch (e) {
     throw toQueryHttpError(e, QUERY_MAX_TIME_MS);
   }

@@ -49,6 +49,7 @@ import { StageCard, type StageCardCount } from './StageCard';
 import { MOD, PipelineTextEditor, StageEditor } from './StageEditor';
 import { PipelineMenu } from './PipelineMenu';
 import { hasStageForm, MatchChips, StageForm } from './StageForm';
+import { onConnectionSwitch } from '../../services/connectionStorage';
 
 // ── 새 스테이지 틀 — «» 안이 처음 골라지는 자리(바로 고쳐 쓰게). 그대로 둬도 돌아가는 값이다 ──
 const TEMPLATES = [
@@ -78,6 +79,11 @@ const TEMPLATES = [
 // (스테이지 초안·열린 편집기는 필드 메뉴도 쓰므로 services/pipelineDrafts에)
 const modeMemory = new Map<string, 'cards' | 'text'>();
 const textMemory = new Map<string, string>();
+// 연결을 바꾸면 잊는다(다른 클러스터의 같은 이름 컬렉션에 섞이지 않게)
+onConnectionSwitch(() => {
+  modeMemory.clear();
+  textMemory.clear();
+});
 // 편집기 탭(JSON / Form) — 마지막에 쓴 쪽을 기억한다(처음은 JSON)
 let lastEditorTab: 'json' | 'form' = 'json';
 
