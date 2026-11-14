@@ -17,9 +17,20 @@ import { metricsRouter } from './routes/metrics';
 import { refsRouter } from './routes/refs';
 import { diagnosticsRouter } from './routes/diagnostics';
 import { settingsRouter } from './routes/settings';
+import { connectionsRouter } from './routes/connections';
+import { loadConnections, onConnectionsChange } from './connections';
 import { getServerSettings, loadServerSettings, onServerSettingsChange } from './settings';
 
 const app = express();
+// 모든 응답에 붙이는 보안 헤더 (문지기가 거절한 응답에도)
+//   Referrer-Policy: 다른 사이트로 넘어갈 때 이 앱의 주소를 보내지 않는다
+//   frame-ancestors / X-Frame-Options: 다른 사이트가 이 앱을 iframe에 넣어 클릭을 가로채지 못하게(클릭재킹)
+app.use((_req, res, next) => {
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+  res.setHeader('X-Frame-Options', 'DENY');
+  next();
+});
 // 문지기가 맨 앞 — 거절할 요청은 본문(최대 10MB)을 읽기도 전에 돌려보낸다
 app.use(guard);
 // 로그인/로그아웃/상태 — 본문 제한이 작은 자기 파서를 쓰므로 10MB 파서보다 앞에 둔다
@@ -39,6 +50,7 @@ app.use('/api', refsRouter);
 app.use('/api', metricsRouter);
 app.use('/api', diagnosticsRouter);
 app.use('/api', settingsRouter);
+app.use('/api', connectionsRouter);
 
 // 위에서 처리하지 못한 /api 요청
 app.use('/api', (_req, res) => {
@@ -85,6 +97,8 @@ const start = async () => {
   // 안전장치 설정(read-only, 보호 대상)은 첫 요청 전에 읽어 둔다 — 읽기 전에 쓰기가 들어오면 막을 수 없다
   await loadServerSettings();
   if (getServerSettings().readOnly) console.log('[settings] read-only 모드 — 쓰기를 모두 거절합니다');
+  // 연결 목록도 첫 요청 전에 — 깨진 파일이면 덮어쓰지 않도록 여기서 멈춘다
+  await loadConnections();
 
   // 연결이 안 돼도 서버는 띄운다 — /api/health에서 원인을 볼 수 있고, 요청마다 다시 연결을 시도한다.
   const mongo = await checkMongo();
@@ -110,6 +124,8 @@ const start = async () => {
   const realtime = startRealtime(io);
   // 설정 창에서 Safety를 바꾸면 열려 있는 모든 탭에 알린다(편집 버튼 숨김/보임이 바로 바뀌게)
   const offSettings = onServerSettingsChange((settings) => io.emit('settings', settings));
+  // 연결을 추가·수정·삭제하면 열려 있는 모든 탭의 연결 목록(웰컴 화면·사이드바)을 바꾼다
+  const offConnections = onConnectionsChange((list) => io.emit('connections', list));
   const recheck = setInterval(() => {
     for (const socket of io.sockets.sockets.values()) {
       if (!hasValidSession(socket.request)) socket.disconnect(true);
@@ -120,6 +136,7 @@ const start = async () => {
   const shutdown = async () => {
     clearInterval(recheck);
     offSettings();
+    offConnections();
     stopTls();
     await realtime.stop();
     io.close();

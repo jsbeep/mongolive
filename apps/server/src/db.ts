@@ -1,5 +1,6 @@
 // MongoDB 연결. 연결된 클라이언트 하나를 서버 전체가 공유한다(드라이버가 내부에서 커넥션 풀을 관리).
 import { MongoClient } from 'mongodb';
+import type { ConnectionTestResult, MongoTopology } from '@mongolive/shared';
 import { config } from './config';
 
 let clientPromise: Promise<MongoClient> | null = null;
@@ -38,18 +39,41 @@ export interface MongoStatus {
   error?: string;
 }
 
+// 연결된 클라이언트로 서버 종류·버전을 확인한다
+const inspect = async (client: MongoClient): Promise<Omit<MongoStatus, 'ok' | 'error'>> => {
+  const admin = client.db('admin');
+  const hello = await admin.command({ hello: 1 });
+  const build = await admin.command({ buildInfo: 1 });
+  return {
+    replicaSet: typeof hello.setName === 'string' ? hello.setName : null,
+    sharded: hello.msg === 'isdbgrid',
+    version: typeof build.version === 'string' ? build.version : null,
+  };
+};
+
 export const checkMongo = async (): Promise<MongoStatus> => {
   try {
-    const admin = (await getClient()).db('admin');
-    const hello = await admin.command({ hello: 1 });
-    const build = await admin.command({ buildInfo: 1 });
-    return {
-      ok: true,
-      replicaSet: typeof hello.setName === 'string' ? hello.setName : null,
-      sharded: hello.msg === 'isdbgrid',
-      version: typeof build.version === 'string' ? build.version : null,
-    };
+    return { ok: true, ...(await inspect(await getClient())) };
   } catch (e) {
     return { ok: false, replicaSet: null, sharded: false, version: null, error: e instanceof Error ? e.message : String(e) };
+  }
+};
+
+export const topologyOf = (status: MongoStatus): MongoTopology =>
+  !status.ok ? 'unknown' : status.sharded ? 'sharded' : status.replicaSet ? 'replicaSet' : 'standalone';
+
+// 연결 테스트 — 잠깐 쓸 클라이언트를 만들어 접속해 보고 바로 닫는다(공유 클라이언트와 무관)
+export const testMongoUri = async (uri: string): Promise<ConnectionTestResult> => {
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000, connectTimeoutMS: 5000, appName: 'mongolive' });
+  const started = Date.now();
+  try {
+    await client.connect();
+    const info = await inspect(client);
+    const status: MongoStatus = { ok: true, ...info };
+    return { ok: true, topology: topologyOf(status), version: info.version, replicaSet: info.replicaSet, latencyMs: Date.now() - started };
+  } catch (e) {
+    return { ok: false, topology: 'unknown', version: null, replicaSet: null, latencyMs: null, error: e instanceof Error ? e.message : String(e) };
+  } finally {
+    await client.close().catch(() => undefined);
   }
 };

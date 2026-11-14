@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { Router } from 'express';
 import type { Diagnostics } from '@mongolive/shared';
 import { config } from '../config';
-import { checkMongo, getClient } from '../db';
+import { checkMongo, getClient, topologyOf } from '../db';
 import { realtimeMetrics } from '../realtime';
 
 export const diagnosticsRouter = Router();
@@ -46,7 +46,7 @@ diagnosticsRouter.get('/diagnostics', async (_req, res) => {
     mongo: {
       ok: mongo.ok,
       version: mongo.version,
-      topology: !mongo.ok ? 'unknown' : mongo.sharded ? 'sharded' : mongo.replicaSet ? 'replicaSet' : 'standalone',
+      topology: topologyOf(mongo),
       replicaSet: mongo.replicaSet,
       error: mongo.error,
     },

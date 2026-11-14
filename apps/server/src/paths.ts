@@ -13,3 +13,6 @@ export const authFilePath = (): string => process.env.AUTH_FILE || join(APP_DIR,
 
 // 서버 쪽 설정(설정 창 › Safety: read-only, 보호 대상). 보안 설정(.env)은 여기 두지 않는다
 export const settingsFilePath = (): string => process.env.SETTINGS_FILE || join(APP_DIR, 'settings.json');
+
+// 연결 목록(접속 주소 포함 — 비밀번호가 들어 있으므로 권한 600)
+export const connectionsFilePath = (): string => process.env.CONNECTIONS_FILE || join(APP_DIR, 'connections.json');

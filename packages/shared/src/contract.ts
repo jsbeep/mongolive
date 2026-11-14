@@ -240,13 +240,15 @@ export interface ServerMetrics {
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 
+// changeStream은 replica set이나 sharded cluster에서만 된다
+export type MongoTopology = 'replicaSet' | 'sharded' | 'standalone' | 'unknown';
+
 export interface Diagnostics {
   server: { version: string; node: string; uptimeSec: number };
   mongo: {
     ok: boolean;
     version: string | null;
-    // changeStream은 replica set이나 sharded cluster에서만 된다
-    topology: 'replicaSet' | 'sharded' | 'standalone' | 'unknown';
+    topology: MongoTopology;
     replicaSet: string | null;
     error?: string;
   };
@@ -336,3 +338,58 @@ export interface MutationResult {
 
 // 컬렉션 식별 키 — 구독 키, getDocuments 인자, changedPaths 접두에 공통으로 쓴다
 export const collectionKey = (databaseName: string, collectionName: string): string => `${databaseName}.${collectionName}`;
+
+// ── 연결 (GET/POST /api/connections, PUT/DELETE /api/connections/:id, POST /api/connections/test) ──
+// 접속 주소는 서버 컴퓨터의 파일(~/.mongolive/connections.json)에 두고, 브라우저에는 비밀 값을 가린 주소만 보낸다.
+// .env의 MONGODB_URI는 id 'env'인 읽기 전용 연결로 보인다(이름·색·즐겨찾기만 바꿀 수 있음).
+
+export const ENV_CONNECTION_ID = 'env';
+
+// 가린 비밀 값 자리. 편집 화면에서 이 표시를 그대로 두고 저장하면 서버가 원래 값으로 채운다
+export const URI_SECRET_MASK = '••••••';
+
+// 연결 카드 색 — 운영/개발 DB를 헷갈리지 않게. tailwind 팔레트 이름과 같다
+export const CONNECTION_COLORS = ['red', 'orange', 'amber', 'emerald', 'teal', 'sky', 'violet', 'rose'] as const;
+export type ConnectionColor = (typeof CONNECTION_COLORS)[number];
+
+export interface ConnectionInfo {
+  id: string;
+  source: 'env' | 'saved';
+  // 사용자가 붙인 이름. 없으면 화면이 호스트로 이름을 만든다(connectionLabel)
+  name: string | null;
+  color: ConnectionColor | null;
+  favorite: boolean;
+  // 비밀번호와 비밀 옵션을 URI_SECRET_MASK로 가린 주소
+  uri: string;
+  srv: boolean;
+  hosts: string[];
+  username: string | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+// 만들기(POST)는 uri가 필요하고, 고치기(PUT)는 보낸 항목만 바꾼다. 'env' 연결은 uri를 바꿀 수 없다
+export interface ConnectionInput {
+  name?: string | null;
+  color?: ConnectionColor | null;
+  favorite?: boolean;
+  uri?: string;
+}
+
+// 연결 테스트 — 저장된 연결(id)이면 가린 값을 원래 값으로 채워 시험한다
+export interface ConnectionTestRequest {
+  id?: string;
+  uri?: string;
+}
+
+export interface ConnectionTestResult {
+  ok: boolean;
+  topology: MongoTopology;
+  version: string | null;
+  replicaSet: string | null;
+  latencyMs: number | null;
+  error?: string;
+}
+
+export const connectionLabel = (connection: Pick<ConnectionInfo, 'name' | 'hosts'>): string =>
+  connection.name || connection.hosts[0] || 'MongoDB';
