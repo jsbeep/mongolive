@@ -279,6 +279,17 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
           <Sidebar
             sidebar={sidebar}
             connected={connected}
+            connectionsTree={{
+              connections,
+              connect: connectAction,
+              currentId: connectionId,
+              status: connectionStatus,
+              canManage: api.canManageConnections,
+              onNew: () => setConnectionModal('new'),
+              onEdit: setConnectionModal,
+              onDisconnect: disconnect,
+              onRefresh: () => void refresh(),
+            }}
             databases={databases}
             activeDatabase={activeDatabase}
             activeCollection={treeCollectionName}

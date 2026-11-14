@@ -1,6 +1,6 @@
 // 왼쪽 사이드바 — 세 단계(useSidebar): 완전 접힘 / 아이콘 레일 / 전체.
-//   전체: [ML 이름] · 연결(Connections)·쿼리 기록(Query)·집계 기록(Aggregation)·참조(References)·북마크(Bookmarks) 패널 · ── · DB/컬렉션 트리
-//   연결 전(웰컴 화면): Connections 버튼만 — DB 트리와 다른 패널은 연결이 있어야 의미가 있다
+//   전체: [ML 이름] · 쿼리 기록(Query)·집계 기록(Aggregation)·참조(References)·북마크(Bookmarks) 패널 · ── · 연결 트리(연결 › DB › 컬렉션)
+//   연결 전(웰컴 화면): 모두 보이되 패널 버튼은 흐리게('Connect first') — 연결이 있어야 의미가 있다
 //   레일: 아이콘만. 아무 아이콘이나 누르면 전체로 펼친다. 맨 아래 = 설정 · 로그아웃 · 완전히 접기
 //   전체 맨 아래: 설정 · 로그아웃(상태바는 '지금 상태'만, 앱·계정은 여기 — 완전히 접혀도 Ctrl+K 명령으로)
 //   접힘: 화면 왼쪽 끝에 당김 핸들(아이폰 PiP를 옆으로 치워 둔 모양) — 늘 얇게 보이고 마우스가 다가가면 커진다.
@@ -10,10 +10,10 @@
 // 좁은 화면(<1024px)에선 레일까지만 붙고, 전체는 컬럼 위에 떠서 열린다(바깥 클릭·Esc → 레일).
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
-import { Bookmark, ChevronRight, ChevronsLeft, Database, Link, LogOut, PanelLeftClose, PanelLeftOpen, Search, Server, Settings, Workflow, type LucideIcon } from 'lucide-react';
+import { Bookmark, ChevronRight, ChevronsLeft, Link, LogOut, PanelLeftClose, PanelLeftOpen, Search, Server, Settings, Workflow, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, MutationRequest } from '../../types/explorer';
 import { clampFullWidth, FULL_DEFAULT, RAIL_WIDTH, snapMode, type SidebarMode, type SidebarState } from '../../hooks/useSidebar';
-import { DatabaseTree } from './DatabaseTree';
+import { ConnectionsTree, type ConnectionsTreeProps } from './ConnectionsTree';
 import { useAuth } from '../auth/AuthGate';
 import { cn } from '../../utils/cn';
 
@@ -23,8 +23,10 @@ const SPRING = { type: 'spring', stiffness: 420, damping: 40 } as const;
 
 interface SidebarProps {
   sidebar: SidebarState;
-  // 이 탭이 연결을 골랐는가 — 아니면(웰컴 화면) Connections 버튼만 보인다
+  // 이 탭이 연결을 골랐는가 — 아니면(웰컴 화면) 패널 버튼을 흐리게
   connected: boolean;
+  // 연결 트리(연결 목록·고르기·추가·수정·끊기)
+  connectionsTree: ConnectionsTreeProps;
   databases: DatabaseSummary[];
   activeDatabase: string | null;
   activeCollection: string | null;
@@ -48,15 +50,11 @@ type TreeProps = Omit<SidebarProps, 'sidebar'>;
 const SOON_ITEMS: { icon: LucideIcon; label: string }[] = [];
 // 패널을 여는 사이드바 버튼들(전체·레일 공통)
 const PANEL_ITEMS: { kind: SidebarPanelKind; icon: LucideIcon; label: string; tip: string }[] = [
-  { kind: 'connections', icon: Server, label: 'Connections', tip: 'Connections — switch, add or edit' },
   { kind: 'history', icon: Search, label: 'Query', tip: 'Query history — run a past query on this collection' },
   { kind: 'aggregation', icon: Workflow, label: 'Aggregation', tip: 'Aggregation — saved and recent pipelines, across collections' },
   { kind: 'references', icon: Link, label: 'References', tip: 'References — everything you declared, across databases' },
   { kind: 'bookmarks', icon: Bookmark, label: 'Bookmarks', tip: 'Bookmarks — places you saved from a column’s icon' },
 ];
-
-// 연결 전에는 연결 버튼만
-const panelItemsFor = (connected: boolean) => (connected ? PANEL_ITEMS : PANEL_ITEMS.filter((item) => item.kind === 'connections'));
 
 const styles = {
   // 컬럼 패널과 같은 카드 모양
@@ -78,6 +76,8 @@ const styles = {
   navButton: 'flex h-8 items-center gap-2.5 rounded-md px-2 text-left text-[13px] transition-colors',
   navButtonIdle: 'text-slate-600 hover:bg-slate-100 hover:text-slate-800',
   navButtonActive: 'bg-emerald-50 text-emerald-700',
+  // 연결 전 — 보이지만 누를 수 없음(aria-disabled: disabled면 툴팁 이벤트도 막혀서)
+  navButtonOff: 'cursor-default text-slate-400',
   railBtnActive: 'inline-flex h-9 w-9 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 transition-colors',
   soon: 'ml-auto rounded px-1.5 py-px text-[10px] font-medium text-slate-400 ring-1 ring-slate-200',
   divider: 'mx-3 my-2.5 h-px shrink-0 bg-slate-100',
@@ -114,17 +114,19 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
         </div>
       </div>
       <nav className={styles.nav} aria-label="Tools">
-        {panelItemsFor(tree.connected).map(({ kind, icon: Icon, label, tip }) => {
+        {PANEL_ITEMS.map(({ kind, icon: Icon, label, tip }) => {
           const open = tree.panels.open === kind;
+          const off = !tree.connected;
           return (
             <button
               key={kind}
               type="button"
               data-sidebar-panel-toggle=""
               aria-expanded={open}
-              className={cn(styles.navButton, open ? styles.navButtonActive : styles.navButtonIdle)}
-              data-tt={tip}
-              onClick={(e) => tree.panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
+              aria-disabled={off || undefined}
+              className={cn(styles.navButton, off ? styles.navButtonOff : open ? styles.navButtonActive : styles.navButtonIdle)}
+              data-tt={off ? `${label} — connect first` : tip}
+              onClick={(e) => !off && tree.panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
             >
               <Icon size={15} />
               <span>{label}</span>
@@ -139,22 +141,17 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
           </div>
         ))}
       </nav>
-      {tree.connected ? (
-        <>
-          <div className={styles.divider} />
-          <DatabaseTree
-            databases={tree.databases}
-            activeDatabase={tree.activeDatabase}
-            activeCollection={tree.activeCollection}
-            collections={tree.collections}
-            onSelectDatabase={tree.onSelectDatabase}
-            onOpenCollection={tree.onOpenCollection}
-            onMutate={tree.onMutate}
-          />
-        </>
-      ) : (
-        <div className="flex-1" />
-      )}
+      <div className={styles.divider} />
+      <ConnectionsTree
+        {...tree.connectionsTree}
+        databases={tree.databases}
+        activeDatabase={tree.activeDatabase}
+        activeCollection={tree.activeCollection}
+        collections={tree.collections}
+        onSelectDatabase={tree.onSelectDatabase}
+        onOpenCollection={tree.onOpenCollection}
+        onMutate={tree.onMutate}
+      />
       <div className={styles.footer}>
         <button type="button" className={cn(styles.navButton, styles.navButtonIdle, 'flex-1')} onClick={tree.onOpenSettings} data-tt="Settings">
           <Settings size={15} />
@@ -178,7 +175,7 @@ function RailContent({ connected, onExpand, onHide, panels, onOpenSettings }: { 
         <MlButton hoverIcon={PanelLeftOpen} label="Expand sidebar" onClick={onExpand} />
       </div>
       <nav className={`${styles.railList} pt-3`} aria-label="Tools">
-        {panelItemsFor(connected).map(({ kind, icon: Icon, label, tip }) => {
+        {PANEL_ITEMS.map(({ kind, icon: Icon, label, tip }) => {
           const open = panels.open === kind;
           return (
             <button
@@ -187,9 +184,10 @@ function RailContent({ connected, onExpand, onHide, panels, onOpenSettings }: { 
               data-sidebar-panel-toggle=""
               aria-label={label}
               aria-expanded={open}
-              className={open ? styles.railBtnActive : styles.railBtn}
-              data-tt={tip}
-              onClick={(e) => panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
+              aria-disabled={!connected || undefined}
+              className={!connected ? styles.railBtnSoon : open ? styles.railBtnActive : styles.railBtn}
+              data-tt={connected ? tip : `${label} — connect first`}
+              onClick={(e) => connected && panels.onToggle(kind, e.currentTarget.getBoundingClientRect())}
             >
               <Icon size={16} />
             </button>
@@ -201,16 +199,12 @@ function RailContent({ connected, onExpand, onHide, panels, onOpenSettings }: { 
           </div>
         ))}
       </nav>
-      {connected && (
-        <>
-          <div className="mx-auto my-2.5 h-px w-6 shrink-0 bg-slate-100" />
-          <div className={styles.railList}>
-            <button type="button" className={styles.railBtn} onClick={onExpand} aria-label="Databases" data-tt="Databases">
-              <Database size={16} />
-            </button>
-          </div>
-        </>
-      )}
+      <div className="mx-auto my-2.5 h-px w-6 shrink-0 bg-slate-100" />
+      <div className={styles.railList}>
+        <button type="button" className={styles.railBtn} onClick={onExpand} aria-label="Connections" data-tt="Connections">
+          <Server size={16} />
+        </button>
+      </div>
       <div className="flex-1" />
       <div className={`${styles.railList} pb-3`}>
         <button type="button" className={styles.railBtn} onClick={onOpenSettings} aria-label="Settings" data-tt="Settings">

@@ -1,13 +1,14 @@
-// 사이드바의 DB/컬렉션 트리 (MongoDB Compass 사이드바 모양).
+// 사이드바의 DB/컬렉션 트리 (MongoDB Compass 사이드바 모양) — 연결 트리(ConnectionsTree)에서 지금 연결 아래 한 단계로 들어간다.
+//   연결(0단계) › DB(1단계, 들여쓰기 22px) › 컬렉션(2단계, 폴더 아이콘이 DB 이름 글자 아래)
 // 밀러 컬럼의 컬렉션 컬럼과 '둘 다' 있다: 트리 = 다른 DB의 컬렉션으로 바로 뛰기, 컬럼 = 지금 DB 안에서 파고들기.
 // 선택은 양쪽에 같이 보인다(지금 DB·컬렉션 강조).
 //
 // 컬렉션 목록: 지금 DB는 explorer 상태(collections)를 그대로 쓴다 — 실시간 반영이 이미 그걸 고친다.
 //              다른 DB는 펼칠 때 받아 오고, DB 목록이 바뀌면(문서 수 등) 펼친 것만 다시 받는다.
-// DB 관리(예전 헤더 드롭다운): 제목 옆 + = 추가, 행에 올리면 휴지통 = 삭제. 이름 변경/복제는 MongoDB에 명령이 없어 없음.
+// DB 관리: 연결 줄의 + = 추가(입력 줄을 여기서 보여 준다), 행에 올리면 휴지통 = 삭제. 이름 변경/복제는 MongoDB에 명령이 없어 없음.
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronRight, Database, Folder, FolderOpen, Loader2, Lock, Plus, Trash2, X } from 'lucide-react';
+import { Check, ChevronRight, Database, Folder, FolderOpen, Loader2, Lock, Trash2, X } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, MutationRequest } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
@@ -24,15 +25,15 @@ interface DatabaseTreeProps {
   onSelectDatabase: (name: string) => Promise<void>;
   onOpenCollection: (database: string, name: string, label: string) => Promise<void>;
   onMutate: (op: MutationRequest) => Promise<unknown>;
+  // 새 DB 이름 입력 줄 — 연결 줄의 + 버튼이 연다
+  adding: boolean;
+  onAddingChange: (adding: boolean) => void;
 }
 
 type Loaded = CollectionSummary[] | 'loading' | 'error';
 
 const styles = {
-  sectionHead: 'flex h-8 shrink-0 items-center gap-1 pl-2 pr-1',
-  sectionTitle: 'flex-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400',
   iconBtn: 'inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700',
-  list: 'flex min-h-0 flex-1 flex-col overflow-y-auto pb-2',
   // 행: 선택/미선택 배경은 둘 중 하나만(cn은 겹침을 정리해 주지 않는다)
   row: 'group flex h-7 w-full shrink-0 items-center gap-1.5 rounded-md pr-1 text-left text-[13px] transition-colors',
   rowIdle: 'text-slate-600 hover:bg-slate-100',
@@ -45,18 +46,17 @@ const styles = {
   rowAction: 'hidden h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-200/70 hover:text-slate-700 group-hover:inline-flex group-focus-within:inline-flex',
   countHideOnHover: 'group-hover:hidden group-focus-within:hidden',
   // 컬렉션 행과 같은 들여쓰기 + 아이콘 자리
-  note: 'flex h-7 items-center gap-1.5 pl-[64px] text-xs text-slate-400',
-  addRow: 'flex h-8 shrink-0 items-center gap-1 px-1',
+  note: 'flex h-7 items-center gap-1.5 pl-[86px] text-xs text-slate-400',
+  addRow: 'flex h-8 shrink-0 items-center gap-1 pl-[22px] pr-1',
   addInput:
     'min-w-0 flex-1 rounded-md bg-slate-100/80 px-2 py-1 text-[13px] text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400/60',
   addConfirm: 'inline-flex h-6 w-6 items-center justify-center rounded-md text-emerald-600 hover:bg-emerald-50 disabled:opacity-40',
-  empty: 'px-2 py-3 text-xs text-slate-400',
+  empty: 'flex h-7 items-center pl-[44px] text-xs text-slate-400',
 } as const;
 
-export function DatabaseTree({ databases, activeDatabase, activeCollection, collections, onSelectDatabase, onOpenCollection, onMutate }: DatabaseTreeProps) {
+export function DatabaseTree({ databases, activeDatabase, activeCollection, collections, onSelectDatabase, onOpenCollection, onMutate, adding, onAddingChange }: DatabaseTreeProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(activeDatabase ? [activeDatabase] : []));
   const [others, setOthers] = useState<Record<string, Loaded>>({});
-  const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [pending, setPending] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DatabaseSummary | null>(null);
@@ -126,7 +126,7 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
     setPending(true);
     try {
       await onMutate({ type: 'createDatabase', database: { name, label: name, description: '' } });
-      setAdding(false);
+      onAddingChange(false);
       setNewName('');
     } finally {
       setPending(false);
@@ -134,16 +134,7 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col px-2">
-      <div className={styles.sectionHead}>
-        <span className={styles.sectionTitle}>Databases</span>
-        {!safety.readOnly && (
-          <button type="button" className={styles.iconBtn} onClick={() => setAdding((v) => !v)} aria-label="New database" data-tt="New database">
-            <Plus size={14} />
-          </button>
-        )}
-      </div>
-
+    <div role="group" aria-label="Databases">
       {adding && !safety.readOnly && (
         <div className={styles.addRow}>
           <input
@@ -155,20 +146,20 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') void confirmAdd();
-              if (e.key === 'Escape') setAdding(false);
+              if (e.key === 'Escape') onAddingChange(false);
             }}
           />
           <button type="button" className={styles.addConfirm} onClick={() => void confirmAdd()} disabled={!newName.trim() || pending} aria-label="Create database">
             {pending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
           </button>
-          <button type="button" className={styles.iconBtn} onClick={() => setAdding(false)} aria-label="Cancel">
+          <button type="button" className={styles.iconBtn} onClick={() => onAddingChange(false)} aria-label="Cancel">
             <X size={14} />
           </button>
         </div>
       )}
 
-      <div className={styles.list} role="tree" aria-label="Databases">
-        {databases.length === 0 && <p className={styles.empty}>No databases yet.</p>}
+      <div>
+        {databases.length === 0 && !adding && <p className={styles.empty}>No databases yet.</p>}
         {databases.map((db) => {
           const isActive = db.name === activeDatabase;
           const isOpen = expanded.has(db.name);
@@ -178,7 +169,7 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
               <div
                 role="button"
                 tabIndex={0}
-                className={cn(styles.row, 'pl-0.5', isActive ? styles.rowActiveDb : styles.rowIdle)}
+                className={cn(styles.row, 'pl-[22px]', isActive ? styles.rowActiveDb : styles.rowIdle)}
                 onClick={() => handleDbClick(db)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -241,7 +232,7 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
                           role="treeitem"
                           aria-selected={isActiveCol}
                           // 폴더 아이콘이 DB 이름 글자 아래에 오도록(DB 아이콘과 같은 세로줄이면 DB인지 컬렉션인지 헷갈린다)
-                          className={cn(styles.row, 'pl-[44px]', isActiveCol ? styles.rowActiveCol : styles.rowIdle)}
+                          className={cn(styles.row, 'pl-[66px]', isActiveCol ? styles.rowActiveCol : styles.rowIdle)}
                           onClick={() => void onOpenCollection(db.name, col.name, col.label || col.name)}
                           data-tt={col.description || undefined}
                         >

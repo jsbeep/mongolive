@@ -12,7 +12,8 @@ export interface HeaderMenuItem {
   onSelect: () => void;
 }
 
-export function HeaderOverflowMenu({ items }: { items: HeaderMenuItem[] }) {
+// buttonClassName: 버튼 모양을 바꿀 때(사이드바 아이콘 버튼 등) — 열렸을 땐 배경만 더한다
+export function HeaderOverflowMenu({ items, buttonClassName }: { items: HeaderMenuItem[]; buttonClassName?: string }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -44,10 +45,11 @@ export function HeaderOverflowMenu({ items }: { items: HeaderMenuItem[] }) {
         aria-expanded={open}
         aria-label="More"
         data-tt="More"
-        className={cn(
-          'p-1.5 rounded-lg transition-colors',
-          open ? 'bg-slate-200/70 text-slate-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600',
-        )}
+        className={
+          buttonClassName
+            ? cn(buttonClassName, open && 'bg-slate-200/70 text-slate-700')
+            : cn('p-1.5 rounded-lg transition-colors', open ? 'bg-slate-200/70 text-slate-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600')
+        }
         onClick={() => setOpen((v) => !v)}
       >
         <MoreHorizontal size={13} />

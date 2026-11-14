@@ -450,7 +450,8 @@ const SHORTCUTS: { title: string; rows: [keys: string[], what: string][] }[] = [
     title: 'Welcome screen (before you pick a connection)',
     rows: [
       [['N'], 'New connection'],
-      [['1', '–', '9'], 'Open a recent connection'],
+      [['1', '–', '9'], 'Open a connection by its number (card order)'],
+      [['Enter'], 'Reopen the connection you used last'],
     ],
   },
   {
