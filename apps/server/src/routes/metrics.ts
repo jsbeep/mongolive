@@ -4,7 +4,7 @@
 // 없으면 mongo.error로 알리고 나머지(실시간 통계)는 그대로 보낸다.
 import { Router } from 'express';
 import type { ServerMetrics } from '@mongolive/shared';
-import { clientOf } from '../db';
+import { clientOf, connectionIdOf } from '../db';
 import type { MongoClient } from 'mongodb';
 import { realtimeMetrics } from '../realtime';
 
@@ -50,6 +50,6 @@ const mongoStatus = async (client: Promise<MongoClient>): Promise<ServerMetrics[
 };
 
 metricsRouter.get('/metrics', async (_req, res) => {
-  const result: ServerMetrics = { at: Date.now(), realtime: realtimeMetrics(), mongo: await mongoStatus(clientOf(res)) };
+  const result: ServerMetrics = { at: Date.now(), realtime: realtimeMetrics(connectionIdOf(res)), mongo: await mongoStatus(clientOf(res)) };
   res.json(result);
 });

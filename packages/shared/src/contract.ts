@@ -140,7 +140,9 @@ export type ChangeResponse =
   | { type: 'system'; message: string; tracePath: string[] };
 
 // ── 실시간(서버 changeStream → socket.io) ─────────────────────────────────────
-// 소켓 이벤트: 클라이언트 → 서버 'view'(LiveView), 서버 → 클라이언트 'change'(LiveChange)·'status'(LiveStatus)
+// 소켓 이벤트: 클라이언트 → 서버 'connection:use'(연결 id, 먼저) 다음 'view'(LiveView)
+//              서버 → 클라이언트 'change'(LiveChange)·'status'(LiveStatus)·'connections'(ConnectionInfo[])
+// 실시간은 연결마다 따로다 — 'connection:use'로 고른 연결의 변경·상태만 받는다
 
 export type LiveOperation =
   | 'insert' | 'update' | 'replace' | 'delete'      // 문서

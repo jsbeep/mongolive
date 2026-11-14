@@ -5,7 +5,7 @@
 //
 // 처음 쓸 때 만들고(지연 초기화), 한동안 아무도 안 쓰면 닫는다(유휴 해제). 실시간 스트림처럼 계속 쓰는 쪽은
 // retainClient로 붙잡아 두면 닫히지 않는다. 연결이 지워지거나 주소가 바뀌면 바로 닫는다.
-import { MongoClient } from 'mongodb';
+import { MongoClient, type TopologyDescription } from 'mongodb';
 import type { RequestHandler, Response } from 'express';
 import type { ConnectionTestResult, MongoTopology } from '@mongolive/shared';
 import { connectionUri, onConnectionsChange } from './connections';
@@ -39,7 +39,57 @@ const drop = (id: string) => {
   const entry = entries.get(id);
   if (!entry) return;
   entries.delete(id);
+  health.delete(id);
   closeEntry(entry);
+};
+
+// ── 연결 상태(하트비트) ──────────────────────────────────────────────────────
+// 드라이버는 연결된 서버마다 주기적으로(기본 10초, 끊기면 즉시) hello를 보내 살아 있는지 확인하고,
+// 그 결과로 '토폴로지(서버들의 모양)'가 바뀌면 topologyDescriptionChanged를 알린다(SDAM).
+// changeStream 유무와 상관없이 오므로 단독(standalone) DB에서도 "닿는지"를 알 수 있다.
+
+export interface ConnectionHealth {
+  // 닿는 서버가 하나라도 있는지. null = 아직 모름(접속 전)
+  reachable: boolean | null;
+  // 마지막으로 알아낸 종류(닿지 않는 동안에도 기억)
+  topology: MongoTopology;
+}
+
+const UNKNOWN_HEALTH: ConnectionHealth = { reachable: null, topology: 'unknown' };
+const health = new Map<string, ConnectionHealth>();
+const healthListeners = new Set<(id: string, health: ConnectionHealth) => void>();
+
+const describeTopology = (description: TopologyDescription): ConnectionHealth => {
+  const servers = [...description.servers.values()];
+  const reachable = servers.some((s) => s.type !== 'Unknown');
+  let topology: MongoTopology = 'unknown';
+  if (description.type === 'ReplicaSetWithPrimary' || description.type === 'ReplicaSetNoPrimary') topology = 'replicaSet';
+  else if (description.type === 'Sharded') topology = 'sharded';
+  else if (description.type === 'Single') {
+    // 서버 하나에 바로 붙은 경우(directConnection 등) — 그 서버의 종류로
+    const type = servers[0]?.type;
+    if (type === 'Standalone') topology = 'standalone';
+    else if (type === 'Mongos') topology = 'sharded';
+    else if (type?.startsWith('RS')) topology = 'replicaSet';
+  }
+  return { reachable, topology };
+};
+
+const updateHealth = (id: string, next: ConnectionHealth) => {
+  const prev = health.get(id) ?? UNKNOWN_HEALTH;
+  const merged: ConnectionHealth = { reachable: next.reachable, topology: next.topology === 'unknown' ? prev.topology : next.topology };
+  if (merged.reachable === prev.reachable && merged.topology === prev.topology) return;
+  health.set(id, merged);
+  healthListeners.forEach((listener) => listener(id, merged));
+};
+
+export const healthOf = (id: string): ConnectionHealth => health.get(id) ?? UNKNOWN_HEALTH;
+
+export const onHealthChange = (listener: (id: string, health: ConnectionHealth) => void) => {
+  healthListeners.add(listener);
+  return () => {
+    healthListeners.delete(listener);
+  };
 };
 
 // 연결된 클라이언트를 돌려준다. 첫 연결이 실패한 클라이언트는 드라이버가 닫아 버려 재사용할 수 없으므로
@@ -67,12 +117,21 @@ export const clientFor = (id: string): Promise<MongoClient> => {
     appName: 'mongolive',
   });
   const current = entry;
-  const promise: Promise<MongoClient> = client.connect().catch((e: unknown) => {
-    if (current.promise === promise) current.promise = null;
+  // connect() 도중에도 이벤트가 올 수 있으므로 먼저 선언해 둔다
+  let promise: Promise<MongoClient> | undefined;
+  // 이 클라이언트가 아직 그 연결의 현재 클라이언트일 때만 상태를 반영한다(주소가 바뀌어 닫힌 옛 것은 무시)
+  client.on('topologyDescriptionChanged', (event) => {
+    if (entries.get(id) === current && (promise === undefined || current.promise === promise)) {
+      updateHealth(id, describeTopology(event.newDescription));
+    }
+  });
+  const connecting: Promise<MongoClient> = client.connect().catch((e: unknown) => {
+    if (current.promise === connecting) current.promise = null;
     throw e;
   });
-  current.promise = promise;
-  return promise;
+  promise = connecting;
+  current.promise = connecting;
+  return connecting;
 };
 
 // 계속 쓰는 쪽(실시간 스트림)이 붙잡는다. 돌려받은 함수를 부르면 놓는다
@@ -111,6 +170,7 @@ export const closeAllClients = async (): Promise<void> => {
   clearInterval(sweep);
   const pending = [...entries.values()].map((e) => e.promise);
   entries.clear();
+  health.clear();
   await Promise.all(pending.map((p) => p?.then((c) => c.close()).catch(() => undefined)));
 };
 

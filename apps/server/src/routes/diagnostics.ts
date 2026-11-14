@@ -51,7 +51,7 @@ diagnosticsRouter.get('/diagnostics', async (_req, res) => {
       replicaSet: mongo.replicaSet,
       error: mongo.error,
     },
-    realtime: realtimeMetrics().status,
+    realtime: realtimeMetrics(id).status,
     serverStatus,
     security: {
       authMode: config.authMode,

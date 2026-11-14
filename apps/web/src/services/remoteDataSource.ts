@@ -166,7 +166,8 @@ export const createRemoteDataSource = (): DataSource => {
     // 같은 주소의 /socket.io — 개발 중엔 Vite 프록시가 서버로 넘긴다. 끊기면 socket.io가 알아서 다시 붙는다.
     const next = io({ transports: ['websocket'] });
     next.on('connect', () => {
-      // 서버는 소켓마다 채널을 기억하므로 다시 붙으면 지금 보는 범위를 다시 알려야 한다
+      // 서버는 소켓마다 연결·채널을 기억하므로 다시 붙으면 처음부터 알려야 한다 — 연결이 먼저(채널 이름에 연결 id가 들어간다)
+      next.emit('connection:use', connectionId());
       next.emit('view', view);
       // 활동 패널이 열려 있었다면 기록 구독도 다시(최근 기록이 다시 오지만 패널이 id로 중복을 거른다)
       if (logListeners.size > 0) next.emit('log:subscribe');
