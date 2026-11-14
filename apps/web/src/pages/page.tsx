@@ -20,6 +20,8 @@ import { useActivityLog } from '../hooks/useActivityLog';
 import { useSidebar } from '../hooks/useSidebar';
 import { useSystemLog } from '../hooks/useSystemLog';
 import { useMillerKeyboard } from '../hooks/useMillerKeyboard';
+import { usePolling } from '../hooks/usePolling';
+import { STANDALONE_REFRESH_MS, usePreferences } from '../services/preferences';
 import { QueryHistoryPanel } from '../components/query/QueryHistoryPanel';
 import { ReferencesPanel } from '../components/references/ReferencesPanel';
 import { BookmarksPanel } from '../components/bookmarks/BookmarksPanel';
@@ -193,6 +195,40 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
   const columnsRef = useRef<HTMLDivElement>(null);
   useMillerKeyboard(columnsRef, () => openSettings('keyboard'));
 
+  // 보이는 것 다시 받기(R · ⟳ · 빠른 이동) — 상태바 ⟳가 돌고, 단독 DB의 주기적 다시 받기는 처음부터 다시 센다
+  const [refreshCount, setRefreshCount] = useState(0);
+  const refreshNow = useCallback(() => {
+    setRefreshCount((n) => n + 1);
+    void refresh();
+  }, [refresh]);
+
+  // 단독 MongoDB(실시간 없음) — 설정의 주기로 보이는 범위를 다시 받는다. 편집 중·충돌 창이면 쉰다
+  const prefs = usePreferences();
+  usePolling({
+    enabled: connectionStatus === 'polling',
+    intervalMs: STANDALONE_REFRESH_MS[prefs.standaloneRefresh],
+    paused: editingId !== null || conflict !== null,
+    poll: () => refresh({ quiet: true }),
+    resetKey: refreshCount,
+  });
+
+  // R = 보이는 것 다시 받기. 입력칸 안·모달·수정키 조합(Ctrl+R 브라우저 새로고침 등)·누르고 있기는 건드리지 않는다
+  const refreshNowRef = useRef(refreshNow);
+  refreshNowRef.current = refreshNow;
+  useEffect(() => {
+    if (!connected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || e.key.toLowerCase() !== 'r') return;
+      const target = e.target as Element | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      e.preventDefault();
+      refreshNowRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [connected]);
+
   // Ctrl+K(⌘K) = 빠른 이동. 입력칸 안에서도 연다(주소창 검색으로 새지 않게 막는다). 다른 모달이 떠 있으면 무시, 열려 있으면 닫는다
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -233,7 +269,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
     ...(connected ? [{ id: 'disconnect', label: 'Disconnect this tab', icon: Unplug, run: disconnect }] : []),
     { id: 'settings', label: 'Open settings', icon: Settings, run: () => openSettings() },
     { id: 'notifications', label: 'Show notifications', icon: Bell, run: () => setCenterOpen(true) },
-    { id: 'resync', label: "Re-sync what's on screen", icon: RefreshCw, run: () => void refresh() },
+    { id: 'resync', label: "Re-sync what's on screen", icon: RefreshCw, hint: 'R', run: refreshNow },
     { id: 'undo', label: 'Undo last edit', icon: Undo2, hint: `${mod}Z`, run: () => void undo() },
     { id: 'tree', label: treeMode ? 'Switch to column mode' : 'Switch to tree mode', icon: ListTree, run: () => setTreeMode(!treeMode) },
     { id: 'sidebar', label: sidebar.mode === 'full' ? 'Collapse sidebar to icons' : 'Expand sidebar', icon: PanelLeft, hint: `${mod}B`, run: () => sidebar.setMode(sidebar.mode === 'full' ? 'rail' : 'full') },
@@ -285,7 +321,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
               onNew: () => setConnectionModal('new'),
               onEdit: setConnectionModal,
               onDisconnect: disconnect,
-              onRefresh: () => void refresh(),
+              onRefresh: refreshNow,
             }}
             databases={databases}
             activeDatabase={activeDatabase}
@@ -384,7 +420,9 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
         <StatusBar
           connected={connected}
           connectionStatus={connectionStatus}
-          onRefresh={() => void refresh()}
+          onRefresh={refreshNow}
+          refreshCount={refreshCount}
+          pollInterval={prefs.standaloneRefresh}
           maxVisibleColumns={maxVisibleColumns}
           setMaxVisibleColumns={setMaxVisibleColumns}
           treeMode={treeMode}

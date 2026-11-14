@@ -114,7 +114,6 @@ const RATE_WINDOW_SEC = 60;
 // 마지막 탭이 떠난 뒤 스트림을 닫기까지
 const FEED_GRACE_MS = 60 * 1000;
 
-const STANDALONE_ERROR = 'This MongoDB is not a replica set — live updates (change streams) are not available.';
 const UNREACHABLE_ERROR = "Can't reach MongoDB.";
 const GONE_ERROR = 'This connection no longer exists — it may have been deleted.';
 
@@ -123,7 +122,8 @@ interface Feed {
   // 연 주소 — 연결의 주소가 바뀌면 처음부터 다시 연다
   uri: string;
   stream: ChangeStream | null;
-  streamState: 'connecting' | 'running' | 'error';
+  // polling = 단독 MongoDB라 스트림을 열지 않음(브라우저가 주기적으로 다시 받는다)
+  streamState: 'connecting' | 'running' | 'polling' | 'error';
   streamError?: string;
   retryDelay: number;
   retryTimer: NodeJS.Timeout | null;
@@ -193,6 +193,7 @@ export const realtimeMetrics = (connectionId: string): ServerMetrics['realtime']
 const computeStatus = (feed: Feed): LiveStatus => {
   if (healthOf(feed.id).reachable === false) return { state: 'error', error: UNREACHABLE_ERROR };
   if (feed.streamState === 'running') return { state: 'running' };
+  if (feed.streamState === 'polling') return { state: 'polling' };
   if (feed.streamState === 'error') return { state: 'error', error: feed.streamError };
   return { state: 'connecting' };
 };
@@ -251,9 +252,12 @@ export const startRealtime = (io: Server) => {
       const client = await clientFor(feed.id);
       // 기다리는 사이 닫혔거나(탭이 다 떠남) 다른 open이 먼저 열었으면 그만
       if (feed.stopped || feed.stream) return;
-      // 단독 MongoDB — 열어 봐야 계속 실패하므로 열지 않는다(주소가 바뀌면 다시 판단)
+      // 단독 MongoDB — 열어 봐야 계속 실패하므로 열지 않는다(주소가 바뀌면 다시 판단).
+      // 에러가 아니라 'polling' — 브라우저가 보이는 범위를 주기적으로 다시 받는다(8-6)
       if (healthOf(feed.id).topology === 'standalone') {
-        fail(feed, STANDALONE_ERROR, false);
+        feed.streamState = 'polling';
+        feed.streamError = undefined;
+        publish(feed);
         return;
       }
       const pipeline: BsonDocument[] = [{ $match: { 'ns.db': { $nin: [...HIDDEN_DATABASES] } } }];
@@ -390,6 +394,12 @@ export const startRealtime = (io: Server) => {
     if (health.reachable && feed.retryTimer && feed.streamState === 'error') {
       clearTimeout(feed.retryTimer);
       feed.retryTimer = null;
+      void open(feed);
+    }
+    // 단독이던 MongoDB가 replica set으로 다시 떴으면 실시간으로 바꾼다
+    if (health.reachable && feed.streamState === 'polling' && health.topology !== 'standalone' && health.topology !== 'unknown') {
+      feed.streamState = 'connecting';
+      publish(feed);
       void open(feed);
     }
   });

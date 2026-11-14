@@ -3,14 +3,17 @@
 //   ▾ [서버●] 지금 연결   ⟳ 다시 맞추기 · + 새 DB · ⋯(Edit / Disconnect)   ← 이 탭이 쓰는 연결만 펼쳐진다
 //       ▸ DB …
 //   ▸ [서버] 다른 연결     [Connect] · ⋯(Edit)                              ← 올리면 보인다. 더블클릭도 연결
+// 지금 연결이 단독 DB(polling)면 연결 줄 아래에 안내 — 실시간 없음, 다시 받는 주기, R 키. × = 이번만, Don't show again = 이 연결에선 다시 안 보임
 // 탭마다 연결은 하나 — 다른 연결을 Connect하면 이 탭이 그 연결로 바뀐다(먼저 접속해 본다, useConnect).
 import { useState } from 'react';
-import { ChevronRight, Loader2, Pencil, Plus, RefreshCw, Server, Unplug, X } from 'lucide-react';
+import { ChevronRight, Info, Loader2, Pencil, Plus, RefreshCw, Server, Unplug, X } from 'lucide-react';
 import { connectionLabel, type CollectionSummary, type ConnectionInfo, type DatabaseSummary, type MutationRequest } from '../../types/explorer';
 import type { ConnectionsState } from '../../hooks/useConnections';
 import type { ConnectAction } from '../connections/useConnect';
 import type { UseExplorerStateResult } from '../../hooks/useExplorerState';
 import { useServerSettings } from '../../services/serverSettings';
+import { usePreferences } from '../../services/preferences';
+import { connectionScoped, onConnectionSwitch } from '../../services/connectionStorage';
 import { HeaderOverflowMenu, type HeaderMenuItem } from '../dashboard/columns/HeaderOverflowMenu';
 import { colorClasses } from '../connections/connectionColors';
 import { CONNECTION_STATUS } from './connectionStatus';
@@ -52,7 +55,10 @@ const styles = {
   // 다른 연결의 버튼은 올리거나 행 안에 포커스가 있을 때만
   hoverOnly: 'hidden group-hover:inline-flex group-focus-within:inline-flex',
   connectBtn: 'h-6 shrink-0 items-center rounded-md border border-slate-200 bg-white px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600 transition-colors hover:border-emerald-300 hover:text-emerald-700',
-  failure: 'mb-1 ml-[46px] mr-1 flex items-start gap-1 rounded-md bg-rose-50 py-1 pl-2 pr-1 text-[11px] leading-snug text-rose-700',
+  failure: 'mb-1 ml-[22px] mr-1 flex items-start gap-1 rounded-md bg-rose-50 py-1 pl-2 pr-1 text-[11px] leading-snug text-rose-700',
+  notice: 'mb-1 ml-[22px] mr-1 rounded-md bg-sky-50 py-1.5 pl-2 pr-1 text-[11px] leading-snug text-sky-900 ring-1 ring-sky-100',
+  noticeClose: 'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-sky-400 transition-colors hover:bg-sky-100 hover:text-sky-700',
+  noticeKbd: 'rounded border border-sky-200 bg-white px-1 font-mono text-[10px] text-sky-700',
   failureClose: 'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-rose-400 transition-colors hover:bg-rose-100 hover:text-rose-700',
 } as const;
 
@@ -61,8 +67,58 @@ const STATUS_DOT: Record<UseExplorerStateResult['connectionStatus'], string> = {
   disconnected: 'bg-slate-300',
   connecting: 'bg-amber-500',
   connected: 'bg-emerald-500',
+  polling: 'bg-sky-500',
   error: 'bg-rose-500',
 };
+
+// 단독 DB 안내를 '다시 보지 않기'로 끈 연결 — 연결마다 따로(8-5 연결별 저장소)
+const standaloneNoticeHidden = connectionScoped('mongolive.standaloneNotice.hidden');
+// ×로 닫았나 — 이 탭이 그 연결에 머무는 동안만(사이드바를 접었다 펴서 다시 그려져도, 상태가 잠깐 바뀌어도 닫힌 채로).
+// 다른 연결로 갔다 오면 다시 보인다
+let noticeClosed = false;
+onConnectionSwitch(() => {
+  noticeClosed = false;
+});
+
+// 지금 연결이 단독 DB일 때 연결 줄 아래 안내 — 연결이 바뀌면 페이지가 새로 만들어지므로(key) 처음 읽은 값이 그 연결의 것
+function StandaloneNotice() {
+  const prefs = usePreferences();
+  const [hidden, setHidden] = useState(() => noticeClosed || standaloneNoticeHidden.read() === '1');
+  if (hidden) return null;
+  return (
+    <div className={styles.notice} role="status">
+      <div className="flex items-start gap-1.5">
+        <Info size={12} className="mt-px shrink-0 text-sky-500" />
+        <p className="min-w-0 flex-1">
+          Not a replica set — no live updates.<br/> {prefs.standaloneRefresh === 'off' ? 'Auto-refresh is off.' : `Refreshes every ${prefs.standaloneRefresh}.`}<br/> Press{' '}
+          <kbd className={styles.noticeKbd}>R</kbd> to refresh now.
+        </p>
+        <button
+          type="button"
+          className={styles.noticeClose}
+          onClick={() => {
+            noticeClosed = true;
+            setHidden(true);
+          }}
+          aria-label="Close"
+          data-tt="Close"
+        >
+          <X size={12} />
+        </button>
+      </div>
+      <button
+        type="button"
+        className="ml-[18px] mt-1 font-medium text-sky-700 underline-offset-2 hover:underline"
+        onClick={() => {
+          standaloneNoticeHidden.write('1');
+          setHidden(true);
+        }}
+      >
+        Don&apos;t show again
+      </button>
+    </div>
+  );
+}
 
 // 서버 아이콘 — 아이콘 색 = 연결 색, 오른쪽 아래 점 = 지금 연결의 상태(Compass처럼 초록 = 연결됨).
 // 연결 색을 점으로 쓰지 않는다 — 초록 연결 색이 '연결됨'으로 읽히면 헷갈린다
@@ -146,6 +202,7 @@ export function ConnectionsTree({ connections, connect, currentId, status, canMa
                     <HeaderOverflowMenu items={menu} buttonClassName={styles.iconBtn} />
                   </span>
                 </div>
+                {status === 'polling' && <StandaloneNotice />}
                 {expanded && <DatabaseTree {...tree} adding={addingDatabase} onAddingChange={setAddingDatabase} />}
               </div>
             );

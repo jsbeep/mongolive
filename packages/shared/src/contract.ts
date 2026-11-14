@@ -180,7 +180,8 @@ export interface LiveChange {
 }
 
 export interface LiveStatus {
-  state: 'connecting' | 'running' | 'error';
+  // polling = 단독 MongoDB(replica set 아님) — change stream이 없어 실시간은 못 받는다. 브라우저가 주기적으로 다시 받는다
+  state: 'connecting' | 'running' | 'polling' | 'error';
   error?: string;
   // true면 이벤트를 놓쳤을 수 있다 — 화면을 전부 다시 받아야 한다
   resync?: boolean;

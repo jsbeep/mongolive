@@ -123,6 +123,8 @@ export const createRemoteDataSource = (): DataSource => {
   let socket: Socket | null = null;
   let view: LiveView = { database: null, collection: null };
   let everConnected = false;
+  // 서버가 마지막으로 알려 준 실시간 상태 — 소켓이 다시 붙을 때 단독 DB(polling)를 'running'으로 잘못 알리지 않게
+  let lastServerState: LiveStatus['state'] | null = null;
   const changeListeners = new Set<(change: LiveChange) => void>();
   const statusListeners = new Set<(status: LiveStatus) => void>();
   const settingsListeners = new Set<(settings: ServerSettings) => void>();
@@ -178,6 +180,7 @@ export const createRemoteDataSource = (): DataSource => {
     oidCache.clear();
     undoStack = [];
     view = { database: null, collection: null };
+    lastServerState = null;
     if (socket?.connected) socket.emit('connection:use', getActiveConnection());
   });
 
@@ -192,7 +195,7 @@ export const createRemoteDataSource = (): DataSource => {
       // 활동 패널이 열려 있었다면 기록 구독도 다시(최근 기록이 다시 오지만 패널이 id로 중복을 거른다)
       if (logListeners.size > 0) next.emit('log:subscribe');
       // 끊겨 있던 동안의 변경은 받지 못했다 → 화면을 새로 받게 한다(첫 연결은 막 불러온 상태라 제외)
-      if (everConnected) emitStatus({ state: 'running', resync: true });
+      if (everConnected) emitStatus({ state: lastServerState === 'polling' ? 'polling' : 'running', resync: true });
       everConnected = true;
     });
     next.on('disconnect', (reason) => {
@@ -207,7 +210,10 @@ export const createRemoteDataSource = (): DataSource => {
     next.on('connect_error', (e: Error) => emitStatus({ state: 'error', error: e.message }));
     next.on('status', (status: LiveStatus) => {
       if (status.gone) leaveConnection(GONE_MESSAGE);
-      else emitStatus(status);
+      else {
+        lastServerState = status.state;
+        emitStatus(status);
+      }
     });
     next.on('connections', (list: ConnectionInfo[]) => connectionsListeners.forEach((listener) => listener(list)));
     // 설정 창 › Safety가 바뀌면(이 탭이든 다른 기기든) 서버가 모두에게 알린다

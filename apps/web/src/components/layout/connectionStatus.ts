@@ -5,5 +5,6 @@ export const CONNECTION_STATUS: Record<UseExplorerStateResult['connectionStatus'
   disconnected: { color: 'text-slate-400', label: 'Disconnected' },
   connecting: { color: 'text-amber-500', label: 'Connecting' },
   connected: { color: 'text-emerald-500', label: 'Connected' },
+  polling: { color: 'text-sky-500', label: 'Polling' },
   error: { color: 'text-rose-500', label: 'Error' },
 };

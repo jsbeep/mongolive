@@ -61,7 +61,9 @@ const healthListeners = new Set<(id: string, health: ConnectionHealth) => void>(
 
 const describeTopology = (description: TopologyDescription): ConnectionHealth => {
   const servers = [...description.servers.values()];
-  const reachable = servers.some((s) => s.type !== 'Unknown');
+  // 닿음 = 종류를 알아낸 서버가 있다. 못 닿음 = 확인했는데 에러가 났다.
+  // 막 만든 클라이언트의 첫 알림은 아직 확인 전이라 전부 Unknown(에러 없음) — 이걸 '못 닿음'으로 읽으면 연결할 때마다 Error가 잠깐 뜬다
+  const reachable = servers.some((s) => s.type !== 'Unknown') ? true : servers.some((s) => s.error) ? false : null;
   let topology: MongoTopology = 'unknown';
   if (description.type === 'ReplicaSetWithPrimary' || description.type === 'ReplicaSetNoPrimary') topology = 'replicaSet';
   else if (description.type === 'Sharded') topology = 'sharded';

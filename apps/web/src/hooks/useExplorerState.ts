@@ -245,7 +245,8 @@ export interface UseExplorerStateResult {
   // 탐색 밖에서 알림을 띄울 때(파이프라인에 모으기 등) — undoable이 함수면 Undo가 그것을 부른다
   showToast: (message: string, type: 'success' | 'error', undoable?: boolean | (() => void)) => void;
   undo: () => Promise<void>;
-  refresh: () => Promise<void>;
+  // quiet = 주기적 다시 받기(단독 DB) — 실패해도 토스트를 띄우지 않고, 첫 연결 전이면 하지 않는다
+  refresh: (options?: { quiet?: boolean }) => Promise<void>;
 
   // ── Aggregation 모드 — 경로 [collections, pipeline, output(고른 스테이지), json(결과 문서)…] ──
   // 두 번째 컬럼이 pipeline이면 aggregation 모드(따로 들고 있지 않다 — 다른 곳으로 이동하면 자연히 빠진다)
@@ -296,6 +297,8 @@ const outputPathFor = (database: string, collection: string, stageId: string): N
 
 export function useExplorerState(): UseExplorerStateResult {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
+  // 마지막으로 받은 실시간 상태 — 첫 화면 불러오기가 끝날 때 'Connected'로 덮어쓰지 않게(단독 DB면 polling, 스트림 에러면 error)
+  const liveStateRef = useRef<LiveStatus['state'] | null>(null);
   const [activeDatabase, setActiveDatabase] = useState<string | null>(null);
   const [activePaths, setActivePaths] = useState<ActivePath[]>([]);
   const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
@@ -488,7 +491,8 @@ export function useExplorerState(): UseExplorerStateResult {
     try {
       const result = await api.connect({});
       setDatabases(result.databases);
-      setConnectionStatus('connected');
+      const live = liveStateRef.current;
+      setConnectionStatus(live === 'polling' ? 'polling' : live === 'error' ? 'error' : 'connected');
       activeDatabaseRef.current = result.activeDatabase;
       setActiveDatabase(result.activeDatabase);
 
@@ -1280,9 +1284,9 @@ export function useExplorerState(): UseExplorerStateResult {
 
   // 새로고침 = '다시 맞추기'. 보던 경로(컬렉션·문서·필드·페이지)는 그대로 두고 지금 화면에 걸린 것만 다시 받는다
   // — 재연결 때 자동으로 하는 resync와 같은 일을 지금 바로. 아직 첫 연결에 실패한 상태면 첫 연결부터 다시.
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
     if (!initializedRef.current) {
-      await initialize();
+      if (!quiet) await initialize();
       return;
     }
     if (liveTimerRef.current) {
@@ -1291,7 +1295,7 @@ export function useExplorerState(): UseExplorerStateResult {
     }
     // 기다리던 하이라이트는 살리고, 받을 범위는 전부로
     livePendingRef.current = { ...livePendingRef.current, databases: true, collections: true, documents: true, openDocument: true };
-    if (!(await flushLive())) showToast("Couldn't reach the server — try again in a moment.", 'error');
+    if (!(await flushLive()) && !quiet) showToast("Couldn't reach the server — try again in a moment.", 'error');
   }, [initialize, flushLive, showToast]);
 
   const handleLiveChange = useCallback((change: LiveChange) => {
@@ -1339,12 +1343,22 @@ export function useExplorerState(): UseExplorerStateResult {
   }, [scheduleLive]);
 
   const handleLiveStatus = useCallback((status: LiveStatus) => {
-    // 헤더의 연결 점 — 서버 연결이 끊기면 노랑/빨강
-    setConnectionStatus(status.state === 'running' ? 'connected' : status.state === 'connecting' ? 'connecting' : 'error');
+    const previous = liveStateRef.current;
+    liveStateRef.current = status.state;
+    // 상태바·연결 트리의 점 — 서버 연결이 끊기면 노랑/빨강, 단독 DB면 하늘색(polling)
+    setConnectionStatus(
+      status.state === 'running' ? 'connected' : status.state === 'polling' ? 'polling' : status.state === 'connecting' ? 'connecting' : 'error',
+    );
     // 첫 연결이 실패한 채(Mongo가 그때 안 붙었음)라면, 서버가 다시 살아났을 때 처음부터 연결한다.
     // 이게 없으면 점은 초록인데 화면은 빈 채로 남는다.
-    if (status.state === 'running' && !initializedRef.current) {
+    if ((status.state === 'running' || status.state === 'polling') && !initializedRef.current) {
       void initialize();
+      return;
+    }
+    // 단독 DB가 끊겼다 돌아왔으면 그 사이 바뀐 걸 바로 받는다(실시간이 없으니 서버가 resync를 보내지 않는다)
+    if (status.state === 'polling' && previous !== null && previous !== 'polling') {
+      livePendingRef.current = { databases: true, collections: true, documents: true, openDocument: true, highlight: [] };
+      scheduleLive();
       return;
     }
     if (status.resync) {

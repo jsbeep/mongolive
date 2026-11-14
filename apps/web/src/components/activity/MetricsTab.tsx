@@ -3,7 +3,7 @@
 //   MongoDB: serverStatus — 버전·가동 시간·연결 수·메모리, 초당 연산/네트워크(두 번 받은 누적값의 차이)
 // 패널이 열려 있는 동안에만 3초마다 받는다.
 import { useEffect, useRef, useState } from 'react';
-import { CircleAlert, CircleCheck, Loader2 } from 'lucide-react';
+import { CircleAlert, CircleCheck, Loader2, RefreshCw } from 'lucide-react';
 import { api } from '../../services/api';
 import type { ClientMetrics } from '../../services/dataSource';
 import { cn } from '../../utils/cn';
@@ -127,6 +127,8 @@ export function MetricsTab() {
 
   const { realtime, mongo } = metrics;
   const running = realtime.status.state === 'running';
+  // 단독 DB — 스트림 없이 브라우저가 주기적으로 다시 받는다
+  const polling = realtime.status.state === 'polling';
   const last60 = realtime.eventsPerSecond.reduce((a, b) => a + b, 0);
 
   return (
@@ -137,9 +139,9 @@ export function MetricsTab() {
         <div className="flex items-center justify-between">
           <h3 className={styles.sectionTitle}>Realtime</h3>
           {/* 상태는 아이콘 + 글자로 — 색만으로 구분하지 않는다 */}
-          <span className={cn(styles.status, running ? 'text-emerald-600' : realtime.status.state === 'error' ? 'text-rose-600' : 'text-amber-600')}>
-            {running ? <CircleCheck size={13} /> : realtime.status.state === 'error' ? <CircleAlert size={13} /> : <Loader2 size={13} className="animate-spin" />}
-            {running ? 'Change stream running' : realtime.status.state === 'error' ? 'Change stream error' : 'Connecting'}
+          <span className={cn(styles.status, running ? 'text-emerald-600' : polling ? 'text-sky-600' : realtime.status.state === 'error' ? 'text-rose-600' : 'text-amber-600')}>
+            {running ? <CircleCheck size={13} /> : polling ? <RefreshCw size={13} /> : realtime.status.state === 'error' ? <CircleAlert size={13} /> : <Loader2 size={13} className="animate-spin" />}
+            {running ? 'Change stream running' : polling ? 'Standalone — polling instead' : realtime.status.state === 'error' ? 'Change stream error' : 'Connecting'}
           </span>
         </div>
         {realtime.status.error && <p className={styles.note}>{realtime.status.error}</p>}

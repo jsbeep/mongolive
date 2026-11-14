@@ -35,7 +35,7 @@ const NEW_URI = 'mongodb://localhost:27017/';
 const TOPOLOGY_LABEL: Record<ConnectionTestResult['topology'], string> = {
   replicaSet: 'replica set — live updates on',
   sharded: 'sharded cluster — live updates on',
-  standalone: 'standalone — no live updates (not a replica set)',
+  standalone: 'standalone — no live updates; refreshes periodically (not a replica set)',
   unknown: 'connected',
 };
 

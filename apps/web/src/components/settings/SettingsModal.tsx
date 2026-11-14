@@ -12,7 +12,7 @@ import { CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Loader2
 import type { CollectionSummary, DatabaseSummary, Diagnostics, MutationRequest } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
 import { useActiveConnection } from '../../services/activeConnection';
-import { sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type Theme, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type UndoDepth } from '../../services/preferences';
+import { sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type Theme, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type StandaloneRefresh, type UndoDepth } from '../../services/preferences';
 import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../utils/motionPresets';
 import { saveServerSettings, useServerSettings } from '../../services/serverSettings';
 import { applyBackup, buildBackup, downloadBackup, parseBackup, type SettingsBackup } from '../../services/settingsBackup';
@@ -427,6 +427,21 @@ function RealtimeSection() {
           { value: 'relaxed', label: 'Relaxed (1.5 s)' },
         ]}
       />
+      <p className={cn(styles.groupTitle, 'mt-5')}>Standalone databases</p>
+      <p className={styles.groupHint}>
+        A MongoDB that isn&apos;t a replica set has no change streams, so nothing arrives live. MongoLive re-reads what&apos;s on screen this often instead — paused while you edit or when the tab is hidden. Press R to refresh any time. Saved in this browser.
+      </p>
+      <Segment<StandaloneRefresh>
+        value={prefs.standaloneRefresh}
+        onChange={(v) => setPreference('standaloneRefresh', v)}
+        options={[
+          { value: 'off', label: 'Off' },
+          { value: '15s', label: '15 s' },
+          { value: '30s', label: '30 s' },
+          { value: '1m', label: '1 min' },
+          { value: '5m', label: '5 min' },
+        ]}
+      />
     </div>
   );
 }
@@ -443,6 +458,7 @@ const SHORTCUTS: { title: string; rows: [keys: string[], what: string][] }[] = [
       [[MOD, 'K'], 'Quick jump — databases, collections, ObjectIds, commands'],
       [[MOD, 'Z'], 'Undo your last document or field edit (again for the one before)'],
       [[MOD, 'B'], 'Sidebar: full ↔ icons (opens it again if hidden)'],
+      [['R'], "Re-sync what's on screen — handy on a standalone database (no live updates)"],
       [['?'], 'This list'],
     ],
   },
@@ -741,7 +757,7 @@ rs.initiate()
 # Docker
 docker run -d --name mongo -p 27017:27017 mongo --replSet rs0
 docker exec mongo mongosh --eval "rs.initiate()"`}</code>
-                <p className="mt-2">Then restart the MongoLive server.</p>
+                <p className="mt-2">MongoLive switches to live updates on its own once MongoDB is back as a replica set.</p>
               </div>
             )}
           </div>
@@ -751,6 +767,8 @@ docker exec mongo mongosh --eval "rs.initiate()"`}</code>
             <Row label="Change stream">
               {data.realtime.state === 'running' ? (
                 <Status ok>Running</Status>
+              ) : data.realtime.state === 'polling' ? (
+                <Status ok={false} warn>Not available on a standalone — refreshing periodically instead (Settings › Realtime)</Status>
               ) : data.realtime.state === 'connecting' ? (
                 <Status ok={false} warn>Starting…</Status>
               ) : (

@@ -1,11 +1,12 @@
 // 하단 상태바 (VSCode 하단바 느낌) — 예전 헤더의 버튼들을 작게 내려 둔 곳.
-//   왼쪽:   연결 상태(누르면 알림 센터의 System 탭 = 연결 기록) · 새로고침(= 다시 맞추기)
+//   왼쪽:   연결 상태(누르면 알림 센터의 System 탭 = 연결 기록) · 새로고침(= 다시 맞추기, R)
+//           단독 DB면 'Polling · 1m' — 실시간 대신 설정의 주기로 다시 받는다
 //   연결 전(웰컴 화면): 'No connection'만 — 새로고침·컬럼 조절은 볼 것이 없으니 숨긴다
 //   오른쪽: Tree/Columns · 컬럼 수 − n + · 설정 · 로그아웃 · 알림 센터(종)
 // 바는 예전 헤더처럼 둥근 카드, 항목은 테두리 없이 hover 배경만 있는 덜 둥근 네모.
-import { useState } from 'react';
 import { Bell, BellDot, Circle, Columns3, ListTree, Lock, Minus, Plus, RefreshCw, Search } from 'lucide-react';
 import { useServerSettings } from '../../services/serverSettings';
+import type { StandaloneRefresh } from '../../services/preferences';
 import { m } from 'framer-motion';
 import { MAX_VISIBLE_COLUMNS, type UseExplorerStateResult } from '../../hooks/useExplorerState';
 import { dataSourceKind } from '../../services/api';
@@ -17,6 +18,10 @@ interface StatusBarProps {
   connected: boolean;
   connectionStatus: UseExplorerStateResult['connectionStatus'];
   onRefresh: () => void;
+  // 새로 고친 횟수(R·⟳·빠른 이동) — 바뀔 때마다 ⟳ 아이콘이 한 바퀴 돈다
+  refreshCount: number;
+  // 단독 DB의 다시 받기 주기(설정)
+  pollInterval: StandaloneRefresh;
   maxVisibleColumns: number;
   setMaxVisibleColumns: (n: number) => void;
   // 지금 모드의 Tree / 컬럼 수 최소·'처음 값' — 집계 모드는 따로 기억한다(useExplorerState)
@@ -54,6 +59,8 @@ export function StatusBar({
   connected,
   connectionStatus,
   onRefresh,
+  refreshCount,
+  pollInterval,
   maxVisibleColumns,
   setMaxVisibleColumns,
   treeMode: isTreeMode,
@@ -71,7 +78,6 @@ export function StatusBar({
 }: StatusBarProps) {
   const safety = useServerSettings();
   const status = CONNECTION_STATUS[connectionStatus];
-  const [rotation, setRotation] = useState(0);
   const hasNews = unreadChanges > 0 || unseenErrors > 0;
   const BellIcon = hasNews ? BellDot : Bell;
 
@@ -94,24 +100,26 @@ export function StatusBar({
             className={cn(styles.item, styles.itemIdle)}
             onClick={onOpenSystem}
             data-keeps-notifications
-            data-tt="Connection history"
+            data-tt={
+              connectionStatus === 'polling'
+                ? `Not a replica set — no live updates. ${pollInterval === 'off' ? 'Auto-refresh is off' : `Refreshing every ${pollInterval}`}; press R to refresh now. Click for connection history`
+                : 'Connection history'
+            }
           >
             <Circle size={10} className={status.color} fill="currentColor" stroke="none" />
             {status.label}
+            {connectionStatus === 'polling' && <span className="text-slate-400">· {pollInterval === 'off' ? 'manual' : pollInterval}</span>}
           </button>
         )}
         {connected && (
         <button
           type="button"
           className={cn(styles.item, styles.itemIdle, styles.square)}
-          onClick={() => {
-            setRotation((r) => r + 360);
-            onRefresh();
-          }}
+          onClick={onRefresh}
           aria-label="Re-sync what's on screen"
-          data-tt="Re-sync what's on screen (keeps your place)"
+          data-tt="Re-sync what's on screen (keeps your place) — R"
         >
-          <m.span className="inline-flex" animate={{ rotate: rotation }} transition={{ duration: 0.8, ease: 'easeInOut' }}>
+          <m.span className="inline-flex" animate={{ rotate: refreshCount * 360 }} transition={{ duration: 0.8, ease: 'easeInOut' }}>
             <RefreshCw size={16} aria-hidden="true" />
           </m.span>
         </button>

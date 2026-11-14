@@ -16,6 +16,9 @@ export type UndoDepth = (typeof UNDO_DEPTHS)[number];
 // 실시간 반영 간격: 즉시(변경을 0.15초 단위로 묶음) / 느슨하게(1.5초 단위 — 변경이 몰릴 때 화면·요청이 덜 바쁘다)
 export type LiveBatch = 'immediate' | 'relaxed';
 export const LIVE_BATCH_MS: Record<LiveBatch, number> = { immediate: 150, relaxed: 1500 };
+// 단독 MongoDB(replica set 아님 — 실시간 없음)에서 보이는 범위를 다시 받는 주기. off = 직접(R·⟳)만
+export type StandaloneRefresh = 'off' | '15s' | '30s' | '1m' | '5m';
+export const STANDALONE_REFRESH_MS: Record<StandaloneRefresh, number> = { off: 0, '15s': 15_000, '30s': 30_000, '1m': 60_000, '5m': 300_000 };
 // 애니메이션: auto = 보는 컬렉션이 크면(ANIMATION_DISABLE_THRESHOLD_MB) 컬럼 애니메이션을 끄고, OS의 '동작 줄이기'를 따른다
 //             on = 늘 켬 / off = 늘 끔(가장 빠름 — 움직임 없이 바로 바뀐다)
 export type Animations = 'auto' | 'on' | 'off';
@@ -39,13 +42,14 @@ export interface Preferences {
   deleteConfirmSmall: DeleteConfirmSmall;
   undoDepth: UndoDepth;
   liveBatch: LiveBatch;
+  standaloneRefresh: StandaloneRefresh;
   animations: Animations;
   monoFont: string;
   theme: Theme;
 }
 
 const KEY = 'mongolive.preferences';
-const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate', animations: 'auto', monoFont: '', theme: 'system' };
+const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate', standaloneRefresh: '1m', animations: 'auto', monoFont: '', theme: 'system' };
 
 const load = (): Preferences => {
   try {
@@ -58,6 +62,7 @@ const load = (): Preferences => {
       deleteConfirmSmall: saved.deleteConfirmSmall === 'none' || saved.deleteConfirmSmall === 'confirm' ? saved.deleteConfirmSmall : DEFAULTS.deleteConfirmSmall,
       undoDepth: (UNDO_DEPTHS as readonly number[]).includes(saved.undoDepth as number) ? (saved.undoDepth as UndoDepth) : DEFAULTS.undoDepth,
       liveBatch: saved.liveBatch === 'relaxed' || saved.liveBatch === 'immediate' ? saved.liveBatch : DEFAULTS.liveBatch,
+      standaloneRefresh: (Object.keys(STANDALONE_REFRESH_MS) as string[]).includes(saved.standaloneRefresh as string) ? (saved.standaloneRefresh as StandaloneRefresh) : DEFAULTS.standaloneRefresh,
       animations: saved.animations === 'on' || saved.animations === 'off' || saved.animations === 'auto' ? saved.animations : DEFAULTS.animations,
       monoFont: typeof saved.monoFont === 'string' ? sanitizeFontName(saved.monoFont) : DEFAULTS.monoFont,
       theme: saved.theme === 'light' || saved.theme === 'dark' || saved.theme === 'system' ? saved.theme : DEFAULTS.theme,

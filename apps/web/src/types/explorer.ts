@@ -82,4 +82,5 @@ export interface ExplorerPathSegment {
 
 // ── 연결 상태 ─────────────────────────────────────────────────────────────────
 
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+// polling = 단독 MongoDB — 데이터는 받지만 실시간이 없어 주기적으로 다시 받는다
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'polling' | 'error';

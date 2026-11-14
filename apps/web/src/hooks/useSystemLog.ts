@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LiveStatus } from '../types/explorer';
 import { api, dataSourceKind } from '../services/api';
+import { getPreferences } from '../services/preferences';
 import { clearSystemEvents, pushSystemEvent, subscribeSystemEvents, type SystemEntry } from '../services/systemLog';
 
 export interface SystemLog {
@@ -30,6 +31,12 @@ export function useSystemLog(): SystemLog {
       lastRef.current = { state: status.state, error: status.error };
       if (status.state === 'running') {
         pushSystemEvent('success', last ? 'Reconnected — live updates are back' : 'Connected — live updates on');
+      } else if (status.state === 'polling') {
+        // 단독 DB — 에러가 아니다(빨간 점 없이). 끊겼다 돌아온 거면 '다시 연결됨'
+        const pace = getPreferences().standaloneRefresh;
+        const how = pace === 'off' ? 'auto-refresh is off, press R to refresh' : `refreshing every ${pace} (R to refresh now)`;
+        if (last && last.state !== 'polling') pushSystemEvent('success', `Reconnected — not a replica set, ${how}`);
+        else pushSystemEvent('info', `Connected — not a replica set, so no live updates; ${how}`);
       } else if (status.state === 'connecting') {
         if (last) pushSystemEvent('warning', 'Connection lost — reconnecting…');
       } else {
