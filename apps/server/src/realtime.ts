@@ -114,9 +114,9 @@ const RATE_WINDOW_SEC = 60;
 // 마지막 탭이 떠난 뒤 스트림을 닫기까지
 const FEED_GRACE_MS = 60 * 1000;
 
-const STANDALONE_ERROR = '이 MongoDB는 replica set이 아니라 실시간 변경(changeStream)을 받을 수 없습니다.';
-const UNREACHABLE_ERROR = 'MongoDB에 닿지 않습니다.';
-const GONE_ERROR = '연결이 없어졌습니다 — 지워졌을 수 있습니다.';
+const STANDALONE_ERROR = 'This MongoDB is not a replica set — live updates (change streams) are not available.';
+const UNREACHABLE_ERROR = "Can't reach MongoDB.";
+const GONE_ERROR = 'This connection no longer exists — it may have been deleted.';
 
 interface Feed {
   id: string;
@@ -363,7 +363,7 @@ export const startRealtime = (io: Server) => {
     for (const feed of [...feeds.values()]) {
       const uri = connectionUri(feed.id);
       if (uri === null) {
-        io.to(connRoom(feed.id)).emit('status', { state: 'error', error: GONE_ERROR });
+        io.to(connRoom(feed.id)).emit('status', { state: 'error', error: GONE_ERROR, gone: true });
         stopFeed(feed);
       } else if (uri !== feed.uri) {
         closeStream(feed);
@@ -411,7 +411,7 @@ export const startRealtime = (io: Server) => {
       if (typeof id !== 'string') return;
       const next = acquire(id);
       if (!next) {
-        socket.emit('status', { state: 'error', error: GONE_ERROR });
+        socket.emit('status', { state: 'error', error: GONE_ERROR, gone: true });
         return;
       }
       feed = next;

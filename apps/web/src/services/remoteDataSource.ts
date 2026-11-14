@@ -1,6 +1,6 @@
 // 실제 서버(apps/server)에 붙는 DataSource 구현. 서버는 Canonical EJSON을 주고받으므로 변환 없이 그대로 쓴다.
 // 개발 중에는 Vite가 /api 요청을 서버로 넘겨준다(vite.config.ts의 proxy).
-import { ENV_CONNECTION_ID, projectDocument, summarizeDocument } from '@mongolive/shared';
+import { projectDocument, summarizeDocument } from '@mongolive/shared';
 import { io, type Socket } from 'socket.io-client';
 import type {
   CollectionExport,
@@ -26,25 +26,31 @@ import type {
   ServerSettings,
   AggregateResult,
   AggregateCounts,
+  ConnectionInfo,
+  ConnectionTestRequest,
+  ConnectionTestResult,
 } from '../types/explorer';
 import { mutationTarget } from '../types/explorer';
 import { fetchAuthStatus, notifySessionExpired } from './auth';
+import { getActiveConnection, leaveConnection, onActiveConnectionChange } from './activeConnection';
 import { getPreferences } from './preferences';
 import type { ClientMetrics, DataSource } from './dataSource';
 
 const BASE = '/api';
 
 // 요청마다 어느 연결인지 알린다 — 서버는 이 헤더 없이 온 Mongo 요청을 받지 않는다.
-// (8-4 전까지 임시) 지금은 .env 연결로 고정. 8-4에서 탭마다 고른 연결(sessionStorage)로 바뀐다
+// 연결은 탭마다 따로(services/activeConnection, sessionStorage). 아직 안 골랐으면(웰컴 화면) 헤더 없이 —
+// 연결 목록·설정처럼 연결과 상관없는 요청만 한다
 const CONNECTION_HEADER = 'X-Mongolive-Connection';
-const connectionId = (): string => ENV_CONNECTION_ID;
+const GONE_MESSAGE = 'That connection no longer exists — it may have been deleted.';
 
 // 서버 에러 응답은 { error: "..." } — 메시지를 그대로 Error로 올려 토스트에 보이게 한다
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  const connection = getActiveConnection();
   const response = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
-      [CONNECTION_HEADER]: connectionId(),
+      ...(connection ? { [CONNECTION_HEADER]: connection } : {}),
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
     },
@@ -52,6 +58,8 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   if (!response.ok) {
     // 출입증이 무효(만료, 다른 곳에서 비밀번호 변경) — 로그인 화면으로
     if (response.status === 401) notifySessionExpired();
+    // 이 탭이 쓰던 연결이 지워졌다 — 웰컴 화면으로(보낸 연결이 아직 이 탭의 연결일 때만)
+    if (response.status === 410 && connection && connection === getActiveConnection()) leaveConnection(GONE_MESSAGE);
     let message = `${response.status} ${response.statusText}`;
     let body: Record<string, unknown> | undefined;
     try {
@@ -118,6 +126,7 @@ export const createRemoteDataSource = (): DataSource => {
   const changeListeners = new Set<(change: LiveChange) => void>();
   const statusListeners = new Set<(status: LiveStatus) => void>();
   const settingsListeners = new Set<(settings: ServerSettings) => void>();
+  const connectionsListeners = new Set<(connections: ConnectionInfo[]) => void>();
   const emitStatus = (status: LiveStatus) => statusListeners.forEach((listener) => listener(status));
   const logListeners = new Set<(entries: LiveLogEntry[], isBacklog: boolean) => void>();
 
@@ -161,13 +170,24 @@ export const createRemoteDataSource = (): DataSource => {
     }
   };
 
+  // 탭의 연결이 바뀌면 이전 연결에 묶인 것을 버린다.
+  //   되돌리기 스택: 남겨 두면 Ctrl+Z가 이전 연결의 역연산을 새 연결의 클러스터로 보낸다
+  //   oid 캐시·보는 범위: 다른 클러스터의 것
+  // 소켓에는 새 연결을 먼저 알린다(채널 이름에 연결 id가 들어간다). 보는 범위는 새 화면이 다시 알린다
+  onActiveConnectionChange(() => {
+    oidCache.clear();
+    undoStack = [];
+    view = { database: null, collection: null };
+    if (socket?.connected) socket.emit('connection:use', getActiveConnection());
+  });
+
   const ensureSocket = (): Socket => {
     if (socket) return socket;
     // 같은 주소의 /socket.io — 개발 중엔 Vite 프록시가 서버로 넘긴다. 끊기면 socket.io가 알아서 다시 붙는다.
     const next = io({ transports: ['websocket'] });
     next.on('connect', () => {
       // 서버는 소켓마다 연결·채널을 기억하므로 다시 붙으면 처음부터 알려야 한다 — 연결이 먼저(채널 이름에 연결 id가 들어간다)
-      next.emit('connection:use', connectionId());
+      next.emit('connection:use', getActiveConnection());
       next.emit('view', view);
       // 활동 패널이 열려 있었다면 기록 구독도 다시(최근 기록이 다시 오지만 패널이 id로 중복을 거른다)
       if (logListeners.size > 0) next.emit('log:subscribe');
@@ -185,7 +205,11 @@ export const createRemoteDataSource = (): DataSource => {
       }
     });
     next.on('connect_error', (e: Error) => emitStatus({ state: 'error', error: e.message }));
-    next.on('status', (status: LiveStatus) => emitStatus(status));
+    next.on('status', (status: LiveStatus) => {
+      if (status.gone) leaveConnection(GONE_MESSAGE);
+      else emitStatus(status);
+    });
+    next.on('connections', (list: ConnectionInfo[]) => connectionsListeners.forEach((listener) => listener(list)));
     // 설정 창 › Safety가 바뀌면(이 탭이든 다른 기기든) 서버가 모두에게 알린다
     next.on('settings', (settings: ServerSettings) => settingsListeners.forEach((listener) => listener(settings)));
     next.on('change', (change: LiveChange) => {
@@ -211,6 +235,23 @@ export const createRemoteDataSource = (): DataSource => {
   };
 
   return {
+    canManageConnections: true,
+    listConnections: () => request<ConnectionInfo[]>('/connections'),
+    createConnection: (input) => request<ConnectionInfo>('/connections', { method: 'POST', body: JSON.stringify(input) }),
+    updateConnection: (id, input) => request<ConnectionInfo>(`/connections/${enc(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
+    async deleteConnection(id) {
+      await request<void>(`/connections/${enc(id)}`, { method: 'DELETE' });
+    },
+    testConnection: (body: ConnectionTestRequest) =>
+      request<ConnectionTestResult>('/connections/test', { method: 'POST', body: JSON.stringify(body) }),
+    onConnections(listener) {
+      ensureSocket();
+      connectionsListeners.add(listener);
+      return () => {
+        connectionsListeners.delete(listener);
+      };
+    },
+
     async connect(config: ConnectionConfig): Promise<ConnectionResult> {
       const databases = await listDatabases();
       const activeDatabase =

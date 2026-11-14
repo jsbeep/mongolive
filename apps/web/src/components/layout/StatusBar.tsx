@@ -1,17 +1,24 @@
 // 하단 상태바 (VSCode 하단바 느낌) — 예전 헤더의 버튼들을 작게 내려 둔 곳.
-//   왼쪽:   연결 상태(누르면 알림 센터의 System 탭 = 연결 기록) · 새로고침(= 다시 맞추기)
+//   왼쪽:   지금 연결(색·이름 — 누르면 Connections 패널) · 끊기 · 연결 상태(누르면 알림 센터의 System 탭 = 연결 기록) · 새로고침(= 다시 맞추기)
+//   연결 전(웰컴 화면): 'No connection'만 — 새로고침·컬럼 조절은 볼 것이 없으니 숨긴다
 //   오른쪽: Tree/Columns · 컬럼 수 − n + · 설정 · 로그아웃 · 알림 센터(종)
 // 바는 예전 헤더처럼 둥근 카드, 항목은 테두리 없이 hover 배경만 있는 덜 둥근 네모.
 import { useState } from 'react';
-import { Bell, BellDot, Circle, Columns3, ListTree, Lock, LogOut, Minus, Plus, RefreshCw, Search, Settings } from 'lucide-react';
+import { Bell, BellDot, Circle, Columns3, ListTree, Lock, Minus, Plus, RefreshCw, Search, Unplug } from 'lucide-react';
 import { useServerSettings } from '../../services/serverSettings';
 import { m } from 'framer-motion';
 import { MAX_VISIBLE_COLUMNS, type UseExplorerStateResult } from '../../hooks/useExplorerState';
 import { dataSourceKind } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { CONNECTION_STATUS } from './connectionStatus';
+import { connectionLabel, type ConnectionInfo } from '../../types/explorer';
+import { colorClasses } from '../connections/connectionColors';
 
 interface StatusBarProps {
+  // 이 탭의 연결 — null이면 웰컴 화면(아직 안 고름). info는 목록을 받기 전엔 null일 수 있다
+  connection: { id: string; info: ConnectionInfo | null } | null;
+  onOpenConnections: (anchor: DOMRect) => void;
+  onDisconnect: () => void;
   connectionStatus: UseExplorerStateResult['connectionStatus'];
   onRefresh: () => void;
   maxVisibleColumns: number;
@@ -48,6 +55,9 @@ const styles = {
 } as const;
 
 export function StatusBar({
+  connection,
+  onOpenConnections,
+  onDisconnect,
   connectionStatus,
   onRefresh,
   maxVisibleColumns,
@@ -71,10 +81,36 @@ export function StatusBar({
   const hasNews = unreadChanges > 0 || unseenErrors > 0;
   const BellIcon = hasNews ? BellDot : Bell;
 
+  const connected = connection !== null;
+  const info = connection?.info ?? null;
+
   return (
     <footer className={styles.bar} aria-label="Status bar">
       <div className={styles.group}>
-        {dataSourceKind === 'mock' ? (
+        {connection ? (
+          <>
+            <button
+              type="button"
+              className={cn(styles.item, styles.itemIdle, 'max-w-[220px] font-medium text-slate-700')}
+              data-sidebar-panel-toggle=""
+              onClick={(e) => onOpenConnections(e.currentTarget.getBoundingClientRect())}
+              data-tt="Connection — click to switch"
+            >
+              <span className={cn('h-2.5 w-2.5 shrink-0 rounded-sm', colorClasses(info?.color ?? null).bar)} aria-hidden="true" />
+              <span className="truncate">{info ? connectionLabel(info) : 'Connection'}</span>
+            </button>
+            <button type="button" className={cn(styles.item, styles.itemIdle, styles.square)} onClick={onDisconnect} aria-label="Disconnect this tab" data-tt="Disconnect this tab — back to the welcome screen">
+              <Unplug size={15} />
+            </button>
+            <span className={styles.sep} aria-hidden="true" />
+          </>
+        ) : (
+          <span className={cn(styles.item, 'cursor-default text-slate-400')}>
+            <Circle size={10} className="text-slate-300" fill="currentColor" stroke="none" />
+            No connection
+          </span>
+        )}
+        {!connected ? null : dataSourceKind === 'mock' ? (
           <span className={cn(styles.item, 'cursor-default')} data-tt="In-browser mock data — nothing is sent to a server">
             <Circle size={10} className="text-orange-400" fill="currentColor" stroke="none" />
             Mock data
@@ -91,6 +127,7 @@ export function StatusBar({
             {status.label}
           </button>
         )}
+        {connected && (
         <button
           type="button"
           className={cn(styles.item, styles.itemIdle, styles.square)}
@@ -105,6 +142,7 @@ export function StatusBar({
             <RefreshCw size={16} aria-hidden="true" />
           </m.span>
         </button>
+        )}
         {safety.readOnly && (
           <button
             type="button"
@@ -125,6 +163,8 @@ export function StatusBar({
           <Search size={16} />
           <span className="text-slate-400">{navigator.platform.toLowerCase().includes('mac') ? '⌘K' : 'Ctrl+K'}</span>
         </button>
+        {connected && (
+        <>
         <span className={styles.sep} aria-hidden="true" />
         <button
           type="button"
@@ -166,6 +206,8 @@ export function StatusBar({
             <Plus size={16} />
           </button>
         </div>
+        </>
+        )}
 
         <span className={styles.sep} aria-hidden="true" />
 

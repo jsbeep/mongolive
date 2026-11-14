@@ -184,6 +184,8 @@ export interface LiveStatus {
   error?: string;
   // true면 이벤트를 놓쳤을 수 있다 — 화면을 전부 다시 받아야 한다
   resync?: boolean;
+  // true면 이 탭이 쓰던 연결이 지워졌다 — 화면은 연결 고르기(웰컴)로 돌아간다
+  gone?: boolean;
 }
 
 // ── 활동 패널(ChangeStreamLogs / PerformanceMetrics) ──────────────────────────
@@ -356,7 +358,8 @@ export type ConnectionColor = (typeof CONNECTION_COLORS)[number];
 
 export interface ConnectionInfo {
   id: string;
-  source: 'env' | 'saved';
+  // env = .env의 MONGODB_URI(주소 읽기 전용), saved = 화면에서 추가, demo = 브라우저 안 데모 데이터(Mock)
+  source: 'env' | 'saved' | 'demo';
   // 사용자가 붙인 이름. 없으면 화면이 호스트로 이름을 만든다(connectionLabel)
   name: string | null;
   color: ConnectionColor | null;

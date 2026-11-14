@@ -11,6 +11,7 @@ import { AnimatePresence, m } from 'framer-motion';
 import { CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, Diagnostics, MutationRequest } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
+import { useActiveConnection } from '../../services/activeConnection';
 import { sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type Theme, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type UndoDepth } from '../../services/preferences';
 import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../utils/motionPresets';
 import { saveServerSettings, useServerSettings } from '../../services/serverSettings';
@@ -446,6 +447,13 @@ const SHORTCUTS: { title: string; rows: [keys: string[], what: string][] }[] = [
     ],
   },
   {
+    title: 'Welcome screen (before you pick a connection)',
+    rows: [
+      [['N'], 'New connection'],
+      [['1', '–', '9'], 'Open a recent connection'],
+    ],
+  },
+  {
     title: 'In the columns',
     rows: [
       [['↑', '↓'], 'Move within a column (also k / j) — past the first or last row turns the page'],
@@ -667,10 +675,12 @@ function useDiagnostics(enabled: boolean) {
       setLoading(false);
     }
   }, []);
+  // 진단은 그 연결의 MongoDB를 본다 — 연결을 고르기 전(웰컴 화면)엔 묻지 않는다
+  const connection = useActiveConnection();
   useEffect(() => {
-    if (enabled && dataSourceKind === 'remote') void reload();
-  }, [enabled, reload]);
-  return { data, error, loading, reload };
+    if (enabled && dataSourceKind === 'remote' && connection) void reload();
+  }, [enabled, reload, connection]);
+  return { data, error, loading, reload, connected: connection !== null };
 }
 
 function MockNotice() {
@@ -679,6 +689,9 @@ function MockNotice() {
 
 function DiagnosticsSection({ diag }: { diag: ReturnType<typeof useDiagnostics> }) {
   if (dataSourceKind === 'mock') return <MockNotice />;
+  if (!diag.connected) {
+    return <p className={cn(styles.callout, 'mt-0 bg-slate-50 text-slate-600')}>Pick a connection first — diagnostics check that connection&apos;s MongoDB.</p>;
+  }
   const { data, error, loading, reload } = diag;
   return (
     <>

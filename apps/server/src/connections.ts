@@ -54,20 +54,20 @@ const isColor = (v: unknown): v is ConnectionColor => (CONNECTION_COLORS as read
 
 const parseName = (v: unknown): string | null => {
   if (v === null) return null;
-  if (typeof v !== 'string') throw new HttpError(400, '이름은 문자열이어야 합니다.');
+  if (typeof v !== 'string') throw new HttpError(400, 'Name must be a string.');
   const name = v.trim();
-  if (name.length > MAX_NAME_LENGTH) throw new HttpError(400, `이름이 너무 깁니다(최대 ${MAX_NAME_LENGTH}자).`);
+  if (name.length > MAX_NAME_LENGTH) throw new HttpError(400, `Name is too long (max ${MAX_NAME_LENGTH} characters).`);
   return name || null;
 };
 
 const parseColor = (v: unknown): ConnectionColor | null => {
   if (v === null) return null;
-  if (!isColor(v)) throw new HttpError(400, `색은 ${CONNECTION_COLORS.join(', ')} 중 하나여야 합니다.`);
+  if (!isColor(v)) throw new HttpError(400, `Color must be one of ${CONNECTION_COLORS.join(', ')}.`);
   return v;
 };
 
 const parseFavorite = (v: unknown): boolean => {
-  if (typeof v !== 'boolean') throw new HttpError(400, 'favorite는 true/false여야 합니다.');
+  if (typeof v !== 'boolean') throw new HttpError(400, 'favorite must be true or false.');
   return v;
 };
 
@@ -79,7 +79,7 @@ const applyAppearance = (base: Appearance, body: ConnectionInput): Appearance =>
 });
 
 const asInput = (body: unknown): ConnectionInput => {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, '요청 본문이 올바르지 않습니다.');
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'Invalid request body.');
   return body as ConnectionInput;
 };
 
@@ -180,31 +180,31 @@ export const connectionUri = (id: string): string | null => {
 
 const findSaved = (file: ConnectionsFile, id: string): StoredConnection => {
   const found = UUID.test(id) ? file.connections.find((c) => c.id === id) : undefined;
-  if (!found) throw new HttpError(404, '연결을 찾을 수 없습니다.');
+  if (!found) throw new HttpError(404, 'Connection not found.');
   return found;
 };
 
 const infoOf = (id: string): ConnectionInfo => {
   const info = listConnections().find((c) => c.id === id);
-  if (!info) throw new HttpError(404, '연결을 찾을 수 없습니다.');
+  if (!info) throw new HttpError(404, 'Connection not found.');
   return info;
 };
 
 const parseUri = (input: ConnectionInput): string | undefined => {
   if (input.uri === undefined) return undefined;
-  if (typeof input.uri !== 'string') throw new HttpError(400, '접속 주소는 문자열이어야 합니다.');
+  if (typeof input.uri !== 'string') throw new HttpError(400, 'Connection string must be a string.');
   return input.uri;
 };
 
 export const createConnection = async (body: unknown): Promise<ConnectionInfo> => {
   const input = asInput(body);
   const submitted = parseUri(input);
-  if (submitted === undefined) throw new HttpError(400, '접속 주소를 입력하세요.');
+  if (submitted === undefined) throw new HttpError(400, 'Enter a connection string.');
   // 새 연결에는 채울 원래 값이 없으므로 가린 표시가 있으면 거절된다
   const uri = checkUri(restoreUri(submitted, null));
   const look = applyAppearance(emptyAppearance(), input);
   const id = await mutate((prev) => {
-    if (prev.connections.length >= MAX_CONNECTIONS) throw new HttpError(400, `연결은 ${MAX_CONNECTIONS}개까지 저장할 수 있습니다.`);
+    if (prev.connections.length >= MAX_CONNECTIONS) throw new HttpError(400, `You can save up to ${MAX_CONNECTIONS} connections.`);
     const now = Date.now();
     // id는 랜덤 — 지운 연결의 id가 다시 쓰여 옛 북마크가 다른 클러스터를 가리키는 일이 없게
     const created: StoredConnection = { id: randomUUID(), uri, ...look, createdAt: now, updatedAt: now };
@@ -217,8 +217,8 @@ export const updateConnection = async (id: string, body: unknown): Promise<Conne
   const input = asInput(body);
   const submitted = parseUri(input);
   if (id === ENV_CONNECTION_ID) {
-    if (!config.mongoUri) throw new HttpError(404, '연결을 찾을 수 없습니다.');
-    if (submitted !== undefined) throw new HttpError(400, '.env 연결의 주소는 apps/server/.env의 MONGODB_URI에서만 바꿀 수 있습니다.');
+    if (!config.mongoUri) throw new HttpError(404, 'Connection not found.');
+    if (submitted !== undefined) throw new HttpError(400, 'The .env connection string can only be changed in apps/server/.env (MONGODB_URI).');
     await mutate((prev) => ({ next: { ...prev, env: applyAppearance(prev.env, input) }, result: undefined }));
     return infoOf(id);
   }
@@ -232,7 +232,7 @@ export const updateConnection = async (id: string, body: unknown): Promise<Conne
 };
 
 export const deleteConnection = async (id: string): Promise<void> => {
-  if (id === ENV_CONNECTION_ID) throw new HttpError(400, '.env 연결은 지울 수 없습니다. apps/server/.env의 MONGODB_URI를 비우세요.');
+  if (id === ENV_CONNECTION_ID) throw new HttpError(400, "The .env connection can't be deleted — clear MONGODB_URI in apps/server/.env instead.");
   await mutate((prev) => {
     findSaved(prev, id);
     return { next: { ...prev, connections: prev.connections.filter((c) => c.id !== id) }, result: undefined };
@@ -242,12 +242,12 @@ export const deleteConnection = async (id: string): Promise<void> => {
 // 테스트할 실제 주소. id가 있으면 그 연결의 저장된 값으로 가린 자리를 채운다(보낼 곳이 같을 때만)
 export const resolveTestUri = (body: unknown): string => {
   const { id, uri } = asInput(body) as { id?: unknown; uri?: unknown };
-  if (id !== undefined && typeof id !== 'string') throw new HttpError(400, 'id는 문자열이어야 합니다.');
-  if (uri !== undefined && typeof uri !== 'string') throw new HttpError(400, '접속 주소는 문자열이어야 합니다.');
+  if (id !== undefined && typeof id !== 'string') throw new HttpError(400, 'id must be a string.');
+  if (uri !== undefined && typeof uri !== 'string') throw new HttpError(400, 'Connection string must be a string.');
   const stored = id === undefined ? null : connectionUri(id);
-  if (id !== undefined && stored === null) throw new HttpError(404, '연결을 찾을 수 없습니다.');
+  if (id !== undefined && stored === null) throw new HttpError(404, 'Connection not found.');
   if (uri === undefined) {
-    if (stored === null) throw new HttpError(400, '테스트할 접속 주소나 연결 id를 보내세요.');
+    if (stored === null) throw new HttpError(400, 'Send a connection string or a connection id to test.');
     return stored;
   }
   return checkUri(restoreUri(uri, stored));

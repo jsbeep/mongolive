@@ -109,7 +109,7 @@ const sameDestination = (a: UriParts, b: UriParts): boolean =>
   a.hosts.toLowerCase() === b.hosts.toLowerCase() &&
   ROUTING_OPTIONS.every((key) => optionValues(a, key).join(',') === optionValues(b, key).join(','));
 
-const REENTER = '주소의 호스트·사용자·인증 방식·프록시·TLS 설정이 바뀌어 저장된 비밀 값을 그대로 쓸 수 없습니다. 비밀번호(가려진 ••••••)를 다시 입력하세요.';
+const REENTER = "The host, user, auth mechanism, proxy or TLS settings changed, so the saved password can't be reused. Re-enter the password (where it shows ••••••).";
 
 // 브라우저가 보낸 주소의 가린 자리(URI_SECRET_MASK)를 저장된 주소(stored)의 원래 값으로 채운다.
 // 가린 자리가 없으면 보낸 그대로. stored가 없거나(새 연결) 보낼 곳이 바뀌었으면 400.
@@ -122,19 +122,19 @@ export const restoreUri = (submitted: string, stored: string | null): string => 
   if (!maskedPassword && maskedOptions.length === 0) return trimmed;
 
   const prev = stored === null ? null : parse(stored);
-  if (!prev) throw new HttpError(400, '가려진 비밀 값(••••••)을 채울 저장된 주소가 없습니다. 실제 값을 입력하세요.');
+  if (!prev) throw new HttpError(400, 'There is no saved value to fill in for ••••••. Enter the real value.');
   if (!sameDestination(prev, next)) throw new HttpError(400, REENTER);
 
   const restored: UriParts = { ...next, options: next.options.map((o) => ({ ...o })) };
   if (maskedPassword) {
-    if (!prev.password) throw new HttpError(400, '저장된 비밀번호가 없습니다. 비밀번호를 입력하세요.');
+    if (!prev.password) throw new HttpError(400, 'No password is saved for this connection. Enter the password.');
     restored.password = prev.password;
   }
   for (const option of restored.options) {
     if (!isMask(option.value)) continue;
     const original = prev.options.find((o) => optionKey(o.key) === optionKey(option.key));
     if (!original?.value || isMask(original.value)) {
-      throw new HttpError(400, `저장된 ${safeDecode(option.key)} 값이 없습니다. 값을 입력하세요.`);
+      throw new HttpError(400, `No saved value for ${safeDecode(option.key)}. Enter the value.`);
     }
     option.value = original.value;
   }
@@ -156,14 +156,14 @@ export const describeUri = (uri: string): { srv: boolean; hosts: string[]; usern
 // 가린 표시가 남아 있으면(채울 수 없었던 것) 실제 비밀번호로 저장되지 않게 막는다.
 export const checkUri = (uri: string): string => {
   const trimmed = uri.trim();
-  if (!trimmed) throw new HttpError(400, '접속 주소를 입력하세요.');
-  if (trimmed.length > MAX_URI_LENGTH) throw new HttpError(400, `접속 주소가 너무 깁니다(최대 ${MAX_URI_LENGTH}자).`);
-  if (!/^mongodb(\+srv)?:\/\//i.test(trimmed)) throw new HttpError(400, '접속 주소는 mongodb:// 또는 mongodb+srv://로 시작해야 합니다.');
-  if (trimmed.includes(URI_SECRET_MASK)) throw new HttpError(400, '가려진 값(••••••)이 남아 있습니다. 실제 값을 입력하세요.');
+  if (!trimmed) throw new HttpError(400, 'Enter a connection string.');
+  if (trimmed.length > MAX_URI_LENGTH) throw new HttpError(400, `Connection string is too long (max ${MAX_URI_LENGTH} characters).`);
+  if (!/^mongodb(\+srv)?:\/\//i.test(trimmed)) throw new HttpError(400, 'Connection string must start with mongodb:// or mongodb+srv://.');
+  if (trimmed.includes(URI_SECRET_MASK)) throw new HttpError(400, 'The connection string still contains ••••••. Enter the real value.');
   try {
     new MongoClient(trimmed);
   } catch (e) {
-    throw new HttpError(400, `접속 주소 형식이 올바르지 않습니다: ${e instanceof Error ? e.message : String(e)}`);
+    throw new HttpError(400, `Invalid connection string: ${e instanceof Error ? e.message : String(e)}`);
   }
   return trimmed;
 };

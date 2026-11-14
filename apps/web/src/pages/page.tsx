@@ -12,7 +12,7 @@ import { NotificationCenter, type NotificationTab } from '../components/notifica
 import { Toast } from '../components/notifications/Toast';
 import { SettingsModal, type SettingsSection } from '../components/settings/SettingsModal';
 import { QuickJump, type QuickCommand } from '../components/palette/QuickJump';
-import { Bell, ListTree, Lock, LogOut, PanelLeft, RefreshCw, Settings, Undo2 } from 'lucide-react';
+import { Bell, ListTree, Lock, LogOut, PanelLeft, Plus, RefreshCw, Settings, Undo2, Unplug } from 'lucide-react';
 import { useAuth } from '../components/auth/AuthGate';
 import { getServerSettingsSnapshot, saveServerSettings } from '../services/serverSettings';
 import { startServerSettingsSync } from '../services/serverSettings';
@@ -31,6 +31,12 @@ import { collectToPipeline } from '../services/pipelineCollect';
 import { clearQueryHistory, removeQueryHistory, useQueryHistory, type QueryHistoryEntry } from '../services/queryHistory';
 import { openSearchPanel } from '../services/queryPanel';
 import { api } from '../services/api';
+import { setActiveConnection } from '../services/activeConnection';
+import { useConnections } from '../hooks/useConnections';
+import { WelcomeScreen } from '../components/connections/WelcomeScreen';
+import { ConnectionsPanel } from '../components/connections/ConnectionsPanel';
+import { ConnectionModal, type ConnectionModalTarget } from '../components/connections/ConnectionModal';
+import { useConnect } from '../components/connections/useConnect';
 
 // ── 스타일 ────────────────────────────────────────────────────────────────────
 
@@ -45,7 +51,9 @@ const styles = {
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────────────────
 
-export default function ExplorerPage() {
+// connectionId: 이 탭이 쓰는 연결(App이 바뀔 때마다 이 화면을 새로 만든다). null이면 웰컴 화면
+export default function ExplorerPage({ connectionId }: { connectionId: string | null }) {
+  const connected = connectionId !== null;
   const state = useExplorerState();
   const sidebar = useSidebar();
   const auth = useAuth();
@@ -65,9 +73,16 @@ export default function ExplorerPage() {
   // 안전장치 설정(read-only, 보호 대상) — 앱이 켜질 때 받고, 다른 탭·기기에서 바꾸면 따라간다
   useEffect(() => startServerSettingsSync(), []);
 
-  // 초기 연결
+  // 저장된 연결 목록(웰컴 화면·Connections 패널·상태 바) + 고르기(먼저 접속해 보고 들어간다) + 추가·수정 창
+  const connections = useConnections();
+  const connectAction = useConnect();
+  const [connectionModal, setConnectionModal] = useState<ConnectionModalTarget | null>(null);
+  const currentConnection = connectionId ? connections.connections.find((c) => c.id === connectionId) ?? null : null;
+  const disconnect = useCallback(() => setActiveConnection(null), []);
+
+  // 초기 연결 — 이 탭이 연결을 골랐을 때만(웰컴 화면에선 데이터를 받지 않는다)
   useEffect(() => {
-    void state.initialize();
+    if (connected) void state.initialize();
   }, []);
 
   const {
@@ -140,6 +155,7 @@ export default function ExplorerPage() {
   const referencesAnchor = sidebarPanel?.kind === 'references' ? sidebarPanel.anchor : null;
   const bookmarksAnchor = sidebarPanel?.kind === 'bookmarks' ? sidebarPanel.anchor : null;
   const aggregationAnchor = sidebarPanel?.kind === 'aggregation' ? sidebarPanel.anchor : null;
+  const connectionsAnchor = sidebarPanel?.kind === 'connections' ? sidebarPanel.anchor : null;
   const bookmarks = useBookmarks();
   const qbeHandler = useCallback<QbeHandler>((database, collection, conditions) => {
     void queryByExample(database, collection, conditions).then((ok) => ok && openSearchPanel('query'));
@@ -216,6 +232,8 @@ export default function ExplorerPage() {
   // 빠른 이동의 명령 목록 — 단축키 표시는 Mac이면 ⌘
   const mod = navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+';
   const quickCommands: QuickCommand[] = [
+    ...(api.canManageConnections ? [{ id: 'new-connection', label: 'New connection', icon: Plus, run: () => setConnectionModal('new') }] : []),
+    ...(connected ? [{ id: 'disconnect', label: 'Disconnect this tab', icon: Unplug, run: disconnect }] : []),
     { id: 'settings', label: 'Open settings', icon: Settings, run: () => openSettings() },
     { id: 'notifications', label: 'Show notifications', icon: Bell, run: () => setCenterOpen(true) },
     { id: 'resync', label: "Re-sync what's on screen", icon: RefreshCw, run: () => void refresh() },
@@ -260,6 +278,7 @@ export default function ExplorerPage() {
         <div className={styles.body}>
           <Sidebar
             sidebar={sidebar}
+            connected={connected}
             databases={databases}
             activeDatabase={activeDatabase}
             activeCollection={treeCollectionName}
@@ -281,8 +300,20 @@ export default function ExplorerPage() {
             }}
           />
 
-          {/* Miller Columns */}
+          {/* Miller Columns — 연결을 고르기 전엔 같은 카드 자리에 웰컴 화면 */}
           <div ref={columnsRef} className={styles.columns}>
+            {!connected ? (
+              <WelcomeScreen
+                connections={connections}
+                connect={connectAction}
+                canManage={api.canManageConnections}
+                onNewConnection={() => setConnectionModal('new')}
+                onEditConnection={setConnectionModal}
+                onOpenQuickJump={() => setQuickOpen(true)}
+                onOpenShortcuts={() => openSettings('keyboard')}
+              />
+            ) : (
+            <>
             {/* 브레드크럼 — 첫 칸(DB)은 DB 고르기 드롭다운 */}
             <Breadcrumbs
               breadcrumbs={breadcrumbs}
@@ -337,10 +368,15 @@ export default function ExplorerPage() {
             </CollectContext.Provider>
             </QbeContext.Provider>
             </ChangeToneContext.Provider>
+            </>
+            )}
           </div>
         </div>
 
         <StatusBar
+          connection={connectionId ? { id: connectionId, info: currentConnection } : null}
+          onOpenConnections={(anchor) => setSidebarPanel((open) => (open?.kind === 'connections' ? null : { kind: 'connections', anchor }))}
+          onDisconnect={disconnect}
           connectionStatus={connectionStatus}
           onRefresh={() => void refresh()}
           maxVisibleColumns={maxVisibleColumns}
@@ -490,6 +526,30 @@ export default function ExplorerPage() {
           onClose={closeSidebarPanel}
         />
       )}
+
+      {/* Connections — 이 탭의 연결 바꾸기(먼저 접속해 본다)·추가·수정·끊기 */}
+      {connectionsAnchor && (
+        <ConnectionsPanel
+          anchor={connectionsAnchor}
+          connections={connections}
+          connect={connectAction}
+          currentId={connectionId}
+          canManage={api.canManageConnections}
+          onNew={() => {
+            closeSidebarPanel();
+            setConnectionModal('new');
+          }}
+          onEdit={(c) => {
+            closeSidebarPanel();
+            setConnectionModal(c);
+          }}
+          onDisconnect={disconnect}
+          onClose={closeSidebarPanel}
+        />
+      )}
+
+      {/* 연결 추가·수정 — 웰컴 화면, Connections 패널, 빠른 이동(Ctrl+K)에서 연다 */}
+      <ConnectionModal target={connectionModal} onConnect={connectAction.connect} onClose={() => setConnectionModal(null)} />
 
       {/* 토스트 — 오른쪽 아래(알림 센터가 열려 있으면 그 위) */}
       <Toast

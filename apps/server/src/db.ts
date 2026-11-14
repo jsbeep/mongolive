@@ -98,7 +98,7 @@ export const onHealthChange = (listener: (id: string, health: ConnectionHealth) 
 export const clientFor = (id: string): Promise<MongoClient> => {
   const uri = connectionUri(id);
   // 410: 지워진 연결. 404는 화면이 '문서가 지워졌다'로 읽으므로 쓰지 않는다
-  if (!uri) return Promise.reject(new HttpError(410, '연결이 없어졌습니다 — 지워졌을 수 있습니다.'));
+  if (!uri) return Promise.reject(new HttpError(410, 'This connection no longer exists — it may have been deleted.'));
   let entry = entries.get(id);
   // 주소가 바뀐 연결이면 옛 클라이언트를 닫고 새로
   if (entry && entry.uri !== uri) {
@@ -180,8 +180,8 @@ export const closeAllClients = async (): Promise<void> => {
 // 연결을 정하지 않은 요청은 받지 않는다 — '기본 연결'로 흘러가면 엉뚱한 클러스터에 쓸 수 있다
 export const requireConnection: RequestHandler = (req, res, next) => {
   const id = req.get(CONNECTION_HEADER);
-  if (!id) throw new HttpError(400, `어느 연결인지 알 수 없습니다(${CONNECTION_HEADER} 헤더 없음).`);
-  if (!connectionUri(id)) throw new HttpError(410, '연결이 없어졌습니다 — 지워졌을 수 있습니다.');
+  if (!id) throw new HttpError(400, `No connection selected (missing ${CONNECTION_HEADER} header).`);
+  if (!connectionUri(id)) throw new HttpError(410, 'This connection no longer exists — it may have been deleted.');
   res.locals.connectionId = id;
   next();
 };

@@ -24,11 +24,28 @@ import type {
   ServerMetrics,
   AggregateResult,
   AggregateCounts,
+  ConnectionInfo,
+  ConnectionInput,
+  ConnectionTestRequest,
+  ConnectionTestResult,
 } from '../types/explorer';
 
 export type ClientMetrics = ServerMetrics & { rttMs: number | null };
 
 export interface DataSource {
+  // ── 저장된 연결(8-4) ──
+  // 이 탭이 쓰는 연결은 services/activeConnection이 들고 있고, 데이터 소스는 요청마다 그 id를 서버에 알린다.
+  // Mock(데모)은 브라우저 안 데이터 하나뿐 — 'demo' 연결 하나만 있고 추가·수정·삭제는 거절한다
+  canManageConnections: boolean;
+  listConnections(): Promise<ConnectionInfo[]>;
+  createConnection(input: ConnectionInput): Promise<ConnectionInfo>;
+  updateConnection(id: string, input: ConnectionInput): Promise<ConnectionInfo>;
+  deleteConnection(id: string): Promise<void>;
+  // 접속해 보고 서버 종류·버전·지연을 돌려준다(저장 안 함). 저장된 연결이면 id로 — 가린 비밀 값을 서버가 채운다
+  testConnection(request: ConnectionTestRequest): Promise<ConnectionTestResult>;
+  // 다른 탭·기기에서 연결을 추가·수정·삭제해도 알려 준다
+  onConnections(listener: (connections: ConnectionInfo[]) => void): () => void;
+
   // ── 연결 / 목록 ──
   connect(config: ConnectionConfig): Promise<ConnectionResult>;
   listDatabases(): Promise<DatabaseSummary[]>;

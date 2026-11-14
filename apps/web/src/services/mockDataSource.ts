@@ -1,6 +1,6 @@
 // localStorage 기반 인메모리 Mock 구현. 실제 서버 구현(4단계)과 같은 DataSource 계약을 지킨다.
 import type { DataSource } from './dataSource';
-import { normalizeServerSettings, writeBlockedReason, type MockSnapshot, type MutationRequest, type ServerSettings } from '../types/explorer';
+import { normalizeServerSettings, writeBlockedReason, type ConnectionInfo, type MockSnapshot, type MutationRequest, type ServerSettings } from '../types/explorer';
 import * as mock from './mockAPI';
 import { getUniqueOids, setUniqueOids } from './mockStorage';
 import { getPreferences } from './preferences';
@@ -18,6 +18,25 @@ const loadSettings = (): ServerSettings => {
   }
 };
 
+// 데모(GitHub Pages 등)의 연결 카드 — 서버 없이 브라우저 안 데이터를 연다
+const DEMO_CONNECTION: ConnectionInfo = {
+  id: 'demo',
+  source: 'demo',
+  name: 'Demo data',
+  color: 'emerald',
+  favorite: true,
+  uri: 'in-browser',
+  srv: false,
+  hosts: ['in your browser'],
+  username: null,
+  createdAt: null,
+  updatedAt: null,
+};
+
+const rejectInDemo = async (): Promise<never> => {
+  throw new Error('The demo runs entirely in your browser — run the server to add your own connections.');
+};
+
 export const createMockDataSource = (): DataSource => {
   // 여러 단계 undo — mutate마다 직전 스냅샷을 쌓는다. 예전엔 훅(useExplorerState)이 저장소를 직접 읽어
   // 들고 있었는데, 그건 Mock에서만 가능한 방식이라 데이터 소스 안으로 옮겼다.
@@ -32,6 +51,15 @@ export const createMockDataSource = (): DataSource => {
   };
 
   return {
+    // 데모는 브라우저 안 데이터 하나뿐 — 연결 카드 하나만 보이고 추가·수정·삭제는 막는다
+    canManageConnections: false,
+    listConnections: async () => [DEMO_CONNECTION],
+    createConnection: rejectInDemo,
+    updateConnection: rejectInDemo,
+    deleteConnection: rejectInDemo,
+    testConnection: async () => ({ ok: true, topology: 'unknown', version: null, replicaSet: null, latencyMs: 0 }),
+    onConnections: () => () => undefined,
+
     connect: mock.connect,
     listDatabases: mock.listDatabases,
     getCollections: mock.getCollections,

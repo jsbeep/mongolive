@@ -3,6 +3,7 @@
 //   ↗      = 원래 컬렉션으로 가서 실행(다른 컬렉션의 기록에만)
 // 지금 컬렉션의 기록을 위에, 다른 컬렉션 것을 아래에. 고르면 닫힌다.
 import type { ReactNode } from 'react';
+import { timeAgo } from '../../utils/timeAgo';
 import { ArrowUpRight, History, Trash2, X } from 'lucide-react';
 import type { QueryHistoryEntry } from '../../services/queryHistory';
 import { SidebarPopover } from '../layout/SidebarPopover';
@@ -18,14 +19,6 @@ interface QueryHistoryPanelProps {
   onClear: () => void;
   onClose: () => void;
 }
-
-const ago = (at: number): string => {
-  const s = Math.max(0, Math.round((Date.now() - at) / 1000));
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-};
 
 export function QueryHistoryPanel({ anchor, entries, current, onApply, onOpenOriginal, onRemove, onClear, onClose }: QueryHistoryPanelProps) {
   const isCurrent = (e: QueryHistoryEntry) => !!current && e.database === current.database && e.collection === current.collection;
@@ -44,7 +37,7 @@ export function QueryHistoryPanel({ anchor, entries, current, onApply, onOpenOri
         <code className="line-clamp-2 break-all pr-12 font-mono text-xs leading-[18px] text-slate-700" title={entry.text}>{entry.text.replace(/\s+/g, ' ')}</code>
         <span className="truncate text-[11px] text-slate-400">
           {showWhere && <span className="font-mono">{entry.database}.{entry.collection} · </span>}
-          {ago(entry.at)}
+          {timeAgo(entry.at)}
         </span>
       </button>
       <span className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
