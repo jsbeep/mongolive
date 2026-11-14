@@ -5,7 +5,7 @@
 //   ▸ [서버] 다른 연결     [Connect] · ⋯(Edit)                              ← 올리면 보인다. 더블클릭도 연결
 // 탭마다 연결은 하나 — 다른 연결을 Connect하면 이 탭이 그 연결로 바뀐다(먼저 접속해 본다, useConnect).
 import { useState } from 'react';
-import { ChevronRight, Loader2, Pencil, Plus, RefreshCw, Server, Unplug } from 'lucide-react';
+import { ChevronRight, Loader2, Pencil, Plus, RefreshCw, Server, Unplug, X } from 'lucide-react';
 import { connectionLabel, type CollectionSummary, type ConnectionInfo, type DatabaseSummary, type MutationRequest } from '../../types/explorer';
 import type { ConnectionsState } from '../../hooks/useConnections';
 import type { ConnectAction } from '../connections/useConnect';
@@ -52,7 +52,8 @@ const styles = {
   // 다른 연결의 버튼은 올리거나 행 안에 포커스가 있을 때만
   hoverOnly: 'hidden group-hover:inline-flex group-focus-within:inline-flex',
   connectBtn: 'h-6 shrink-0 items-center rounded-md border border-slate-200 bg-white px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600 transition-colors hover:border-emerald-300 hover:text-emerald-700',
-  failure: 'mb-1 ml-[46px] mr-1 rounded-md bg-rose-50 px-2 py-1 text-[11px] leading-snug text-rose-700',
+  failure: 'mb-1 ml-[46px] mr-1 flex items-start gap-1 rounded-md bg-rose-50 py-1 pl-2 pr-1 text-[11px] leading-snug text-rose-700',
+  failureClose: 'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-rose-400 transition-colors hover:bg-rose-100 hover:text-rose-700',
 } as const;
 
 // 상태 점 색 — tailwind가 CSS를 만들도록 클래스 이름을 그대로 적어 둔다
@@ -183,9 +184,12 @@ export function ConnectionsTree({ connections, connect, currentId, status, canMa
                 )}
               </div>
               {failed && (
-                <p className={styles.failure} role="alert">
-                  {failed}
-                </p>
+                <div className={styles.failure} role="alert">
+                  <span className="min-w-0 flex-1 break-words">{failed}</span>
+                  <button type="button" className={styles.failureClose} onClick={connect.clearFailure} aria-label="Dismiss" data-tt="Dismiss">
+                    <X size={12} />
+                  </button>
+                </div>
               )}
             </div>
           );

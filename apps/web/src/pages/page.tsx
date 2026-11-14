@@ -34,7 +34,6 @@ import { api } from '../services/api';
 import { setActiveConnection } from '../services/activeConnection';
 import { useConnections } from '../hooks/useConnections';
 import { WelcomeScreen } from '../components/connections/WelcomeScreen';
-import { ConnectionsPanel } from '../components/connections/ConnectionsPanel';
 import { ConnectionModal, type ConnectionModalTarget } from '../components/connections/ConnectionModal';
 import { useConnect } from '../components/connections/useConnect';
 
@@ -73,11 +72,10 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
   // 안전장치 설정(read-only, 보호 대상) — 앱이 켜질 때 받고, 다른 탭·기기에서 바꾸면 따라간다
   useEffect(() => startServerSettingsSync(), []);
 
-  // 저장된 연결 목록(웰컴 화면·Connections 패널·상태 바) + 고르기(먼저 접속해 보고 들어간다) + 추가·수정 창
+  // 저장된 연결 목록(웰컴 화면·사이드바 연결 트리) + 고르기(먼저 접속해 보고 들어간다) + 추가·수정 창
   const connections = useConnections();
   const connectAction = useConnect();
   const [connectionModal, setConnectionModal] = useState<ConnectionModalTarget | null>(null);
-  const currentConnection = connectionId ? connections.connections.find((c) => c.id === connectionId) ?? null : null;
   const disconnect = useCallback(() => setActiveConnection(null), []);
 
   // 초기 연결 — 이 탭이 연결을 골랐을 때만(웰컴 화면에선 데이터를 받지 않는다)
@@ -155,7 +153,6 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
   const referencesAnchor = sidebarPanel?.kind === 'references' ? sidebarPanel.anchor : null;
   const bookmarksAnchor = sidebarPanel?.kind === 'bookmarks' ? sidebarPanel.anchor : null;
   const aggregationAnchor = sidebarPanel?.kind === 'aggregation' ? sidebarPanel.anchor : null;
-  const connectionsAnchor = sidebarPanel?.kind === 'connections' ? sidebarPanel.anchor : null;
   const bookmarks = useBookmarks();
   const qbeHandler = useCallback<QbeHandler>((database, collection, conditions) => {
     void queryByExample(database, collection, conditions).then((ok) => ok && openSearchPanel('query'));
@@ -385,9 +382,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
         </div>
 
         <StatusBar
-          connection={connectionId ? { id: connectionId, info: currentConnection } : null}
-          onOpenConnections={(anchor) => setSidebarPanel((open) => (open?.kind === 'connections' ? null : { kind: 'connections', anchor }))}
-          onDisconnect={disconnect}
+          connected={connected}
           connectionStatus={connectionStatus}
           onRefresh={() => void refresh()}
           maxVisibleColumns={maxVisibleColumns}
@@ -538,28 +533,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
         />
       )}
 
-      {/* Connections — 이 탭의 연결 바꾸기(먼저 접속해 본다)·추가·수정·끊기 */}
-      {connectionsAnchor && (
-        <ConnectionsPanel
-          anchor={connectionsAnchor}
-          connections={connections}
-          connect={connectAction}
-          currentId={connectionId}
-          canManage={api.canManageConnections}
-          onNew={() => {
-            closeSidebarPanel();
-            setConnectionModal('new');
-          }}
-          onEdit={(c) => {
-            closeSidebarPanel();
-            setConnectionModal(c);
-          }}
-          onDisconnect={disconnect}
-          onClose={closeSidebarPanel}
-        />
-      )}
-
-      {/* 연결 추가·수정 — 웰컴 화면, Connections 패널, 빠른 이동(Ctrl+K)에서 연다 */}
+      {/* 연결 추가·수정 — 웰컴 화면, 사이드바 연결 트리, 빠른 이동(Ctrl+K)에서 연다 */}
       <ConnectionModal target={connectionModal} onConnect={connectAction.connect} onClose={() => setConnectionModal(null)} />
 
       {/* 토스트 — 오른쪽 아래(알림 센터가 열려 있으면 그 위) */}

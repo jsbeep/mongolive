@@ -28,9 +28,9 @@ const MOD = typeof navigator !== 'undefined' && navigator.platform.toLowerCase()
 
 const styles = {
   screen: 'relative h-full overflow-y-auto',
-  inner: 'relative mx-auto flex min-h-full w-full max-w-4xl flex-col items-center px-6 py-10 sm:px-10',
+  inner: 'relative mx-auto flex min-h-full w-full max-w-4xl flex-col px-6 py-10 sm:px-10',
   // 큰 마크 — 뒤에 옅은 동심원을 깔아 VSCode 빈 화면의 큰 로고 느낌
-  markWrap: 'relative mb-6 mt-4 flex h-28 w-28 items-center justify-center',
+  markWrap: 'relative mb-6 mt-4 flex h-28 w-20 items-center justify-center',
   markRing: 'absolute rounded-full border border-emerald-200/60',
   mark: 'relative flex h-20 w-20 items-center justify-center rounded-[26px] border border-emerald-200 bg-emerald-50 text-3xl font-bold tracking-tight text-emerald-700 shadow-soft',
   title: 'relative text-center text-xl font-semibold tracking-tight text-slate-900',
@@ -57,7 +57,8 @@ const styles = {
   pending: 'absolute inset-0 flex items-center justify-center gap-2 bg-white/80 text-[13px] font-medium text-slate-600 backdrop-blur-[1px]',
   // + 새 연결 카드 — 점선
   newCard: 'flex min-h-[92px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 text-[13px] font-medium text-slate-500 transition-colors hover:border-emerald-300 hover:bg-emerald-50/60 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-300 disabled:hover:bg-transparent disabled:hover:text-slate-500',
-  failure: 'mt-3 flex items-start gap-2 rounded-xl bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 ring-1 ring-rose-200/70',
+  failure: 'mt-3 flex items-start gap-2 rounded-xl bg-rose-50 py-2.5 pl-3.5 pr-2.5 text-[13px] text-rose-700 ring-1 ring-rose-200/70',
+  failureClose: 'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-rose-400 transition-colors hover:bg-rose-100 hover:text-rose-700',
   linkBtn: 'font-medium underline underline-offset-2 hover:text-rose-900',
   bottom: 'mt-9 w-full md:w-1/2',
   list: 'flex flex-col',
@@ -202,8 +203,6 @@ export function WelcomeScreen({ connections, connect, canManage, onNewConnection
           <span className={cn(styles.markRing, 'h-[152px] w-[152px] opacity-30')} />
           <span className={styles.mark}>ML</span>
         </div>
-        <h1 className={styles.title}>MongoLive</h1>
-        <p className={styles.subtitle}>{canManage ? 'Pick a connection to start exploring' : 'Open the demo — the data lives in your browser'}</p>
 
         {notice && (
           <div className={styles.notice} role="status">
@@ -259,7 +258,7 @@ export function WelcomeScreen({ connections, connect, canManage, onNewConnection
           {connect.failure && (
             <div className={styles.failure} role="alert">
               <AlertTriangle size={15} className="mt-px shrink-0" />
-              <span className="min-w-0 break-words">
+              <span className="min-w-0 flex-1 break-words">
                 Couldn&apos;t connect to <strong>{failed ? connectionLabel(failed) : 'that connection'}</strong> — {connect.failure.message}
                 {failed && canManage && (
                   <>
@@ -270,6 +269,9 @@ export function WelcomeScreen({ connections, connect, canManage, onNewConnection
                   </>
                 )}
               </span>
+              <button type="button" className={styles.failureClose} onClick={connect.clearFailure} aria-label="Dismiss" data-tt="Dismiss">
+                <X size={14} />
+              </button>
             </div>
           )}
         </section>

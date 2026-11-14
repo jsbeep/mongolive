@@ -1,5 +1,5 @@
 // 저장된 연결 목록 — 처음 한 번 받고, 다른 탭·기기에서 추가·수정·삭제하면 소켓 알림('connections')으로 바뀐다.
-// 웰컴 화면, 사이드바의 Connections 패널, 상태 바(지금 연결 이름·색)가 같이 쓴다.
+// 웰컴 화면과 사이드바 연결 트리가 같이 쓴다.
 import { useCallback, useEffect, useState } from 'react';
 import type { ConnectionInfo } from '../types/explorer';
 import { api } from '../services/api';

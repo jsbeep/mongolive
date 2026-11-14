@@ -1,5 +1,5 @@
 // 연결 고르기 — 먼저 접속해 보고(test) 되면 이 탭의 연결로 정한다. 안 되면 그 자리에 이유를 보여 준다
-// (바로 넘어가면 닿지 않는 DB의 빈 화면만 보게 된다). 웰컴 화면과 사이드바의 Connections 패널이 같이 쓴다.
+// (바로 넘어가면 닿지 않는 DB의 빈 화면만 보게 된다). 웰컴 화면과 사이드바 연결 트리가 같이 쓴다.
 import { useCallback, useState } from 'react';
 import { api } from '../../services/api';
 import { setActiveConnection } from '../../services/activeConnection';

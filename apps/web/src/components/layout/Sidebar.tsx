@@ -42,7 +42,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
 }
 
-export type SidebarPanelKind = 'connections' | 'history' | 'references' | 'bookmarks' | 'aggregation';
+export type SidebarPanelKind = 'history' | 'references' | 'bookmarks' | 'aggregation';
 
 type TreeProps = Omit<SidebarProps, 'sidebar'>;
 
