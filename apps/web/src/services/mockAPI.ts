@@ -55,7 +55,18 @@ import {
   emitDatabaseSnapshot,
 } from './mockEventBus';
 import { generateObjectId } from '../utils/objectId';
-import { validatePipeline, validateQueryFilter, type AggregateCounts, type AggregateResult, type EjsonObject } from '@mongolive/shared';
+import {
+  compactCollectionMeta,
+  normalizeCollectionMetadata,
+  splitCollectionKey,
+  validatePipeline,
+  validateQueryFilter,
+  type AggregateCounts,
+  type AggregateResult,
+  type CollectionMetadata,
+  type EjsonObject,
+  type MetadataImportResult,
+} from '@mongolive/shared';
 
 // 사용자 쿼리(MongoDB filter)·집계는 mingo로 흉내 낸다(services/mockMongo) — 처음 쓸 때 따로 받아 온다(첫 화면을 가볍게)
 const loadEngine = () => import('./mockMongo');
@@ -758,6 +769,45 @@ export const exportCollection = async (database: string, collection: string): Pr
   }
   const { updatedAt: _updatedAt, ...exported } = record;
   return exported;
+};
+
+// 메타데이터 내보내기 — Mock은 선언을 컬렉션 기록 안에 둔다
+export const getCollectionMetadata = async (): Promise<CollectionMetadata> => {
+  const result: CollectionMetadata = {};
+  for (const [dbName, database] of Object.entries(getSnapshot().databases)) {
+    for (const [collName, record] of Object.entries(database.collections)) {
+      const meta = compactCollectionMeta({ titleKey: record.titleKey, primaryKey: record.primaryKey, referenceFields: record.referenceFields });
+      if (meta) result[collectionKey(dbName, collName)] = meta;
+    }
+  }
+  return result;
+};
+
+// 메타데이터 가져오기 — 합치기, 없는 컬렉션은 건너뛴다(서버 POST /api/meta/collections와 같은 규칙)
+export const importCollectionMetadata = async (raw: CollectionMetadata): Promise<MetadataImportResult> => {
+  const snapshot = getSnapshot();
+  const applied: string[] = [];
+  const skipped: string[] = [];
+  for (const [key, meta] of Object.entries(normalizeCollectionMetadata(raw))) {
+    const [dbName, collName] = splitCollectionKey(key) ?? ['', ''];
+    const record = snapshot.databases[dbName]?.collections[collName];
+    if (!record) {
+      skipped.push(key);
+      continue;
+    }
+    record.titleKey = meta.titleKey;
+    record.primaryKey = meta.primaryKey;
+    record.referenceFields = meta.referenceFields ? structuredClone(meta.referenceFields) : undefined;
+    applied.push(key);
+  }
+  if (applied.length > 0) {
+    setSnapshot(snapshot);
+    for (const key of applied) {
+      const [dbName, collName] = splitCollectionKey(key) ?? ['', ''];
+      emitCollectionReplace(dbName, collName, snapshot.databases[dbName].collections[collName].documents);
+    }
+  }
+  return { applied, skipped };
 };
 
 // ── 내부 전용: Mock 데이터 소스의 undo가 쓴다 (계약에는 없음) ─────────────────

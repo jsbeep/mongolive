@@ -4,8 +4,12 @@
 //            연결마다 따로 두는 것(북마크·필터 기억)은 모든 연결의 것을 넣는다 — "mongolive.bookmarks@<연결 id>".
 //            연결을 나누기 전에 만든 백업 파일의 값은 기본 연결(.env / 데모)의 것으로 가져온다.
 //   server : 서버 Safety 설정(read-only·보호 대상) — 모든 브라우저에 영향을 주므로 가져올 때 따로 골라야 적용된다
+//   meta   : 내보낼 때 연결돼 있던 연결의 컬렉션 메타데이터(제목 필드·PK·FK 선언, shared/metadata).
+//            가져올 때 고르면 '지금 연결'에 합친다 — 같은 스키마의 다른 클러스터로 선언만 옮길 때.
+//            '내가 만든 oid' 목록은 그 클러스터의 문서에 묶인 정보라 넣지 않는다.
 // 보안 설정(.env)·비밀번호는 넣지 않는다(화면에서 바꿀 수 없는 것이므로).
-import { normalizeServerSettings, type ServerSettings } from '../types/explorer';
+import { normalizeCollectionMetadata, normalizeServerSettings, splitCollectionKey, type CollectionMetadata, type ServerSettings } from '../types/explorer';
+import { api } from './api';
 import { saveServerSettings } from './serverSettings';
 import { connectionIdOfKey, LEGACY_CONNECTION_ID, scopedKey } from './connectionStorage';
 
@@ -37,9 +41,11 @@ export interface SettingsBackup {
   // 키 → localStorage 값 그대로
   local: Record<string, string>;
   server?: ServerSettings;
+  // 키: "db.collection". 예전 백업·고르지 않고 내보낸 백업엔 없다
+  meta?: CollectionMetadata;
 }
 
-export const buildBackup = (server: ServerSettings | null): SettingsBackup => {
+export const buildBackup = (server: ServerSettings | null, meta: CollectionMetadata | null = null): SettingsBackup => {
   const local: SettingsBackup['local'] = {};
   try {
     for (let i = 0; i < localStorage.length; i++) {
@@ -51,7 +57,14 @@ export const buildBackup = (server: ServerSettings | null): SettingsBackup => {
   } catch {
     // 못 읽으면 빼고 간다
   }
-  return { app: 'mongolive', version: 1, exportedAt: new Date().toISOString(), local, ...(server ? { server } : {}) };
+  return {
+    app: 'mongolive',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    local,
+    ...(server ? { server } : {}),
+    ...(meta ? { meta } : {}),
+  };
 };
 
 export const downloadBackup = (backup: SettingsBackup) => {
@@ -80,18 +93,37 @@ export const parseBackup = (text: string): SettingsBackup => {
     const target = backupKey(key);
     if (target && typeof value === 'string') local[target] = value;
   }
+  const meta = obj.meta !== undefined ? normalizeCollectionMetadata(obj.meta) : null;
   return {
     app: 'mongolive',
     version: 1,
     exportedAt: typeof obj.exportedAt === 'string' ? obj.exportedAt : '',
     local,
     ...(obj.server !== undefined ? { server: normalizeServerSettings(obj.server) } : {}),
+    ...(meta && Object.keys(meta).length > 0 ? { meta } : {}),
   };
 };
 
+// 가져오기 전에 보여 줄 것 — 파일의 메타데이터 중 지금 연결에 없는 컬렉션(가져오면 건너뛴다)
+export const missingCollections = async (meta: CollectionMetadata): Promise<string[]> => {
+  const byDb = new Map<string, string[]>();
+  for (const key of Object.keys(meta)) {
+    const [db] = splitCollectionKey(key) ?? [''];
+    byDb.set(db, [...(byDb.get(db) ?? []), key]);
+  }
+  const existing = new Set((await api.listDatabases()).map((d) => d.name));
+  const missing: string[] = [];
+  for (const [db, keys] of byDb) {
+    const names = existing.has(db) ? new Set((await api.getCollections(db).catch(() => [])).map((c) => c.name)) : new Set<string>();
+    for (const key of keys) if (!names.has(splitCollectionKey(key)?.[1] ?? '')) missing.push(key);
+  }
+  return missing;
+};
+
 // 적용 후 새로고침 — 사이드바 배치 등은 켜질 때 한 번 읽으므로, 다시 불러오는 게 가장 확실하다
-export const applyBackup = async (backup: SettingsBackup, withServer: boolean): Promise<void> => {
-  if (withServer && backup.server) await saveServerSettings(backup.server);
+export const applyBackup = async (backup: SettingsBackup, apply: { server: boolean; meta: boolean }): Promise<void> => {
+  if (apply.server && backup.server) await saveServerSettings(backup.server);
+  if (apply.meta && backup.meta) await api.importCollectionMetadata(backup.meta);
   for (const [key, value] of Object.entries(backup.local)) {
     try {
       localStorage.setItem(key, value);

@@ -5,14 +5,10 @@
 //   예전 형식(v1, 연결 구분 없음)은 읽을 때 .env 연결(ENV_CONNECTION_ID)의 것으로 옮긴다 — 다음에 쓸 때 v2로 저장된다.
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { collectionKey, ENV_CONNECTION_ID, type ReferenceFieldConfig } from '@mongolive/shared';
+import { collectionKey, compactCollectionMeta, ENV_CONNECTION_ID, type CollectionMeta, type CollectionMetadata } from '@mongolive/shared';
 import { config } from './config';
 
-export interface CollectionMeta {
-  titleKey?: string;
-  primaryKey?: string;
-  referenceFields?: Record<string, ReferenceFieldConfig>;
-}
+export type { CollectionMeta };
 
 export interface ConnectionMeta {
   // 키: "db.collection" (collectionKey)
@@ -92,13 +88,7 @@ const slot = async (connectionId: string): Promise<{ data: MetaFile; meta: Conne
 };
 
 // 빈 값(undefined, 빈 객체)은 지워서 파일을 깔끔하게 유지
-const compact = (meta: CollectionMeta): CollectionMeta | undefined => {
-  const out: CollectionMeta = {};
-  if (meta.titleKey) out.titleKey = meta.titleKey;
-  if (meta.primaryKey) out.primaryKey = meta.primaryKey;
-  if (meta.referenceFields && Object.keys(meta.referenceFields).length > 0) out.referenceFields = meta.referenceFields;
-  return Object.keys(out).length > 0 ? out : undefined;
-};
+const compact = compactCollectionMeta;
 
 export const getCollectionMeta = async (connectionId: string, database: string, collection: string): Promise<CollectionMeta> =>
   (await peek(connectionId)).collections[collectionKey(database, collection)] ?? {};
@@ -114,6 +104,22 @@ export const updateCollectionMeta = async (
   const next = compact(update({ ...meta.collections[key] }));
   if (next) meta.collections[key] = next;
   else delete meta.collections[key];
+  await persist(data);
+};
+
+// 내보내기(설정 › Data 백업) — 이 연결의 컬렉션 메타 전부(복사본)
+export const listCollectionMeta = async (connectionId: string): Promise<CollectionMetadata> =>
+  structuredClone((await peek(connectionId)).collections);
+
+// 가져오기 — 합치기: 받은 컬렉션은 그 선언으로 바꾸고 나머지는 그대로. 한 번에 저장한다.
+// entries는 normalizeCollectionMetadata를 거친 것, 컬렉션이 있는지는 부르는 쪽이 확인한다.
+export const importCollectionMeta = async (connectionId: string, entries: CollectionMetadata): Promise<void> => {
+  const { data, meta } = await slot(connectionId);
+  for (const [key, value] of Object.entries(entries)) {
+    const next = compact(structuredClone(value));
+    if (next) meta.collections[key] = next;
+    else delete meta.collections[key];
+  }
   await persist(data);
 };
 

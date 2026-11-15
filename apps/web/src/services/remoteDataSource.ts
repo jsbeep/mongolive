@@ -29,6 +29,8 @@ import type {
   ConnectionInfo,
   ConnectionTestRequest,
   ConnectionTestResult,
+  CollectionMetadata,
+  MetadataImportResult,
 } from '../types/explorer';
 import { mutationTarget } from '../types/explorer';
 import { fetchAuthStatus, notifySessionExpired } from './auth';
@@ -405,5 +407,9 @@ export const createRemoteDataSource = (): DataSource => {
     async setOwnedOid(oid, owned) {
       await request<void>(`/meta/owned-oids/${enc(oid)}`, { method: owned ? 'PUT' : 'DELETE' });
     },
+
+    getCollectionMetadata: () => request<CollectionMetadata>('/meta/collections'),
+    importCollectionMetadata: (collections) =>
+      request<MetadataImportResult>('/meta/collections', { method: 'POST', body: JSON.stringify({ collections }) }),
   };
 };

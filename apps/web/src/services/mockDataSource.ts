@@ -132,5 +132,8 @@ export const createMockDataSource = (): DataSource => {
       else current.delete(oid);
       setUniqueOids([...current]);
     },
+
+    getCollectionMetadata: () => mock.getCollectionMetadata(),
+    importCollectionMetadata: (collections) => mock.importCollectionMetadata(collections),
   };
 };

@@ -3,13 +3,24 @@
 //   GET    /api/meta/owned-oids
 //   PUT    /api/meta/owned-oids/:oid    (내가 만든 oid로 표시)
 //   DELETE /api/meta/owned-oids/:oid
+//   GET    /api/meta/collections        (이 연결의 컬렉션 메타 — 설정 › Data 백업 내보내기)
+//   POST   /api/meta/collections        { collections } (가져오기 — 합치기, 없는 컬렉션은 건너뜀)
 // 메타데이터 연산(titleKey/PK/FK)은 meta.json에만 쓰고 MongoDB는 건드리지 않는다.
 // 문서 쓰기는 writes/documents.ts(6-1), 컬렉션/DB 쓰기는 writes/structure.ts(6-2).
 import { Router } from 'express';
-import { collectionKey, writeBlockedReason, type MutationRequest, type MutationResult } from '@mongolive/shared';
+import {
+  collectionKey,
+  normalizeCollectionMetadata,
+  splitCollectionKey,
+  writeBlockedReason,
+  type CollectionMetadata,
+  type MetadataImportResult,
+  type MutationRequest,
+  type MutationResult,
+} from '@mongolive/shared';
 import { connectionIdOf, connOf, type MongoConn } from '../db';
-import { listOwnedOids, setOwnedOid, updateCollectionMeta } from '../meta';
-import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
+import { importCollectionMeta, listCollectionMeta, listOwnedOids, setOwnedOid, updateCollectionMeta } from '../meta';
+import { checkCollectionName, checkDatabaseName, HttpError, isHiddenCollection } from '../names';
 import { DOCUMENT_OPS, runDocumentOp } from '../writes/documents';
 import { runStructureOp, STRUCTURE_OPS } from '../writes/structure';
 import { getServerSettings } from '../settings';
@@ -122,4 +133,42 @@ mutateRouter.put('/meta/owned-oids/:oid', async (req, res) => {
 mutateRouter.delete('/meta/owned-oids/:oid', async (req, res) => {
   await setOwnedOid(connectionIdOf(res), checkOid(req.params.oid), false);
   res.status(204).end();
+});
+
+mutateRouter.get('/meta/collections', async (_req, res) => {
+  res.json(await listCollectionMeta(connectionIdOf(res)));
+});
+
+// 메타데이터 연산이라 Safety(read-only·보호 대상)에 막히지 않는다 — 선언 연산과 같은 규칙(shared/safety)
+mutateRouter.post('/meta/collections', async (req, res) => {
+  const body = req.body as { collections?: unknown } | undefined;
+  if (!body || typeof body !== 'object' || !body.collections || typeof body.collections !== 'object') {
+    throw new HttpError(400, 'collections가 필요합니다');
+  }
+  const entries = normalizeCollectionMetadata(body.collections);
+  const conn = await connOf(res);
+  // DB마다 컬렉션 목록을 한 번씩 받아, 지금 연결에 있는 컬렉션에만 적용한다
+  const namesByDb = new Map<string, Set<string>>();
+  const applied: CollectionMetadata = {};
+  const skipped: string[] = [];
+  for (const [key, meta] of Object.entries(entries)) {
+    const [database, collection] = splitCollectionKey(key) ?? ['', ''];
+    let names = namesByDb.get(database);
+    if (!names) {
+      names = new Set();
+      try {
+        const list = await conn.client.db(checkDatabaseName(database)).listCollections({}, { nameOnly: true }).toArray();
+        for (const c of list) if (!isHiddenCollection(c.name)) names.add(c.name);
+      } catch (e) {
+        // 이름이 틀렸거나 숨긴 DB면 그 DB 것은 전부 건너뛴다
+        if (!(e instanceof HttpError)) throw e;
+      }
+      namesByDb.set(database, names);
+    }
+    if (names.has(collection)) applied[key] = meta;
+    else skipped.push(key);
+  }
+  if (Object.keys(applied).length > 0) await importCollectionMeta(conn.id, applied);
+  const result: MetadataImportResult = { applied: Object.keys(applied), skipped };
+  res.json(result);
 });

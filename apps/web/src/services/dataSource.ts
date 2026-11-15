@@ -28,6 +28,8 @@ import type {
   ConnectionInput,
   ConnectionTestRequest,
   ConnectionTestResult,
+  CollectionMetadata,
+  MetadataImportResult,
 } from '../types/explorer';
 
 export type ClientMetrics = ServerMetrics & { rttMs: number | null };
@@ -105,4 +107,9 @@ export interface DataSource {
   // ── 메타데이터: 이 앱이 직접 만든 '고유 oid' (참조가 아닌 식별자 값) ──
   listOwnedOids(): Promise<string[]>;
   setOwnedOid(oid: string, owned: boolean): Promise<void>;
+
+  // ── 메타데이터 내보내기/가져오기(설정 › Data 백업) — 지금 연결의 제목 필드·PK·FK 선언 ──
+  // 가져오기는 합치기: 받은 컬렉션만 바꾸고, 지금 연결에 없는 컬렉션은 건너뛴다(shared/metadata)
+  getCollectionMetadata(): Promise<CollectionMetadata>;
+  importCollectionMetadata(collections: CollectionMetadata): Promise<MetadataImportResult>;
 }

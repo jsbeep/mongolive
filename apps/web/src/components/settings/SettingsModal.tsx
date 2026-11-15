@@ -15,7 +15,7 @@ import { useActiveConnection } from '../../services/activeConnection';
 import { sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type Theme, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type StandaloneRefresh, type UndoDepth } from '../../services/preferences';
 import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../utils/motionPresets';
 import { saveServerSettings, useServerSettings } from '../../services/serverSettings';
-import { applyBackup, buildBackup, downloadBackup, parseBackup, type SettingsBackup } from '../../services/settingsBackup';
+import { applyBackup, buildBackup, downloadBackup, missingCollections, parseBackup, type SettingsBackup } from '../../services/settingsBackup';
 import { buildForumEjsonSample, buildForumJsonSample, FORUM_EJSON_DATABASE_NAME, FORUM_JSON_DATABASE_NAME } from '../../data/sampleData';
 import { formatDate, formatOid, offsetLabel } from '../../utils/formatValue';
 import { cn } from '../../utils/cn';
@@ -518,24 +518,49 @@ const SAMPLES = [
   { kind: 'json' as const, name: FORUM_JSON_DATABASE_NAME, label: 'JSON sample', hint: 'Firebase / HN API style — plain ids, references declared as links', build: buildForumJsonSample },
 ];
 
-// 설정 내보내기/가져오기 — 이 브라우저 설정 + (고르면) 서버 Safety 설정. services/settingsBackup
+// 설정 내보내기/가져오기 — 이 브라우저 설정 + (고르면) 서버 Safety 설정 + (고르면) 이 연결의 메타데이터. services/settingsBackup
 function SettingsBackupGroup() {
   const server = useServerSettings();
   const prefs = usePreferences();
   const [withServer, setWithServer] = useState(true);
+  const [withMeta, setWithMeta] = useState(true);
   const [pending, setPending] = useState<SettingsBackup | null>(null);
   const [applyServer, setApplyServer] = useState(false);
+  const [applyMeta, setApplyMeta] = useState(false);
+  // 파일의 메타데이터 중 지금 연결에 없는 컬렉션(가져오면 건너뛴다). null = 아직 모름
+  const [missing, setMissing] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // 파일을 연달아 고르면 앞 파일의 '없는 컬렉션' 결과가 늦게 와서 덮지 않게
+  const fileSeqRef = useRef(0);
+
+  const onExport = async () => {
+    setError(null);
+    try {
+      const meta = withMeta ? await api.getCollectionMetadata() : null;
+      downloadBackup(buildBackup(withServer ? server : null, meta && Object.keys(meta).length > 0 ? meta : null));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not export');
+    }
+  };
 
   const onFile = async (file: File | undefined) => {
     setError(null);
     setPending(null);
+    setMissing(null);
     if (!file) return;
+    const seq = ++fileSeqRef.current;
     try {
-      setPending(parseBackup(await file.text()));
+      const parsed = parseBackup(await file.text());
+      setPending(parsed);
       setApplyServer(false);
+      setApplyMeta(false);
+      if (parsed.meta) {
+        missingCollections(parsed.meta)
+          .then((m) => { if (fileSeqRef.current === seq) setMissing(m); })
+          .catch(() => undefined);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not read the file');
     } finally {
@@ -544,21 +569,28 @@ function SettingsBackupGroup() {
   };
 
   const localCount = pending ? Object.keys(pending.local).length : 0;
+  const metaCount = pending?.meta ? Object.keys(pending.meta).length : 0;
   return (
     <div className={styles.group}>
       <p className={styles.groupTitle}>Settings backup</p>
       <p className={styles.groupHint}>
-        Move your settings to another browser or keep a copy: display, safety, realtime, animations and font, sidebar layout, change-log filters and per-collection filters. Security settings (.env) and the password are never included.
+        Move your settings to another browser or keep a copy: display, safety, realtime, animations and font, sidebar layout, change-log filters and per-collection filters — and, if you like, this connection's title fields and primary/foreign keys. Security settings (.env) and the password are never included.
       </p>
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" className={styles.btn} onClick={() => downloadBackup(buildBackup(withServer ? server : null))}>
+        <button type="button" className={styles.btn} onClick={() => void onExport()}>
           <Download size={13} />
           Export…
         </button>
-        <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600">
-          <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600" checked={withServer} onChange={(e) => setWithServer(e.target.checked)} />
-          Include the server's Safety settings (read-only, protected)
-        </label>
+        <div className="flex flex-col gap-1.5">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+            <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600" checked={withServer} onChange={(e) => setWithServer(e.target.checked)} />
+            Include the server's Safety settings (read-only, protected)
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+            <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600" checked={withMeta} onChange={(e) => setWithMeta(e.target.checked)} />
+            Include this connection's metadata (title fields, primary/foreign keys)
+          </label>
+        </div>
       </div>
       <div className="mt-3">
         <button type="button" className={styles.btn} onClick={() => fileRef.current?.click()}>
@@ -582,6 +614,21 @@ function SettingsBackupGroup() {
               </span>
             </label>
           )}
+          {pending.meta && (
+            <label className="mt-2 flex cursor-pointer items-start gap-2">
+              <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-amber-600" checked={applyMeta} onChange={(e) => setApplyMeta(e.target.checked)} />
+              <span>
+                Also apply metadata to this connection — title fields and primary/foreign keys for {metaCount} collection{metaCount === 1 ? '' : 's'}. Their current declarations are replaced; other collections keep theirs.
+                {missing && missing.length > 0 && (
+                  <span className="text-slate-500">
+                    {' '}{missing.length} {missing.length === 1 ? "isn't" : "aren't"} in this connection and will be skipped:{' '}
+                    <span className="font-mono">{missing.slice(0, 3).join(', ')}{missing.length > 3 ? ', …' : ''}</span>.
+                  </span>
+                )}
+                {dataSourceKind === 'remote' && <span className="text-amber-700"> This changes it for every browser using this connection.</span>}
+              </span>
+            </label>
+          )}
           <div className="mt-3 flex gap-2">
             <button
               type="button"
@@ -591,7 +638,7 @@ function SettingsBackupGroup() {
                 setBusy(true);
                 setError(null);
                 try {
-                  await applyBackup(pending, applyServer);
+                  await applyBackup(pending, { server: applyServer, meta: applyMeta });
                 } catch (e) {
                   setError(e instanceof Error ? e.message : 'Could not apply');
                   setBusy(false);
