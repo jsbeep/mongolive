@@ -60,6 +60,41 @@ const isInvalidJson = (text: string): boolean => {
   try { JSON.parse(text); return false; } catch { return true; }
 };
 
+// Object/Array 입력칸 검사 — JSON이어야 하고 고른 타입과 모양이 맞아야 한다(비어 있으면 통과).
+// 예전엔 JSON이기만 하면 통과해서, Array를 골라도 "5"를 그대로 두면 숫자로 저장됐다.
+const jsonShapeError = (type: 'Object' | 'Array', text: string): string | null => {
+  if (text.trim() === '') return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return 'Invalid JSON.'; }
+  if (type === 'Array') return Array.isArray(parsed) ? null : 'Must be a JSON array — [ … ]';
+  return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? null : 'Must be a JSON object — { … }';
+};
+
+// 편집을 열 때 입력칸에 넣을 글자 — 일반 타입은 보이는 그대로, 컨테이너·해석 안 되는 BSON 타입은
+// Canonical JSON 그대로(손실 없이 왕복된다)
+const rawTextOf = (value: JsonValue | undefined): string => {
+  if (value === undefined) return '';
+  switch (valueKind(value)) {
+    case 'boolean':
+    case 'string':
+    case 'int32':
+    case 'double':
+    case 'long':
+    case 'decimal128':
+      return displayValue(value);
+    default:
+      return JSON.stringify(value, null, 2);
+  }
+};
+
+// 값 하나를 배열로 감싼 입력 글자 — 일반 타입을 Array로 바꿀 때 기존 값을 잃지 않게.
+// 읽기 쉬운 Relaxed로 쓰되, 다시 읽었을 때 타입이 달라지면(예: Double 5.0 → Int32) Canonical로 둔다.
+const wrappedArrayText = (value: JsonValue): string => {
+  const relaxed = toRelaxed(value);
+  const lossless = JSON.stringify(toCanonical(relaxed)) === JSON.stringify(value);
+  return JSON.stringify([lossless ? relaxed : value], null, 2);
+};
+
 // String 값 편집 textarea: 내용에 맞춰 1줄에서 최대 4줄까지 자라고 그 이상은 스크롤.
 // 4줄 높이는 실제 computed lineHeight + 세로 패딩으로 계산해 폰트/패딩 변화에 강건하게.
 const MAX_STRING_EDITOR_LINES = 4;
@@ -193,21 +228,7 @@ export function InlineSegmentEditor({
   const [typeAccordionOpen, setTypeAccordionOpen] = useState(false);
   // 편집 전 값의 정확한 BSON 타입 — 숫자를 고쳐도 원래 타입(Int32/Double)을 유지하는 데 쓴다
   const initialKind = initialValue === undefined ? undefined : valueKind(initialValue);
-  const [rawValue, setRawValue] = useState(() => {
-    if (initialValue === undefined) return '';
-    switch (initialKind) {
-      case 'boolean':
-      case 'string':
-      case 'int32':
-      case 'double':
-      case 'long':
-      case 'decimal128':
-        return displayValue(initialValue);
-      default:
-        // 컨테이너/해석 안 되는 BSON 타입은 Canonical 그대로 보여준다 — 손실 없이 왕복된다
-        return JSON.stringify(initialValue, null, 2);
-    }
-  });
+  const [rawValue, setRawValue] = useState(() => rawTextOf(initialValue));
   const [boolValue, setBoolValue] = useState(
     typeof initialValue === 'boolean' ? initialValue : false,
   );
@@ -327,7 +348,8 @@ export function InlineSegmentEditor({
     siblingKeys.includes(keyValue.trim());
 
   const isObjectOrArray = selectedType === 'Object' || selectedType === 'Array';
-  const isContainerEditMode = mode === 'edit' && isObjectOrArray;
+  // 원래 Object/Array이던 값을 같은 타입 그대로 고치는 중 — 이때만 '입력을 비우면 그대로 두기'
+  const keepsOriginalContainer = mode === 'edit' && isObjectOrArray && selectedType === initialType;
 
   // collection/document 레벨은 key+label만 있음
   const isSimpleLevel = level === 'collection' || level === 'document';
@@ -340,8 +362,8 @@ export function InlineSegmentEditor({
   // field는 추가(add) 모드에서만 (드롭한 파일을 새 필드 값으로 쓸 수 있게)
   const canImport = isSimpleLevel || (level === 'field' && mode === 'add');
 
-  // container(object/array) 수정 모드에서 raw JSON 붙여넣기 검증 — 비어있으면 기존 값 유지로 간주
-  const containerJsonError = isContainerEditMode && rawValue.trim() !== '' && isInvalidJson(rawValue);
+  // Object/Array 입력 검증(추가·수정 모두) — 비어 있으면 통과(수정: 기존 값 유지 / 그 밖: 빈 {}·[])
+  const containerJsonError = isObjectOrArray ? jsonShapeError(selectedType, rawValue) : null;
 
   // Import 미리보기 textarea의 JSON 유효성 — 비어있으면 import 없이 그냥 제출
   const importJsonError = isImportOpen && importText.trim() !== '' && isInvalidJson(importText);
@@ -403,7 +425,10 @@ export function InlineSegmentEditor({
   // 타입 선택기의 Object 텍스트영역(rawValue)으로 바로 채워서 같은 값 입력 UI를 재사용한다
   const applyImportedText = (text: string, fallbackName?: string) => {
     if (level === 'field') {
-      setSelectedType('Object');
+      // 배열 JSON이면 Array로 — Object로 두면 모양 검사에 걸린다
+      let isArrayJson = false;
+      try { isArrayJson = Array.isArray(JSON.parse(text)); } catch { /* 깨진 JSON은 Object 칸에서 에러로 보인다 */ }
+      setSelectedType(isArrayJson ? 'Array' : 'Object');
       setRawValue(text);
       syncKeyFromImportText(text, fallbackName);
       return;
@@ -506,6 +531,39 @@ export function InlineSegmentEditor({
     return rawValue;
   };
 
+  // ── 타입 바꾸기 ──────────────────────────────────────────────────────────────
+  // 일반 타입끼리는 입력 글자를 그대로 넘긴다(String "5" → Number 5). Object/Array로 넘나들 때만 입력칸을
+  // 새로 채운다 — 예전엔 "hello"가 남아 저장이 막히거나, "5"가 그대로 숫자로 저장됐다.
+  //   · 원래 타입으로 돌아오면 원래 값
+  //   · Array로: 지금 값을 [값]으로 감싼다(입력이 비었거나 깨졌으면 빈 칸)
+  //   · Object로: {}
+  //   · Object/Array에서 일반 타입으로: String은 JSON 글자를 그대로(문자열로 저장), 그 밖은 빈 칸
+  const changeType = (next: FieldType) => {
+    if (next === selectedType) return;
+    const toJson = next === 'Object' || next === 'Array';
+    if (toJson || isObjectOrArray) {
+      if (next === initialType && initialValue !== undefined) {
+        setRawValue(rawTextOf(initialValue));
+      } else if (next === 'Array') {
+        const current = (() => {
+          if (isObjectOrArray) {
+            if (rawValue.trim() === '' || containerJsonError) return undefined;
+            return toCanonical(JSON.parse(rawValue));
+          }
+          if (decimalError || longError) return undefined;
+          if ((selectedType === 'String' || selectedType === 'Number') && rawValue.trim() === '') return undefined;
+          return parseValue();
+        })();
+        setRawValue(current === undefined ? '' : wrappedArrayText(current));
+      } else if (next === 'Object') {
+        setRawValue('{}');
+      } else if (next !== 'String') {
+        setRawValue('');
+      }
+    }
+    setSelectedType(next);
+  };
+
   // ── 제출 ─────────────────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
@@ -518,8 +576,9 @@ export function InlineSegmentEditor({
         type: isSimpleLevel ? undefined : selectedType,
         value: isSimpleLevel
           ? undefined
-          : isContainerEditMode
-            ? (rawValue.trim() !== '' ? toCanonical(JSON.parse(rawValue)) : undefined)
+          // 원래 Object/Array를 같은 타입으로 두고 입력을 비웠으면 undefined = 기존 값 유지
+          : keepsOriginalContainer && rawValue.trim() === ''
+            ? undefined
             : parseValue(),
         objectIdMode: selectedType === 'ObjectID' ? objectIdMode : undefined,
         importedJson: isSimpleLevel && mode === 'add' && importText.trim() !== '' && !importJsonError
@@ -740,7 +799,7 @@ export function InlineSegmentEditor({
                         key={t}
                         type="button"
                         className={cn(styles.typeTab, selectedType === t && styles.typeTabActive)}
-                        onClick={() => setSelectedType(t)}
+                        onClick={() => changeType(t)}
                       >
                         {TYPE_META[t].icon}
                         <span>{t}</span>
@@ -777,13 +836,16 @@ export function InlineSegmentEditor({
                 <span className="text-xs text-slate-400 italic">Value is null</span>
               </div>
             ) : selectedType === 'Object' || selectedType === 'Array' ? (
-              <textarea
-                className={styles.textarea}
-                rows={4}
-                placeholder={selectedType === 'Object' ? '{ "key": "value" }' : '[ "item1", "item2" ]'}
-                value={rawValue}
-                onChange={(e) => setRawValue(e.target.value)}
-              />
+              <div className="flex flex-col gap-1">
+                <textarea
+                  className={cn(styles.textarea, containerJsonError && styles.inputError)}
+                  rows={4}
+                  placeholder={selectedType === 'Object' ? '{ "key": "value" }' : '[ "item1", "item2" ]'}
+                  value={rawValue}
+                  onChange={(e) => setRawValue(e.target.value)}
+                />
+                {containerJsonError && <p className={styles.errorMsg}>{containerJsonError}</p>}
+              </div>
             ) : selectedType === 'ObjectID' ? (
               <div className="flex flex-col gap-1.5">
                 {currentRefInfo && (
