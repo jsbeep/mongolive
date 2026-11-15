@@ -28,7 +28,7 @@
 [demo.mp4](https://github.com/user-attachments/assets/ef931da9-9cf5-483c-8684-c254a1ba115c)
 
 - Try it with sample data saved in your browser's localStorage
-- Not in the demo: realtime updates, change history, login
+- Not in the demo: realtime updates, change history, login, adding connections
 - Queries and aggregation in the demo run on [[mingo](https://github.com/kofrasa/mingo)] and may differ slightly from real MongoDB
 
 ## Previous projects
@@ -64,6 +64,8 @@
 ### References
 - Automatic ObjectId reference tracking
 - String and number references (e.g. `authorId` → `users.id`) followed once declared as PK/FK
+- Reference cycles jump back to the earlier column
+- Pick the match yourself when an FK value matches more than one document
 
 https://github.com/user-attachments/assets/918f102d-6519-4949-b653-bb587b5ea0ef
 
@@ -115,6 +117,13 @@ https://github.com/user-attachments/assets/918f102d-6519-4949-b653-bb587b5ea0ef
 
 [Realtime — external changes reflected / edit conflict detection](https://github.com/user-attachments/assets/34b95a21-75f0-4a48-a471-6eca4e308fcd)
 
+### Connections
+- Add, edit and delete connections in the app — connection string (URI), name, color, favorite, connection test
+- A different connection per tab — a new tab starts on the welcome screen (1–9, Enter = last used)
+- Bookmarks, query history, pipelines and PK/FK declarations are kept per connection
+- Standalone databases (not a replica set) → periodic refresh (every 1 minute by default, Settings › Realtime), `R` to refresh now
+- Connection strings live only on the server in `~/.mongolive/connections.json` (mode 600); the browser only sees them with the password masked
+
 ### Safety
 - Read-only mode / protected DBs·collections / confirm before deleting
 - Exploration that never touches your data — app metadata such as reference declarations, title fields and settings is stored separately on the server in `~/.mongolive/`
@@ -122,7 +131,7 @@ https://github.com/user-attachments/assets/918f102d-6519-4949-b653-bb587b5ea0ef
 - HTTPS required — when exposed externally without HTTPS or a proxy setup, the server refuses to start
 
 ### Etc.
-- Dark theme (Nord), date and ObjectId display formats, monospace font choice, settings export/import
+- Dark theme (Nord), date and ObjectId display formats, monospace font choice, export/import of settings and connection metadata
 
 | Light | Dark |
 |---|---|
@@ -130,8 +139,8 @@ https://github.com/user-attachments/assets/918f102d-6519-4949-b653-bb587b5ea0ef
 
 ## Getting started
 ### 1. Install MongoDB
-### 2. Create a replica set
-for changestream
+### 2. Create a replica set (recommended)
+for changestream — a standalone database works too, with periodic refresh instead of realtime updates
 
 [🔗 Deploy a replica set (MongoDB docs)](https://www.mongodb.com/docs/manual/tutorial/deploy-replica-set/)
 ### 3. Node.js 22.9 or later
@@ -141,7 +150,7 @@ git clone https://github.com/jsbeep/mongolive.git
 cd mongolive
 corepack pnpm install
 
-cp apps/server/.env.example apps/server/.env   # fill in MONGODB_URI
+cp apps/server/.env.example apps/server/.env   # MONGODB_URI is optional — leave it empty to add connections in the app
 ```
 ### 5. Set a password and run
 ```bash
@@ -165,13 +174,13 @@ Full reference: [`.env.example`](apps/server/.env.example) (comments in Korean)
 
 | Name | Default | Description |
 |---|---|---|
-| `MONGODB_URI` | (required) | MongoDB connection string (replica set) |
+| `MONGODB_URI` | (optional) | Default connection — shown in the app as a read-only connection; leave empty to add connections in the app |
 | `HOST` / `PORT` | `127.0.0.1` / `4000` | Server address / port |
 | `AUTH_MODE` | `password` | Login method |
 | `TLS_CERT` / `TLS_KEY` | — | Required to serve HTTPS |
 | `TRUST_PROXY` | `false` | HTTPS through a proxy (Caddy, nginx, Tailscale, etc.) |
 | `ALLOW_INSECURE_HTTP` | `false` | Expose over plain HTTP (development only) |
-| `AUTH_FILE` / `META_FILE` / `SETTINGS_FILE` | `~/.mongolive/…` | Locations of the password hash, app metadata and safety settings files |
+| `AUTH_FILE` / `META_FILE` / `SETTINGS_FILE` / `CONNECTIONS_FILE` | `~/.mongolive/…` | Locations of the password hash, app metadata, safety settings and connection list files |
 
 ## Keyboard
 | Key | Action |
@@ -182,6 +191,8 @@ Full reference: [`.env.example`](apps/server/.env.example) (comments in Korean)
 | Delete | Delete |
 | / | Filter |
 | q | Query |
+| . | Type a path in the breadcrumb |
+| R | Refresh the screen (standalone databases) |
 | ? | Shortcut list |
 | Ctrl+K | Quick jump |
 | Ctrl+B | Collapse / expand the sidebar |
@@ -201,8 +212,10 @@ Browser ──REST /api (Canonical EJSON)──▶ Server ──▶ MongoDB
 #### Frontend (apps/web)
 - `DataSource` → UI — two implementations: the server one and an in-browser mock
 - Which one to use is set at build time with `VITE_DATA_SOURCE`; the demo is the mock + mingo
+- The tab's current connection lives in sessionStorage — it survives a reload, and a new tab starts on the welcome screen
 #### Backend (apps/server)
-- One changeStream watches the whole cluster; each client joins only the rooms of the DB·collection it's viewing and receives just those changes
+- One MongoClient per connection — every request names its connection in the `X-Mongolive-Connection` header; idle clients close after 10 minutes
+- One changeStream per connection watches the whole cluster; each client joins only the rooms of the DB·collection it's viewing and receives just those changes
 - Writes apply only "if the value I saw is still there" — they never overwrite a change made elsewhere first
 
 ## Built with

@@ -479,7 +479,7 @@ const SHORTCUTS: { title: string; rows: [keys: string[], what: string][] }[] = [
       [['e'], 'Edit the row (also F2; Enter on a field that has nothing to open)'],
       [['Delete'], 'Delete the row — asks first, per Safety'],
       [['/'], 'Filter this column (from the collection list: the documents)'],
-      [['q'], 'Query the open collection — MongoDB filter, server mode'],
+      [['q'], 'Query the open collection — MongoDB filter'],
       [['.'], 'Type a field path in the breadcrumb (.likes.0) — when a document is open'],
       [['Esc'], 'Hide the keyboard cursor'],
     ],

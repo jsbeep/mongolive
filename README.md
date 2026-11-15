@@ -28,7 +28,7 @@
 [demo.mp4](https://github.com/user-attachments/assets/ef931da9-9cf5-483c-8684-c254a1ba115c)
 
 - localStorage에 저장되는 샘플 데이터 시식
-- 데모에 없는 것: 실시간 반영, 변경 기록, 로그인
+- 데모에 없는 것: 실시간 반영, 변경 기록, 로그인, 연결 추가
 - 데모의 쿼리·집계[[mingo](https://github.com/kofrasa/mingo)]는 실제 MongoDB와 조금 다를 수 있음
 
 ## 이전 프로젝트
@@ -64,6 +64,8 @@
 ### 참조
 - ObjectId 자동 참조 추적
 - 문자열·숫자 참조(예: `authorId` → `users.id`) PK/FK 선언 추적
+- 순환 참조 시 이전 컬럼으로 복귀
+- FK 값 중복 시 직접 선택 
 
 https://github.com/user-attachments/assets/918f102d-6519-4949-b653-bb587b5ea0ef
 
@@ -115,6 +117,13 @@ https://github.com/user-attachments/assets/918f102d-6519-4949-b653-bb587b5ea0ef
 
 [실시간 — 문서 외부변경 반영/수정 충돌 감지](https://github.com/user-attachments/assets/34b95a21-75f0-4a48-a471-6eca4e308fcd)
 
+### 연결
+- 화면에서 연결 추가·수정·삭제 — 접속 주소(URI), 이름, 색, 즐겨찾기, 접속 테스트
+- 탭마다 다른 연결 — 새 탭은 시작 화면에서 고르기 (1–9, Enter = 마지막 연결)
+- 북마크, 쿼리 기록, 파이프라인, PK/FK 선언은 연결별로 따로 저장
+- replica set이 아닌 단독 DB → 주기적 새로고침 (기본 1분, 설정 › Realtime), `R` 즉시 새로고침
+- 접속 주소는 서버의 `~/.mongolive/connections.json`(권한 600)에만, 브라우저엔 비밀번호 가린 주소만
+
 ### 안전
 - 읽기 전용 모드/보호할 DB·컬렉션 지정/지우기 전 확인
 - 원본 데이터에 개입하지 않는 탐색 — 참조 선언, 제목 필드, 설정 같은 앱 메타데이터는 서버의 `~/.mongolive/`에 따로 저장됨
@@ -122,7 +131,7 @@ https://github.com/user-attachments/assets/918f102d-6519-4949-b653-bb587b5ea0ef
 - HTTPS 필수 정책 — 외부 공개 시 HTTPS 또는 프록시 환경이 구성되지 않으면 서버 구동 차단
 
 ### 그 밖에
-- 다크 테마(Nord), 날짜·ObjectId 표시 방식, 고정폭 글꼴 선택, 설정 내보내기/가져오기
+- 다크 테마(Nord), 날짜·ObjectId 표시 방식, 고정폭 글꼴 선택, 설정·연결 메타데이터 내보내기/가져오기
 
 | 라이트 | 다크 |
 |---|---|
@@ -130,8 +139,8 @@ https://github.com/user-attachments/assets/918f102d-6519-4949-b653-bb587b5ea0ef
 
 ## 시작하기
 ### 1. MongoDB 설치
-### 2. Replica Set 만들기
-for changestream
+### 2. Replica Set 만들기 (권장)
+for changestream — 단독 DB도 되지만 실시간 반영 대신 주기적 새로고침
 
 [🔗 Mongodb Replica Set 구축하기](https://medium.com/@zzanzu/mongodb-replica-set-%EA%B5%AC%EC%B6%95%ED%95%98%EA%B8%B0-be7df973801d)
 ### 3. Node.js 22.9 이상
@@ -141,7 +150,7 @@ git clone https://github.com/jsbeep/mongolive.git
 cd mongolive
 corepack pnpm install
 
-cp apps/server/.env.example apps/server/.env   # MONGODB_URI 채우기
+cp apps/server/.env.example apps/server/.env   # MONGODB_URI는 선택 — 비우면 화면에서 연결 추가
 ```
 ### 5. 비밀번호 정하고 실행
 ```bash
@@ -165,13 +174,13 @@ corepack pnpm dev:web          # 서버 없이 Mock 데이터로 (데모랑 같�
 
 | 이름 | 기본값 | 설명 |
 |---|---|---|
-| `MONGODB_URI` | (필수) | MongoDB 접속 주소(replica set) |
+| `MONGODB_URI` | (선택) | 기본 연결 주소 — 화면에 읽기 전용 연결로 보임, 비우면 화면에서 추가 |
 | `HOST` / `PORT` | `127.0.0.1` / `4000` | 서버 주소 / 포트 |
 | `AUTH_MODE` | `password` | 로그인 방식 |
 | `TLS_CERT` / `TLS_KEY` | — | HTTPS 구동 조건 |
 | `TRUST_PROXY` | `false` | 프록시(Caddy, nginx, Tailscale 등) HTTPS |
 | `ALLOW_INSECURE_HTTP` | `false` | 외부에 HTTP로 열기(개발전용) |
-| `AUTH_FILE` / `META_FILE` / `SETTINGS_FILE` | `~/.mongolive/…` | 비밀번호 해시, 앱 메타데이터, 안전 설정 파일 위치 |
+| `AUTH_FILE` / `META_FILE` / `SETTINGS_FILE` / `CONNECTIONS_FILE` | `~/.mongolive/…` | 비밀번호 해시, 앱 메타데이터, 안전 설정, 연결 목록 파일 위치 |
 
 ## 키보드
 | 키 | 동작 |
@@ -182,6 +191,8 @@ corepack pnpm dev:web          # 서버 없이 Mock 데이터로 (데모랑 같�
 | Delete | 지우기 |
 | / | 필터 |
 | q | 쿼리 |
+| . | breadcrumb 경로 입력 |
+| R | 화면 새로고침 (단독 DB) |
 | ? | 단축키 목록 |
 | Ctrl+K | 빠른 이동 |
 | Ctrl+B | 사이드바 접기/펴기 |
@@ -201,8 +212,10 @@ packages/shared  EJSON, 쿼리 파서, 검사, 파이프라인 규칙 — 웹·�
 #### 프론트엔드 (apps/web)
 - `DataSource` -> 화면 — 서버 구현, 브라우저 내부 Mock 구현 두 개
 - 어느 쪽 쓸지는 빌드 시 `VITE_DATA_SOURCE`로 설정, 데모는 Mock + mingo
+- 탭의 현재 연결은 sessionStorage — 새로고침해도 유지, 새 탭은 시작 화면
 #### 백엔드 (apps/server)
-- changeStream 하나로 클러스터 전체 감시, 클라이언트는 보고 있는 DB·컬렉션 방에만 들어가서 그 변경만 받음
+- 연결마다 MongoClient 따로 — 요청마다 `X-Mongolive-Connection` 헤더로 연결 지정, 10분 안 쓰면 닫음
+- 연결마다 changeStream 하나로 클러스터 전체 감시, 클라이언트는 보고 있는 DB·컬렉션 방에만 들어가서 그 변경만 받음
 - 쓰기는 "내가 본 값이 아직 그대로일 때만" 반영 — 다른 데서 먼저 바꾼 걸 덮어쓰지 않음
 
 ## 환경

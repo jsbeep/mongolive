@@ -18,9 +18,9 @@ mongolive 접속
 ```bash
 corepack pnpm install
 
-# 1. MongoDB 주소 — replica set이어야함
+# 1. (선택) 기본 MongoDB 주소 — 비워 두면 화면에서 연결 추가
 cp apps/server/.env.example apps/server/.env
-#    apps/server/.env 의 MONGODB_URI 채우기
+#    apps/server/.env 의 MONGODB_URI 채우기 — replica set이면 실시간, 단독 DB면 주기적 새로고침
 
 # 2. 비밀번호 — 화면에 보이지 않게 입력받아 해시만 ~/.mongolive/auth.json(권한 600)에 저장
 corepack pnpm set-password
@@ -186,6 +186,10 @@ ALLOW_INSECURE_HTTP=true
 | 도청 | 외부에 열면서 HTTPS가 없으면 서버가 켜지지 않음(`ALLOW_INSECURE_HTTP` 미설정시) |
 | 프록시 헤더 위조 | `TRUST_PROXY`일 때도 이 기기 안에서 온 연결의 헤더만, 그중 프록시가 붙인 마지막 값만 믿음 |
 | 로그아웃·비밀번호 변경 뒤 남은 연결 | 실시간 연결도 1분마다 출입증을 다시 확인해 끊음 |
+| DB 접속 주소(비밀번호) 유출 | `~/.mongolive/connections.json`(권한 600)에만 저장, 브라우저엔 비밀번호를 가린 주소만 보냄 |
+| 가린 비밀번호 빼내기 | 수정 화면에서 호스트·사용자·인증 방식·TLS·프록시 옵션을 바꾸면 가린 비밀번호를 채워 주지 않음 — 내 서버로 주소를 바꿔 "테스트"해서 비밀번호를 받아 가는 것 차단 |
+| 주소창·링크로 접속 주소 넘기기 | URL로는 연결 주소를 받지 않음. 탭의 연결은 sessionStorage의 연결 id로만, 지운 id는 다시 안 씀(410) |
+| 다른 사이트에 끼워 넣기(클릭재킹) | `frame-ancestors 'none'` + `X-Frame-Options: DENY`, `Referrer-Policy: same-origin` |
 
 알고 있는 한계
 
@@ -193,6 +197,7 @@ ALLOW_INSECURE_HTTP=true
 - 출입증을 서버에 저장하지 않으므로 기기 하나만 골라 로그아웃시킬 수는 없다. 모두 로그아웃은 `set-password`로.
 - 이 기기에 로그인할 수 있는 사람(같은 OS 계정)은 믿는다. `~/.mongolive/auth.json`을 읽을 수 있으면 오프라인 대입이 가능하다.
 - 로그인 잠금 기록은 메모리에만 있어 서버를 재시작하면 풀린다.
+- DB 접속 주소의 비밀번호는 `connections.json`에 그대로 들어 있다(접속하려면 필요). 파일 권한 600으로만 지킨다.
 
 ## 문제 해결
 
@@ -204,3 +209,5 @@ ALLOW_INSECURE_HTTP=true
 **"비밀번호가 아직 없습니다"** — `corepack pnpm set-password`.
 
 **로그인 화면에서 "Too many attempts"** — 기다리거나 서버 재시작
+
+**상태바가 "Polling"이고 실시간 반영이 안 된다** — replica set이 아닌 단독 DB. changeStream이 없어서 주기적으로 다시 불러온다(설정 › Realtime, 기본 1분). `R`로 바로 새로고침
