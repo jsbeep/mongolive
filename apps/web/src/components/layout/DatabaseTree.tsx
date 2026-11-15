@@ -39,11 +39,11 @@ const styles = {
   rowIdle: 'text-slate-600 hover:bg-slate-100',
   rowActiveDb: 'font-semibold text-slate-900 hover:bg-slate-100',
   rowActiveCol: 'bg-selected font-medium text-emerald-700',
-  chevronBtn: 'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 hover:text-slate-700',
+  chevronBtn: 'inline-flex h-5 ml-1 shrink-0 items-center justify-center rounded text-slate-400 hover:text-slate-700',
   label: 'min-w-0 flex-1 truncate',
   count: 'shrink-0 font-mono text-[11px] tabular-nums text-slate-400',
   // 숫자 자리에 겹쳐 나온다(올리거나 행 안에 포커스가 있을 때) — 안 보일 때 자리를 차지하면 숫자 세로줄이 어긋난다
-  rowAction: 'hidden h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-200/70 hover:text-slate-700 group-hover:inline-flex group-focus-within:inline-flex',
+  rowAction: 'hidden h-5 ml-1 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-200/70 hover:text-slate-700 group-hover:inline-flex group-focus-within:inline-flex',
   countHideOnHover: 'group-hover:hidden group-focus-within:hidden',
   // 컬렉션 행과 같은 들여쓰기 + 아이콘 자리
   note: 'flex h-7 items-center gap-1.5 pl-[86px] text-xs text-slate-400',
@@ -232,7 +232,7 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
                           role="treeitem"
                           aria-selected={isActiveCol}
                           // 폴더 아이콘이 DB 이름 글자 아래에 오도록(DB 아이콘과 같은 세로줄이면 DB인지 컬렉션인지 헷갈린다)
-                          className={cn(styles.row, 'pl-[66px]', isActiveCol ? styles.rowActiveCol : styles.rowIdle)}
+                          className={cn(styles.row, 'pl-[64px]', isActiveCol ? styles.rowActiveCol : styles.rowIdle)}
                           onClick={() => void onOpenCollection(db.name, col.name, col.label || col.name)}
                           data-tt={col.description || undefined}
                         >

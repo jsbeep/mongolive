@@ -50,7 +50,7 @@ const styles = {
   iconBtn: 'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-200/70 hover:text-slate-700',
   list: 'flex min-h-0 flex-1 flex-col overflow-y-auto pb-2',
   row: 'group flex h-8 w-full shrink-0 items-center gap-1.5 rounded-md pl-0.5 pr-1 text-left text-[13px] transition-colors',
-  chevron: 'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 hover:text-slate-700',
+  chevron: 'inline-flex h-5 ml-1 shrink-0 items-center justify-center rounded text-slate-400 hover:text-slate-700',
   label: 'min-w-0 flex-1 truncate',
   // 다른 연결의 버튼은 올리거나 행 안에 포커스가 있을 때만
   hoverOnly: 'hidden group-hover:inline-flex group-focus-within:inline-flex',
