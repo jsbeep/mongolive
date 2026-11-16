@@ -451,6 +451,45 @@ export interface LastWrites {
   writes: Record<string, LastWrite>;
 }
 
+// ── 지금 실행 중인 작업(9-5a) — Monitor › Operations ──
+//   GET /api/monitor/operations?database=&collection= → OperationsReport ($currentOp, 탭이 보일 때 2초마다)
+//   POST /api/monitor/operations/kill {opid} → 204 (killOp — mongolive 자신·내부 작업은 거절)
+// 기록하지 않는다 — 그 순간의 스냅샷
+//   user = 다른 클라이언트의 작업, mongolive = 이 앱의 드라이버(appName), system = 클라이언트 없는 내부 스레드·복제
+export type RunningOpKind = 'user' | 'mongolive' | 'system';
+
+export interface RunningOp {
+  // killOp에 넘길 값(샤드면 "shard:123")
+  opid: string;
+  // query / insert / update / remove / getmore / command / none
+  op: string;
+  ns: string | null;
+  // 경과(ms)
+  ms: number;
+  // 명령 한 줄(mongosh 표기, 길면 자름). getMore는 처음 명령(originatingCommand) 기준
+  summary: string;
+  // 전체 명령 — lsid·$clusterTime 등은 뺀다. MongoDB가 1KB 넘는 명령은 {$truncated: "..."}로 줄여 준다
+  command: EjsonObject | null;
+  origin: EjsonObject | null;
+  planSummary: string | null;
+  waitingForLock: boolean;
+  yields: number | null;
+  client: string | null;
+  appName: string | null;
+  user: string | null;
+  startedAt: number | null;
+  kind: RunningOpKind;
+}
+
+export interface OperationsReport {
+  at: number;
+  ops: RunningOp[];
+  // 다른 사용자의 작업을 볼 권한(inprog)이 없어 이 사용자의 것만 보인다
+  limited: boolean;
+  // $currentOp 자체가 안 됨(권한·Atlas 공유 티어 등) — ops는 비어 있다
+  error: string | null;
+}
+
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 

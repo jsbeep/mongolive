@@ -28,6 +28,7 @@ import type {
   HistoryInfo,
   HistoryReport,
   BackfillReport,
+  OperationsReport,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -416,6 +417,15 @@ export const createRemoteDataSource = (): DataSource => {
     getBackfill: () => request<BackfillReport>('/monitor/backfill'),
     startBackfill: (id) => request<BackfillReport>('/monitor/backfill/start', { method: 'POST', body: JSON.stringify(id ? { id } : {}) }),
     stopBackfill: (id) => request<BackfillReport>('/monitor/backfill/stop', { method: 'POST', body: JSON.stringify(id ? { id } : {}) }),
+    getOperations(scope) {
+      const params = new URLSearchParams();
+      if (scope.database) params.set('database', scope.database);
+      if (scope.database && scope.collection) params.set('collection', scope.collection);
+      return request<OperationsReport>(`/monitor/operations?${params}`);
+    },
+    async killOperation(opid) {
+      await request<void>('/monitor/operations/kill', { method: 'POST', body: JSON.stringify({ opid }) });
+    },
     onBackfill(listener) {
       const s = ensureSocket();
       backfillListeners.add(listener);

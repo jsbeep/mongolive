@@ -7,12 +7,15 @@
 //   GET /api/monitor/history?range=24h|7d|30d|90d|all[&writes=1&database=&collection=] → HistoryReport (긴 기간, 9-3b)
 //   GET /api/monitor/backfill → BackfillReport (빈 구간 불러오기, 9-4)
 //   POST /api/monitor/backfill/start {id?} — 불러오기/계속,  POST /api/monitor/backfill/stop {id?} — 멈춤
+//   GET /api/monitor/operations?database=&collection= → OperationsReport ($currentOp, 9-5a)
+//   POST /api/monitor/operations/kill {opid} → 204 (killOp — 다른 클라이언트의 작업만)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
 import type { ActivityRange, ActivityReport, BackfillReport, LastWrites } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
+import { killOperation, listOperations } from '../monitor/operations';
 import { connectionUri } from '../connections';
 import { clientFor, connectionIdOf } from '../db';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
@@ -112,4 +115,24 @@ monitorRouter.post('/monitor/backfill/stop', async (req, res) => {
   if (!backfill) throw new HttpError(409, 'Nothing is open for this connection — open it in a tab first.');
   await backfill.pause(gapId(req.body));
   res.json(backfill.report());
+});
+
+// 지금 실행 중인 작업 — 피드와 상관없이 그때그때 묻는다(Operations 탭이 보일 때 2초마다)
+monitorRouter.get('/monitor/operations', async (req, res) => {
+  const database = text(req.query.database);
+  const collection = text(req.query.collection);
+  if (collection && !database) throw new HttpError(400, 'collection needs a database');
+  const id = connectionIdOf(res);
+  res.json(await listOperations(() => clientFor(id), {
+    database: database ? checkDatabaseName(database) : null,
+    collection: collection ? checkCollectionName(collection) : null,
+  }));
+});
+
+monitorRouter.post('/monitor/operations/kill', async (req, res) => {
+  const opid = (req.body as { opid?: unknown } | undefined)?.opid;
+  // 숫자(복제 세트) 또는 "샤드이름:숫자"(mongos)
+  if (typeof opid !== 'string' || !/^(?:[\w.-]+:)?\d+$/.test(opid)) throw new HttpError(400, 'opid must be an operation id from GET /monitor/operations');
+  await killOperation(await clientFor(connectionIdOf(res)), opid);
+  res.status(204).end();
 });

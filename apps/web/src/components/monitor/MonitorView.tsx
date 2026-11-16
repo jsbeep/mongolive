@@ -11,9 +11,10 @@ import { cn } from '../../utils/cn';
 import { ScopeBar, type LiveIndicator, type MonitorScope } from './ScopeBar';
 import { OverviewTab } from './OverviewTab';
 import { CollectionsTab } from './CollectionsTab';
+import { OperationsTab } from './OperationsTab';
 import type { MonitorState } from '../../hooks/useMonitor';
 
-export type MonitorTab = 'overview' | 'collections';
+export type MonitorTab = 'overview' | 'collections' | 'operations';
 
 export interface MonitorViewProps {
   connectionName: string;
@@ -38,6 +39,7 @@ export interface MonitorViewProps {
 const TABS: { id: MonitorTab; label: string; tip: string }[] = [
   { id: 'overview', label: 'Overview', tip: 'Throughput, latency, connections and errors — whole server' },
   { id: 'collections', label: 'Collections', tip: 'Writes per collection, field and document — from the change stream' },
+  { id: 'operations', label: 'Operations', tip: 'What MongoDB is running right now — stop a runaway query' },
 ];
 
 const styles = {
@@ -98,7 +100,9 @@ export default function MonitorView({ connectionName, scope, onScopeChange, tab,
             (<code className="font-mono">pnpm dev:web:remote</code>).
           </p>
         ) : (
-          tab === 'collections' ? (
+          tab === 'operations' ? (
+            <OperationsTab scope={scope} />
+          ) : tab === 'collections' ? (
             <CollectionsTab
               scope={scope}
               onScopeChange={onScopeChange}

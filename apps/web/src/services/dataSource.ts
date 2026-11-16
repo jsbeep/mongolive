@@ -30,6 +30,7 @@ import type {
   HistoryReport,
   MonitorRange,
   BackfillReport,
+  OperationsReport,
   AggregateResult,
   AggregateCounts,
   ConnectionInfo,
@@ -124,6 +125,9 @@ export interface DataSource {
   stopBackfill(id?: string): Promise<BackfillReport | null>;
   // 바뀔 때마다(불러오는 중엔 1초에 한 번). 반환값을 부르면 해제
   onBackfill(listener: (report: BackfillReport) => void): () => void;
+  // Monitor › Operations(9-5a) — 지금 실행 중인 작업($currentOp) / 하나 멈추기(killOp). Mock은 null / 아무것도 안 함
+  getOperations(scope: { database: string | null; collection: string | null }): Promise<OperationsReport | null>;
+  killOperation(opid: string): Promise<void>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 
