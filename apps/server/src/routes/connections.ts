@@ -12,6 +12,7 @@ import { Router } from 'express';
 import { createConnection, deleteConnection, listConnections, resolveTestUri, updateConnection } from '../connections';
 import { testMongoUri } from '../db';
 import { dropConnectionMeta } from '../meta';
+import { dropConnectionHistory } from '../monitor/history';
 
 export const connectionsRouter = Router();
 
@@ -35,5 +36,7 @@ connectionsRouter.delete('/connections/:id', async (req, res) => {
   await deleteConnection(req.params.id);
   // 그 연결의 PK/FK·titleKey 선언도(연결 id는 다시 쓰지 않는다)
   await dropConnectionMeta(req.params.id);
+  // Monitor 기록 파일도(9-3)
+  await dropConnectionHistory(req.params.id);
   res.status(204).end();
 });

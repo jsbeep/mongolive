@@ -67,6 +67,8 @@ export interface ActivityStats {
   record: (change: LiveChange) => void;
   report: (query: ActivityQuery, now?: number) => ActivityReport;
   lastWrites: () => Record<string, LastWrite>;
+  // 그 1분 동안의 컬렉션별 쓰기 — 기록 파일(monitor/history)이 1분 기록에 붙인다
+  minuteWrites: (start: number) => Map<string, ActivityOps> | undefined;
   readonly since: number;
 }
 
@@ -218,6 +220,11 @@ export const createActivityStats = (since = Date.now(), clock: () => number = Da
     record,
     report,
     lastWrites: () => Object.fromEntries(last),
+    minuteWrites: (start) => {
+      const byNs = minutes.get(start)?.byNs;
+      // 복사본 — 나중에 도착한 이벤트가 이미 넘긴 값을 바꾸지 않게
+      return byNs ? new Map([...byNs].map(([ns, ops]) => [ns, { ...ops }])) : undefined;
+    },
     since,
   };
 };

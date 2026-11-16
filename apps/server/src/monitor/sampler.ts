@@ -30,6 +30,8 @@ export interface SamplerHooks {
   // 이 칸 동안 받은 changeStream 이벤트 수·지연 — 부르면 비운다
   drainStream: () => MonitorSample['stream'];
   onSample: (tick: MonitorTick) => void;
+  // serverStatus의 누적값을 읽을 때마다 — 기록 파일이 빈 구간 합계를 내는 데 쓴다(monitor/history)
+  onReading?: (counters: StatusCounters, at: number) => void;
   // 로그에 붙일 이름(연결 id)
   label: string;
 }
@@ -101,6 +103,7 @@ export const createSampler = (hooks: SamplerHooks): Sampler => {
       const reading = readStatus(await readServerStatus(client));
       const rates = prev ? ratesBetween(prev, reading.counters) : null;
       prev = reading.counters;
+      hooks.onReading?.(reading.counters, at);
       info = { version: reading.version, uptimeSec: reading.uptimeSec, host: reading.host, topology: hooks.topology() };
       return { at, pingMs, rates, gauges: reading.gauges, stream: hooks.drainStream() };
     } catch (e) {

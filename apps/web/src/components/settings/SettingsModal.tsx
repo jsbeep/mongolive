@@ -2,14 +2,15 @@
 //   Display     — 값 표시(Date 시간대, ObjectId 줄임). 이 브라우저에만(services/preferences)
 //   Safety      — read-only·보호 대상(서버 settings.json, 모든 브라우저 공통 — 서버가 막는다), 삭제 확인 강도·Undo 단계(이 브라우저)
 //   Realtime    — 실시간 반영 간격(즉시 / 느슨하게)
+//   Monitor     — 지표 기록 파일의 보관 기간(서버 settings.json), 이 연결의 기록 크기·지우기(9-3)
 //   Data        — 샘플 데이터 불러오기
 //   Diagnostics — 서버·MongoDB·changeStream·권한 (GET /api/diagnostics)
 //   Security    — 보안 설정(.env)을 읽기만. 화면에서 바꿀 수 있으면 세션 하나만 탈취돼도 인증을 끌 수 있어서
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, m } from 'framer-motion';
-import { CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import type { CollectionSummary, DatabaseSummary, Diagnostics, MutationRequest } from '../../types/explorer';
+import { Activity, CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import type { CollectionSummary, DatabaseSummary, Diagnostics, HistoryInfo, MonitorHistory, MutationRequest } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
 import { useActiveConnection } from '../../services/activeConnection';
 import { sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type Theme, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type StandaloneRefresh, type UndoDepth } from '../../services/preferences';
@@ -20,13 +21,14 @@ import { buildForumEjsonSample, buildForumJsonSample, FORUM_EJSON_DATABASE_NAME,
 import { formatDate, formatOid, offsetLabel } from '../../utils/formatValue';
 import { cn } from '../../utils/cn';
 
-export type SettingsSection = 'display' | 'safety' | 'realtime' | 'keyboard' | 'data' | 'diagnostics' | 'security';
+export type SettingsSection = 'display' | 'safety' | 'realtime' | 'monitor' | 'keyboard' | 'data' | 'diagnostics' | 'security';
 type Section = SettingsSection;
 
 const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: 'display', label: 'Display', icon: Monitor },
   { id: 'safety', label: 'Safety', icon: ShieldCheck },
   { id: 'realtime', label: 'Realtime', icon: Radio },
+  { id: 'monitor', label: 'Monitor', icon: Activity },
   { id: 'keyboard', label: 'Keyboard', icon: Keyboard },
   { id: 'data', label: 'Data', icon: Database },
   { id: 'diagnostics', label: 'Diagnostics', icon: Stethoscope },
@@ -443,6 +445,110 @@ function RealtimeSection() {
         ]}
       />
     </div>
+  );
+}
+
+// ── Monitor ──────────────────────────────────────────────────────────────────
+
+const fmtBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+function MonitorSection() {
+  const settings = useServerSettings();
+  const connection = useActiveConnection();
+  const [info, setInfo] = useState<HistoryInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // 지우기는 두 번 눌러야 — 첫 번째는 '정말?'
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    if (!connection || dataSourceKind !== 'remote') return;
+    api.getHistoryInfo().then(setInfo, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not read history'));
+  }, [connection]);
+  useEffect(load, [load]);
+
+  const setHistory = async (monitorHistory: MonitorHistory) => {
+    setError(null);
+    try {
+      await saveServerSettings({ ...settings, monitorHistory });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save');
+    }
+  };
+  const clear = async () => {
+    if (!armed) return setArmed(true);
+    setBusy(true);
+    setError(null);
+    try {
+      await api.clearHistory();
+      setArmed(false);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not clear');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (dataSourceKind !== 'remote') {
+    return <p className={styles.groupHint}>Monitor measures a real MongoDB server — there's nothing to record in the in-browser demo.</p>;
+  }
+
+  return (
+    <>
+      <div className={styles.group}>
+        <p className={styles.groupTitle}>History</p>
+        <p className={styles.groupHint}>
+          The mongolive server keeps the Monitor numbers in files next to its other settings (never in MongoDB) — while a tab uses the connection.
+          The last 24 hours are kept per minute, older ones per hour for the time you pick here, and a one-line daily summary is kept for good.
+          Saved on the server, for every browser.
+        </p>
+        <Segment<MonitorHistory>
+          value={settings.monitorHistory}
+          onChange={(v) => void setHistory(v)}
+          options={[
+            { value: 'off', label: 'Off' },
+            { value: '30d', label: '30 days' },
+            { value: '90d', label: '90 days' },
+            { value: '1y', label: '1 year' },
+          ]}
+        />
+        {settings.monitorHistory === 'off' && (
+          <p className="mt-2 text-[11px] text-slate-500">Off: only the last hour, in memory. Files already written stay until you clear them.</p>
+        )}
+      </div>
+
+      <div className={styles.group}>
+        <p className={styles.groupTitle}>This connection</p>
+        {!connection ? (
+          <p className={styles.groupHint}>Connect to see this connection's history.</p>
+        ) : (
+          <>
+            <Row label="On disk">{info ? fmtBytes(info.bytes) : '…'}</Row>
+            <Row label="Oldest record">{info ? (info.oldest ? new Date(info.oldest).toLocaleString() : 'nothing yet') : '…'}</Row>
+            <Row label="Servers">
+              {info ? (
+                <>
+                  {info.servers}
+                  <span className="ml-2 font-sans text-[11px] text-slate-400">
+                    {info.servers > 1 ? "— this connection's address changed at some point; switching it back picks up the old history" : ''}
+                  </span>
+                </>
+              ) : '…'}
+            </Row>
+            {info?.current && <Row label="This server's id">{info.current}</Row>}
+            <div className="mt-3 flex items-center gap-2">
+              <button type="button" className={cn(styles.btn, armed && 'border-rose-300 text-rose-700 hover:bg-rose-50')} onClick={() => void clear()} disabled={busy || (info !== null && info.bytes === 0)}>
+                {busy ? <Loader2 size={13} className="animate-spin" /> : null}
+                {armed ? 'Click again to delete all history' : 'Clear history'}
+              </button>
+              {armed && !busy && <button type="button" className={styles.btn} onClick={() => setArmed(false)}>Cancel</button>}
+            </div>
+          </>
+        )}
+        {error && <p className="mt-2 text-[11px] text-rose-600">{error}</p>}
+      </div>
+    </>
   );
 }
 
@@ -935,6 +1041,7 @@ export function SettingsModal({ open, initialSection, onClose, databases, onMuta
                 {section === 'display' && <DisplaySection />}
                 {section === 'safety' && <SafetySection databases={databases} />}
                 {section === 'realtime' && <RealtimeSection />}
+                {section === 'monitor' && <MonitorSection />}
                 {section === 'keyboard' && <KeyboardSection />}
                 {section === 'data' && (
                   <DataSection

@@ -10,7 +10,7 @@
 // 보안 설정(.env)·비밀번호는 넣지 않는다(화면에서 바꿀 수 없는 것이므로).
 import { normalizeCollectionMetadata, normalizeServerSettings, splitCollectionKey, type CollectionMetadata, type ServerSettings } from '../types/explorer';
 import { api } from './api';
-import { saveServerSettings } from './serverSettings';
+import { getServerSettingsSnapshot, saveServerSettings } from './serverSettings';
 import { connectionIdOfKey, LEGACY_CONNECTION_ID, scopedKey } from './connectionStorage';
 
 const LOCAL_KEYS: readonly string[] = [
@@ -99,7 +99,17 @@ export const parseBackup = (text: string): SettingsBackup => {
     version: 1,
     exportedAt: typeof obj.exportedAt === 'string' ? obj.exportedAt : '',
     local,
-    ...(obj.server !== undefined ? { server: normalizeServerSettings(obj.server) } : {}),
+    // 9-3 전에 만든 백업엔 monitorHistory가 없다 — 그때는 지금 서버 값을 그대로 둔다(기본값으로 덮지 않게)
+    ...(obj.server !== undefined
+      ? {
+          server: {
+            ...normalizeServerSettings(obj.server),
+            monitorHistory: (obj.server as { monitorHistory?: unknown }).monitorHistory === undefined
+              ? getServerSettingsSnapshot().monitorHistory
+              : normalizeServerSettings(obj.server).monitorHistory,
+          },
+        }
+      : {}),
     ...(meta && Object.keys(meta).length > 0 ? { meta } : {}),
   };
 };

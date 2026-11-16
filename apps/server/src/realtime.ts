@@ -37,6 +37,10 @@ import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES } from './name
 import { toWire } from './wire';
 import { createSampler, type Sampler } from './monitor/sampler';
 import { createActivityStats, type ActivityStats } from './monitor/activity';
+import { createRecorder, type Recorder } from './monitor/history';
+import { clusterFingerprint } from './monitor/identity';
+import { SAMPLE_INTERVAL_MS } from './monitor/sampler';
+import { getServerSettings } from './settings';
 
 const DOCUMENT_OPS = new Set<LiveOperation>(['insert', 'update', 'replace', 'delete']);
 const STRUCTURE_OPS = new Set<LiveOperation>(['create', 'drop', 'rename', 'dropDatabase']);
@@ -148,6 +152,8 @@ interface Feed {
   sampler: Sampler;
   // Monitor › Collections — 받은 쓰기를 컬렉션·분·필드·문서별로 센 것(monitor/activity)
   activity: ActivityStats;
+  // 지표를 파일로 남긴다(monitor/history) — 설정 › Monitor에서 끌 수 있다
+  recorder: Recorder;
 }
 
 const feeds = new Map<string, Feed>();
@@ -188,6 +194,9 @@ const drainWindow = (feed: Feed): MonitorSample['stream'] => {
 
 // Monitor › Collections — 그 연결의 쓰기 집계. 피드가 없으면(쓰는 탭이 없음) null
 export const activityOf = (connectionId: string): ActivityStats | null => feeds.get(connectionId)?.activity ?? null;
+
+// 설정 › Monitor — 그 연결의 기록기. 피드가 없으면 null(기록 파일은 그대로 있다)
+export const recorderOf = (connectionId: string): Recorder | null => feeds.get(connectionId)?.recorder ?? null;
 
 // 진단용 — 그 연결의 실시간 상태. 피드가 없으면(쓰는 탭이 없음) connecting
 export const realtimeStatus = (connectionId: string): Omit<LiveStatus, 'resync'> => {
@@ -319,14 +328,17 @@ export const startRealtime = (io: Server) => {
     }
   };
 
-  const stopFeed = (feed: Feed) => {
-    if (feed.stopped) return;
+  // 기록기가 지금 1분과 마지막 누적값을 다 적을 때까지의 약속을 돌려준다(서버 종료 때 기다린다)
+  const stopFeed = (feed: Feed): Promise<void> => {
+    if (feed.stopped) return Promise.resolve();
     feed.stopped = true;
     if (feed.graceTimer) clearTimeout(feed.graceTimer);
     feed.sampler.stop();
+    const recorded = feed.recorder.stop();
     closeStream(feed);
     feed.releaseClient();
     if (feeds.get(feed.id) === feed) feeds.delete(feed.id);
+    return recorded;
   };
 
   // 소켓이 이 연결을 쓰기 시작 — 피드가 없으면 연다
@@ -352,12 +364,24 @@ export const startRealtime = (io: Server) => {
         windowEvents: 0,
         windowLags: [],
         activity: createActivityStats(),
+        recorder: createRecorder({
+          connectionId: id,
+          fingerprint: async () => clusterFingerprint(await clientFor(id), connectionUri(id) ?? ''),
+          minuteWrites: (start) => created.activity.minuteWrites(start),
+          retention: () => getServerSettings().monitorHistory,
+          alive: () => connectionUri(id) !== null,
+          intervalSec: SAMPLE_INTERVAL_MS / 1000,
+        }),
         sampler: createSampler({
           label: id,
           client: () => clientFor(id),
           topology: () => healthOf(id).topology,
           drainStream: () => drainWindow(created),
-          onSample: (tick) => io.to(monitorRoom(id)).emit('monitor:sample', tick),
+          onSample: (tick) => {
+            io.to(monitorRoom(id)).emit('monitor:sample', tick);
+            created.recorder.addSample(tick.sample);
+          },
+          onReading: (counters, at) => created.recorder.addCounters(counters, at),
         }),
       };
       feed = created;
@@ -395,6 +419,8 @@ export const startRealtime = (io: Server) => {
         feed.logBacklog = [];
         feed.windowEvents = 0;
         feed.windowLags = [];
+        // 지금 1분을 옛 서버의 폴더에 적고, 새 주소의 서버 신분부터 다시(같은 서버로 되돌리면 옛 폴더에 이어 붙는다)
+        void feed.recorder.reset();
         feed.activity = createActivityStats();
         feed.sampler.reset();
         publish(feed);
@@ -502,7 +528,8 @@ export const startRealtime = (io: Server) => {
     stop: async () => {
       offConnections();
       offHealth();
-      for (const feed of [...feeds.values()]) stopFeed(feed);
+      // 기록 파일에 마지막 1분을 적고 끝낸다(Ctrl+C로 꺼도 다음에 빈 구간 합계를 낼 수 있게)
+      await Promise.all([...feeds.values()].map((feed) => stopFeed(feed)));
     },
   };
 };

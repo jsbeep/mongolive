@@ -1,0 +1,378 @@
+// Monitor 기록 파일 (9-3) — ~/.mongolive/metrics/<연결 id>/<서버 신분>/
+//
+//   minutes-YYYY-MM-DD.jsonl   1분 기록(한 줄 = Rollup). 이틀 지난 날짜 파일은 통째로 지운다(보여 주는 건 24시간)
+//   hours-YYYY-MM.jsonl        1시간 기록. 보관 기간(설정 › Monitor: 30일·90일·1년)이 지난 달 파일을 통째로 지운다
+//   days-YYYY.jsonl            1일 기록. 지우지 않는다(하루 한 줄)
+//   gaps.jsonl                 기록하지 않던 구간 — MongoDB가 그사이 재시작하지 않았으면 그동안의 합계(누적값 차이)
+//   state.json                 어디까지 합쳤나 + 마지막 누적값(다음에 빈 구간을 계산할 재료)
+//
+// 파일은 다시 쓰지 않는다 — 덧붙이기와 통째 삭제만(SD카드 쓰기를 줄이려고). state.json만 임시 파일 → 이름 바꾸기로 교체.
+// 파일 작업은 한 줄로 세운다(queue) — 덧붙이기·합치기·지우기가 서로 끼어들지 않게.
+// 시·일 경계는 서버의 시간대 기준. 피드가 닫혀 있던 동안 끝난 시·일은 다음에 피드가 열릴 때 따라잡아 합친다.
+import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { MONITOR_HISTORY_DAYS, type ActivityOps, type HistoryInfo, type MonitorHistory, type MonitorOp, type MonitorSample } from '@mongolive/shared';
+import { metricsDirPath } from '../paths';
+import {
+  addSample,
+  dateKey,
+  dayStart,
+  emptyRollup,
+  hourStart,
+  mergeRollups,
+  minuteStart,
+  monthKey,
+  nextDay,
+  nextHour,
+  topWrites,
+  TOP_WRITES,
+  yearKey,
+  type Rollup,
+} from './rollup';
+import type { StatusCounters } from './serverStatus';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+// 분 기록 파일은 이틀치 남긴다(24시간을 보여 주려면 어제 파일도 필요)
+const KEEP_MINUTE_DAYS = 2;
+// 따라잡기 한도 — 그보다 오래된 분·시 기록은 이미 지워졌다
+const CATCH_UP_HOURS_MS = KEEP_MINUTE_DAYS * DAY_MS;
+const CATCH_UP_DAYS_MS = 35 * DAY_MS;
+
+export interface GapRecord {
+  from: number;
+  to: number;
+  // MongoDB가 그사이 재시작했다 — 합계를 알 수 없다
+  restarted: boolean;
+  ops?: Record<MonitorOp, number>;
+  docs?: { inserted: number; updated: number; deleted: number; returned: number };
+}
+
+interface StateFile {
+  version: 1;
+  // 합쳐 둔 마지막 시·일의 시작 시각
+  rolledHour: number | null;
+  rolledDay: number | null;
+  // 마지막으로 본 누적값 — 다음에 열릴 때 빈 구간의 합계를 낸다
+  last: { at: number; counters: StatusCounters } | null;
+}
+
+const emptyState = (): StateFile => ({ version: 1, rolledHour: null, rolledDay: null, last: null });
+
+// 연결 id는 UUID나 'env' — 그래도 경로에 쓰기 전에 거른다
+const connectionDir = (connectionId: string) => join(metricsDirPath(), connectionId.replace(/[^A-Za-z0-9_-]/g, '_'));
+
+const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+export const readJsonl = async <T>(file: string): Promise<T[]> => {
+  let text: string;
+  try {
+    text = await readFile(file, 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw e;
+  }
+  const out: T[] = [];
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    try {
+      out.push(JSON.parse(line) as T);
+    } catch {
+      // 쓰다가 꺼져서 잘린 줄 — 그 줄만 버린다
+    }
+  }
+  return out;
+};
+
+const appendLine = (file: string, value: unknown) => appendFile(file, `${JSON.stringify(value)}\n`, 'utf8');
+
+const loadState = async (dir: string): Promise<StateFile> => {
+  try {
+    const raw = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')) as Partial<StateFile>;
+    return { ...emptyState(), ...raw, version: 1 };
+  } catch {
+    return emptyState();
+  }
+};
+
+const saveState = async (dir: string, state: StateFile) => {
+  const tmp = join(dir, 'state.json.tmp');
+  await writeFile(tmp, JSON.stringify(state), 'utf8');
+  await rename(tmp, join(dir, 'state.json'));
+};
+
+// 누적값 차이 = 기록하지 않던 동안의 합계. 재시작했으면(uptime이 흐른 시간만큼 늘지 않음) 합계 없이
+export const gapBetween = (last: { at: number; counters: StatusCounters }, counters: StatusCounters, at: number): GapRecord => {
+  const expected = last.counters.uptimeMs + (at - last.at);
+  const base = { from: last.at, to: at };
+  if (Math.abs(counters.uptimeMs - expected) > 120_000) return { ...base, restarted: true };
+  const ops = Object.fromEntries(
+    (Object.keys(counters.ops) as MonitorOp[]).map((op) => [op, counters.ops[op] - last.counters.ops[op]]),
+  ) as Record<MonitorOp, number>;
+  const docs = {
+    inserted: counters.docs.inserted - last.counters.docs.inserted,
+    updated: counters.docs.updated - last.counters.docs.updated,
+    deleted: counters.docs.deleted - last.counters.docs.deleted,
+    returned: counters.docs.returned - last.counters.docs.returned,
+  };
+  if ([...Object.values(ops), ...Object.values(docs)].some((n) => n < 0)) return { ...base, restarted: true };
+  return { ...base, restarted: false, ops, docs };
+};
+
+export interface RecorderHooks {
+  connectionId: string;
+  // 서버 신분(monitor/identity) — 실패하면 그 분은 건너뛰고 다음 분에 다시
+  fingerprint: () => Promise<string>;
+  // 그 1분 동안 changeStream으로 본 컬렉션별 쓰기(monitor/activity)
+  minuteWrites: (start: number) => Map<string, ActivityOps> | undefined;
+  retention: () => MonitorHistory;
+  // 연결이 아직 있는가 — 지운 연결의 폴더를 다시 만들지 않게
+  alive: () => boolean;
+  intervalSec: number;
+  clock?: () => number;
+}
+
+export interface Recorder {
+  addSample: (sample: MonitorSample) => void;
+  // serverStatus의 누적값(샘플러가 읽을 때마다) — 빈 구간 계산용
+  addCounters: (counters: StatusCounters, at: number) => void;
+  // 지금 1분을 적고 멈춘다(피드가 닫힐 때)
+  stop: () => Promise<void>;
+  // 다른 서버일 수 있다(주소가 바뀜) — 적고 나서 신분부터 다시
+  reset: () => Promise<void>;
+  // 이 연결의 기록을 모두 지운다(설정 › Monitor)
+  clear: () => Promise<void>;
+  currentFingerprint: () => string | null;
+  // 줄 서 있는 파일 작업이 끝날 때까지(테스트)
+  idle: () => Promise<void>;
+}
+
+export const createRecorder = (hooks: RecorderHooks): Recorder => {
+  const clock = hooks.clock ?? Date.now;
+  let queue: Promise<void> = Promise.resolve();
+  const enqueue = (task: () => Promise<void>) => {
+    queue = queue.then(task).catch((e) => console.error(`[monitor] ${hooks.connectionId} 기록 실패:`, errorMessage(e)));
+    return queue;
+  };
+
+  let dir: string | null = null;
+  let fingerprint: string | null = null;
+  let state = emptyState();
+  let current: Rollup | null = null;
+  let latest: { at: number; counters: StatusCounters } | null = null;
+  // 이번에 열린 뒤 처음 본 누적값인가 — 그때 지난번과 비교해 빈 구간을 남긴다
+  let firstCounters = true;
+
+  const enabled = () => hooks.retention() !== 'off';
+
+  // 폴더 정하기(신분 묻기) — 줄 선 작업 안에서만 부른다
+  const resolveDir = async (): Promise<string | null> => {
+    if (dir) return dir;
+    if (!hooks.alive()) return null;
+    try {
+      fingerprint = await hooks.fingerprint();
+    } catch {
+      return null;
+    }
+    const next = join(connectionDir(hooks.connectionId), fingerprint);
+    await mkdir(next, { recursive: true });
+    dir = next;
+    state = await loadState(next);
+    // 닫혀 있던 동안 끝난 시·일은 첫 1분을 적은 뒤 flushMinute의 rollUp이 따라잡는다 —
+    // 여기서 먼저 합치면 방금 끝난 시간을 그 마지막 1분을 적기 전에 '합쳤음'으로 표시해 버린다
+    return dir;
+  };
+
+  // upTo = 방금 적은 1분의 시각. 그보다 앞의 시·일만 '끝났다'고 본다 — 시계가 아니라 적은 기록 기준이라
+  // 그 시간의 분이 다 적힌 뒤에만 합친다(닫혀 있던 동안 끝난 시간은 다음 첫 1분이 적힐 때 따라잡는다)
+  const rollUp = async (upTo: number) => {
+    if (!dir) return;
+    const now = upTo;
+    let changed = false;
+    // 시: 끝난 시간마다 그 시간의 분 기록을 합친다
+    const minuteFiles = new Map<string, Rollup[]>();
+    const minutesOf = async (h: number) => {
+      const key = dateKey(h);
+      if (!minuteFiles.has(key)) minuteFiles.set(key, await readJsonl<Rollup>(join(dir as string, `minutes-${key}.jsonl`)));
+      return minuteFiles.get(key) as Rollup[];
+    };
+    const currentHour = hourStart(now);
+    let h = state.rolledHour !== null ? nextHour(state.rolledHour) : hourStart(now - CATCH_UP_HOURS_MS);
+    h = Math.max(h, hourStart(now - CATCH_UP_HOURS_MS));
+    for (; h < currentHour; h = nextHour(h)) {
+      const end = nextHour(h);
+      const inHour = (await minutesOf(h)).filter((r) => r.t >= h && r.t < end);
+      if (inHour.length) await appendLine(join(dir, `hours-${monthKey(h)}.jsonl`), mergeRollups(h, inHour, TOP_WRITES.hour));
+      state.rolledHour = h;
+      changed = true;
+    }
+    // 일: 끝난 날마다 그날의 시 기록을 합친다(그날의 시는 위에서 이미 다 합쳤다)
+    const hourFiles = new Map<string, Rollup[]>();
+    const hoursOf = async (d: number) => {
+      const key = monthKey(d);
+      if (!hourFiles.has(key)) hourFiles.set(key, await readJsonl<Rollup>(join(dir as string, `hours-${key}.jsonl`)));
+      return hourFiles.get(key) as Rollup[];
+    };
+    const currentDay = dayStart(now);
+    let d = state.rolledDay !== null ? nextDay(state.rolledDay) : dayStart(now - CATCH_UP_DAYS_MS);
+    d = Math.max(d, dayStart(now - CATCH_UP_DAYS_MS));
+    for (; d < currentDay; d = nextDay(d)) {
+      const end = nextDay(d);
+      const inDay = (await hoursOf(d)).filter((r) => r.t >= d && r.t < end);
+      if (inDay.length) await appendLine(join(dir, `days-${yearKey(d)}.jsonl`), mergeRollups(d, inDay, TOP_WRITES.day));
+      state.rolledDay = d;
+      changed = true;
+    }
+    if (changed) await prune(clock());
+  };
+
+  // 보관 기간이 지난 파일을 통째로 지운다
+  const prune = async (now: number) => {
+    if (!dir || !enabled()) return;
+    const retention = hooks.retention();
+    const keepHoursMs = retention === 'off' ? Infinity : MONITOR_HISTORY_DAYS[retention] * DAY_MS;
+    const oldestMinuteKey = dateKey(now - KEEP_MINUTE_DAYS * DAY_MS);
+    for (const name of await readdir(dir)) {
+      const minute = /^minutes-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
+      if (minute && minute[1] < oldestMinuteKey) await rm(join(dir, name), { force: true });
+      const hour = /^hours-(\d{4})-(\d{2})\.jsonl$/.exec(name);
+      if (hour) {
+        // 그달의 마지막 순간(다음 달 1일)이 보관 기간보다 오래됐으면
+        const monthEnd = new Date(Number(hour[1]), Number(hour[2]), 1).getTime();
+        if (monthEnd < now - keepHoursMs) await rm(join(dir, name), { force: true });
+      }
+    }
+  };
+
+  // writes = 그 1분의 컬렉션별 쓰기(줄 세울 때 미리 받아 둔다 — 주소가 바뀌면 집계가 곧바로 새로 시작하므로)
+  const flushMinute = async (minute: Rollup, writes: Map<string, ActivityOps> | undefined) => {
+    if (!enabled()) return;
+    const target = await resolveDir();
+    if (!target || !hooks.alive()) return;
+    const w = topWrites(writes ?? new Map<string, ActivityOps>(), TOP_WRITES.minute);
+    await appendLine(join(target, `minutes-${dateKey(minute.t)}.jsonl`), w ? { ...minute, w } : minute);
+    if (latest) state.last = latest;
+    await rollUp(minute.t);
+    await saveState(target, state);
+  };
+
+  const stop = () => {
+    const done = current;
+    current = null;
+    if (done && done.n > 0) {
+      const writes = hooks.minuteWrites(done.t);
+      void enqueue(() => flushMinute(done, writes));
+    }
+    return enqueue(async () => {
+      if (dir && latest && hooks.alive()) {
+        state.last = latest;
+        await saveState(dir, state);
+      }
+    });
+  };
+
+  return {
+    addSample(sample) {
+      if (!enabled()) {
+        current = null;
+        return;
+      }
+      const start = minuteStart(sample.at);
+      if (current && current.t !== start) {
+        const done = current;
+        const writes = hooks.minuteWrites(done.t);
+        void enqueue(() => flushMinute(done, writes));
+        current = null;
+      }
+      current ??= emptyRollup(start);
+      addSample(current, sample, hooks.intervalSec);
+    },
+    addCounters(counters, at) {
+      latest = { at, counters };
+      if (!firstCounters || !enabled()) return;
+      firstCounters = false;
+      void enqueue(async () => {
+        const target = await resolveDir();
+        if (!target) return;
+        const last = state.last;
+        // 10초 칸 3개 넘게 비었으면 빈 구간
+        if (last && at - last.at > hooks.intervalSec * 3 * 1000) {
+          await appendLine(join(target, 'gaps.jsonl'), gapBetween(last, counters, at));
+        }
+        state.last = latest;
+        await saveState(target, state);
+      });
+    },
+    stop,
+    async reset() {
+      await stop();
+      await enqueue(async () => {
+        dir = null;
+        fingerprint = null;
+        state = emptyState();
+        latest = null;
+        firstCounters = true;
+      });
+    },
+    clear() {
+      current = null;
+      return enqueue(async () => {
+        await rm(connectionDir(hooks.connectionId), { recursive: true, force: true });
+        dir = null;
+        fingerprint = null;
+        state = emptyState();
+        // 지운 직후의 누적값과 비교할 '지난번'이 없으니 빈 구간을 만들지 않는다
+        firstCounters = false;
+      });
+    },
+    currentFingerprint: () => fingerprint,
+    idle: () => queue,
+  };
+};
+
+// ── 연결 단위 관리 ──
+
+// 연결을 지웠을 때 — 그 연결의 기록 폴더 전체(옛 서버 것까지)
+export const dropConnectionHistory = (connectionId: string) => rm(connectionDir(connectionId), { recursive: true, force: true });
+
+// 파일 첫 줄의 t — 가장 오래된 기록 시각을 찾는 데만 쓴다(통째로 읽지 않는다)
+const firstRecordTime = async (file: string): Promise<number | null> => {
+  const handle = await open(file, 'r');
+  try {
+    const buffer = Buffer.alloc(16 * 1024);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const line = buffer.subarray(0, bytesRead).toString('utf8').split('\n')[0];
+    const t = (JSON.parse(line) as { t?: unknown }).t;
+    return typeof t === 'number' ? t : null;
+  } catch {
+    return null;
+  } finally {
+    await handle.close();
+  }
+};
+
+export const historyInfo = async (connectionId: string, current: string | null): Promise<HistoryInfo> => {
+  const root = connectionDir(connectionId);
+  let bytes = 0;
+  let servers = 0;
+  let oldest: number | null = null;
+  let entries: string[] = [];
+  try {
+    entries = await readdir(root);
+  } catch {
+    return { bytes: 0, servers: 0, oldest: null, current };
+  }
+  for (const server of entries) {
+    const serverDir = join(root, server);
+    if (!(await stat(serverDir)).isDirectory()) continue;
+    servers += 1;
+    for (const name of await readdir(serverDir)) {
+      const file = join(serverDir, name);
+      bytes += (await stat(file)).size;
+      if (/^(minutes|hours|days)-/.test(name)) {
+        const t = await firstRecordTime(file);
+        if (t !== null && (oldest === null || t < oldest)) oldest = t;
+      }
+    }
+  }
+  return { bytes, servers, oldest, current };
+};

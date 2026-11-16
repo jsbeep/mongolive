@@ -25,6 +25,7 @@ import type {
   MonitorTick,
   ActivityReport,
   LastWrites,
+  HistoryInfo,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -395,6 +396,10 @@ export const createRemoteDataSource = (): DataSource => {
       return request<ActivityReport>(`/monitor/activity?${params}`);
     },
     getLastWrites: () => request<LastWrites>('/monitor/last-writes'),
+    getHistoryInfo: () => request<HistoryInfo>('/monitor/history-info'),
+    async clearHistory() {
+      await request<void>('/monitor/history', { method: 'DELETE' });
+    },
 
     getServerSettings: () => request<ServerSettings>('/settings'),
     saveServerSettings: (next) => request<ServerSettings>('/settings', { method: 'PUT', body: JSON.stringify(next) }),

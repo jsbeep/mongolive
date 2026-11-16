@@ -11,15 +11,21 @@ export interface ProtectedTarget {
   collection?: string;
 }
 
+// Monitor 기록을 파일로 남길지(9-3) — 시 단위 기록의 보관 기간. 일 단위 요약은 켜져 있으면 늘 남긴다(하루 1줄)
+export type MonitorHistory = 'off' | '30d' | '90d' | '1y';
+export const MONITOR_HISTORY_DAYS: Record<Exclude<MonitorHistory, 'off'>, number> = { '30d': 30, '90d': 90, '1y': 365 };
+
 // 서버 쪽 설정(~/.mongolive/settings.json). 모든 브라우저에 똑같이 적용된다
 export interface ServerSettings {
   // 켜면 문서·컬렉션·DB 쓰기를 전부 거절한다(되돌리기 포함)
   readOnly: boolean;
   // 편집을 막을 DB/컬렉션
   protected: ProtectedTarget[];
+  // Monitor 기록(설정 › Monitor)
+  monitorHistory: MonitorHistory;
 }
 
-export const DEFAULT_SERVER_SETTINGS: ServerSettings = { readOnly: false, protected: [] };
+export const DEFAULT_SERVER_SETTINGS: ServerSettings = { readOnly: false, protected: [], monitorHistory: '90d' };
 
 // 이 쓰기가 건드리는 곳. null = MongoDB를 건드리지 않는 연산(메타데이터)
 export const mutationTarget = (op: MutationRequest): { database: string; collections: string[] } | null => {
@@ -78,5 +84,7 @@ export const normalizeServerSettings = (raw: unknown): ServerSettings => {
     seen.add(key);
     protectedTargets.push(collection === undefined ? { database } : { database, collection });
   }
-  return { readOnly: obj.readOnly === true, protected: protectedTargets };
+  const history = obj.monitorHistory;
+  const monitorHistory: MonitorHistory = history === 'off' || history === '30d' || history === '90d' || history === '1y' ? history : DEFAULT_SERVER_SETTINGS.monitorHistory;
+  return { readOnly: obj.readOnly === true, protected: protectedTargets, monitorHistory };
 };

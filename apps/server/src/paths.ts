@@ -16,3 +16,6 @@ export const settingsFilePath = (): string => process.env.SETTINGS_FILE || join(
 
 // 연결 목록(접속 주소 포함 — 비밀번호가 들어 있으므로 권한 600)
 export const connectionsFilePath = (): string => process.env.CONNECTIONS_FILE || join(APP_DIR, 'connections.json');
+
+// Monitor 기록(9-3) — 연결마다, 그 안에서 서버 신분마다 폴더(monitor/history)
+export const metricsDirPath = (): string => process.env.METRICS_DIR || join(APP_DIR, 'metrics');

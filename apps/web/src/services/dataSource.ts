@@ -26,6 +26,7 @@ import type {
   ActivityRange,
   ActivityReport,
   LastWrites,
+  HistoryInfo,
   AggregateResult,
   AggregateCounts,
   ConnectionInfo,
@@ -109,6 +110,9 @@ export interface DataSource {
   getActivity(scope: { database: string | null; collection: string | null }, range: ActivityRange): Promise<ActivityReport | null>;
   // 컬렉션별 마지막 쓰기(사이드바 트리, Monitor를 보는 동안). Mock은 null
   getLastWrites(): Promise<LastWrites | null>;
+  // 설정 › Monitor(9-3) — 이 연결의 기록 파일 크기·가장 오래된 기록 / 전부 지우기. Mock은 null / 아무것도 안 함
+  getHistoryInfo(): Promise<HistoryInfo | null>;
+  clearHistory(): Promise<void>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 

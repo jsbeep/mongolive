@@ -322,6 +322,18 @@ export interface ActivityReport {
   partial?: boolean;
 }
 
+// 설정 › Monitor — 이 연결의 기록 파일(9-3). GET /api/monitor/history-info, DELETE /api/monitor/history
+export interface HistoryInfo {
+  // 디스크에 있는 이 연결의 기록 크기(바이트) — 옛 서버(주소를 바꾸기 전)의 기록 포함
+  bytes: number;
+  // 기록이 있는 서버 수(주소를 바꿨다가 되돌리면 옛 기록에 다시 이어 붙는다)
+  servers: number;
+  // 가장 오래된 기록 시각
+  oldest: number | null;
+  // 지금 서버의 신분(replicaSetId 등으로 만든 폴더 이름). 아직 모르면 null
+  current: string | null;
+}
+
 export interface LastWrites {
   // 피드가 없으면(이 연결을 쓰는 탭이 없음) null
   since: number | null;
