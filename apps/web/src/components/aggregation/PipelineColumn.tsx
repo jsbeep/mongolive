@@ -40,7 +40,7 @@ import { pendingChangeCount, requestEditorFocus, updatePipelineDrafts, usePipeli
 import { recordPipelineVersion, replacePipeline, type StoredStage } from '../../services/savedPipelines';
 import { mongoshAggregateCommand } from '../../utils/mongoshQuery';
 import { copyToClipboard } from '../../utils/clipboard';
-import { forgetRuns, loadCounts, setPreview, useCounts, useOutput } from '../../services/aggregateRuns';
+import { cancelCounts, forgetRuns, loadCounts, setPreview, useCounts, useOutput } from '../../services/aggregateRuns';
 import { cn } from '../../utils/cn';
 import { useNavRow } from '../../utils/keyboardNav';
 import { HeaderTitle } from '../dashboard/columns/HeaderTitle';
@@ -231,6 +231,16 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
     return out;
   }, [stages, counts, countsKey, fullKey]);
   const countsFailure = countsKey === fullKey && counts?.status === 'error' ? counts.message : null;
+  // 세는 게 2초를 넘으면 Cancel — 끊으면 '멈춤'(카드는 개수 없이), Count again으로 다시
+  const countingNow = countsKey === fullKey && counts?.status === 'loading';
+  const countsCancelled = countsKey === fullKey && counts?.status === 'cancelled';
+  const [slowCount, setSlowCount] = useState(false);
+  useEffect(() => {
+    setSlowCount(false);
+    if (!countingNow) return;
+    const timer = setTimeout(() => setSlowCount(true), 2000);
+    return () => clearTimeout(timer);
+  }, [counts, countingNow]);
   const inputCount = countsKey === fullKey && counts?.status === 'done' && counts.data.counts[0] ? formatCount(counts.data.counts[0]) : null;
   const pendingIds = stages.filter((s) => s.pending).map((s) => s.id);
   const changeCount = pendingChangeCount(draftState, pendingIds);
@@ -615,6 +625,19 @@ export function PipelineColumn({ path, navIndex, selectedStageId, resultOpen, re
               <p className="mx-2 mb-1 rounded-lg bg-rose-50 px-2.5 py-1.5 text-xs text-rose-600" role="alert">
                 Couldn’t count: {countsFailure}
               </p>
+            )}
+            {collection && countsPipeline && ((countingNow && slowCount) || countsCancelled) && (
+              <div className="mx-2 mb-1 flex items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs text-slate-500" role="status">
+                <span className="min-w-0 flex-1 truncate">{countsCancelled ? 'Counting stopped' : 'Counting stages…'}</span>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-md px-1.5 py-0.5 font-medium text-slate-600 hover:bg-slate-200/70"
+                  data-tt={countsCancelled ? 'Count the documents at each stage again' : 'Stop counting — the stage cards stay without counts'}
+                  onClick={() => (countsCancelled ? loadCounts(database, collection, countsPipeline, true) : cancelCounts(database, collection, countsPipeline))}
+                >
+                  {countsCancelled ? 'Count again' : 'Cancel'}
+                </button>
+              </div>
             )}
             {/* 맨 위 — 원본 문서(파이프라인 앞, 컬렉션 그대로). 여기서도 필드 메뉴로 모아 시작할 수 있다 */}
             <OriginalRow selected={selectedStageId === INPUT_STAGE_ID} count={inputCount} onSelect={() => select(INPUT_STAGE_ID)} />

@@ -214,6 +214,8 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
     setMonitorScope({ database: activeDatabase, collection: activeDatabase ? treeCollectionName : null });
     setView('monitor');
   };
+  // Monitor를 보는 동안 패널·알림·빠른 이동·설정에서 어딘가로 이동하면 Monitor를 접고 Explorer에서 보여 준다
+  const showExplorer = () => setView('explorer');
   // 범위 바의 'Explorer' — 그 DB/컬렉션을 Explorer에서 연다
   const openScopeInExplorer = (scope: MonitorScope) => {
     setView('explorer');
@@ -533,6 +535,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
         onNavigate={(entry) => {
           // 이동하면 닫는다 — 오른쪽 컬럼(열리는 문서)을 가리므로
           setCenterOpen(false);
+          showExplorer();
           void state.navigateToChange(entry);
         }}
       />
@@ -557,9 +560,18 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
         databases={databases}
         activeDatabase={activeDatabase}
         commands={quickCommands}
-        onOpenDatabase={(name) => void selectDatabase(name)}
-        onOpenCollection={(database, collection, label) => void openCollectionHere(database, collection, label)}
-        onOpenObjectId={(oid) => void navigateToReference(oid)}
+        onOpenDatabase={(name) => {
+          showExplorer();
+          void selectDatabase(name);
+        }}
+        onOpenCollection={(database, collection, label) => {
+          showExplorer();
+          void openCollectionHere(database, collection, label);
+        }}
+        onOpenObjectId={(oid) => {
+          showExplorer();
+          void navigateToReference(oid);
+        }}
       />
 
       {/* 설정 창 — 사이드바 맨 아래 톱니바퀴(또는 Ctrl+K) */}
@@ -569,7 +581,10 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
         onClose={() => setSettingsOpen(false)}
         databases={databases}
         onMutate={mutate}
-        onOpenDatabase={(database) => void selectDatabase(database)}
+        onOpenDatabase={(database) => {
+          showExplorer();
+          void selectDatabase(database);
+        }}
       />
 
       {/* 쿼리 기록 — 누르면 지금 컬렉션에(없으면 원래 컬렉션을 열고) 실행, ↗는 원래 컬렉션에서 실행 */}
@@ -580,12 +595,14 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
           current={activeDatabase && activeCollectionName ? { database: activeDatabase, collection: activeCollectionName } : null}
           onApply={(entry: QueryHistoryEntry) => {
             closeSidebarPanel();
+            showExplorer();
             const current = activeDatabase && activeCollectionName;
             void runQuery(entry.filter, entry.text, current ? undefined : { database: entry.database, collection: entry.collection })
               .then((ok) => ok && openSearchPanel('query'));
           }}
           onOpenOriginal={(entry) => {
             closeSidebarPanel();
+            showExplorer();
             if (sidebar.isOverlay) sidebar.setMode('rail');
             void runQuery(entry.filter, entry.text, { database: entry.database, collection: entry.collection })
               .then((ok) => ok && openSearchPanel('query'));
@@ -604,6 +621,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
           onMutate={mutate}
           onOpenCollection={(database, collection, label) => {
             closeSidebarPanel();
+            showExplorer();
             if (sidebar.isOverlay) sidebar.setMode('rail');
             void openCollectionHere(database, collection, label);
           }}
@@ -619,6 +637,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
           databases={databases}
           onOpen={(b) => {
             closeSidebarPanel();
+            showExplorer();
             if (sidebar.isOverlay) sidebar.setMode('rail');
             void openLocation(b);
           }}
@@ -633,6 +652,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
           current={pipelinePath?.databaseName && pipelinePath.collectionName ? { database: pipelinePath.databaseName, collection: pipelinePath.collectionName } : null}
           onOpen={(database, collection, stored, label) => {
             closeSidebarPanel();
+            showExplorer();
             if (sidebar.isOverlay) sidebar.setMode('rail');
             const replaced = stored ? replacePipeline(database, collection, stored) : null;
             // 같은 파이프라인이 열려 있었으면 고른 스테이지가 없어졌을 수 있다 — 바꿨으면 마지막 스테이지의 출력으로

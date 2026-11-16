@@ -40,7 +40,13 @@ aggregateRouter.post('/databases/:db/collections/:col/aggregate', async (req, re
   const started = Date.now();
   try {
     if (body.counts === true) {
-      res.json(await countStages(collection, pipeline, started));
+      // 화면의 Cancel — 브라우저가 요청을 끊으면 다음 스테이지부터 세지 않는다(돌던 명령은 maxTimeMS로 끝난다)
+      let gone = false;
+      res.on('close', () => {
+        if (!res.writableFinished) gone = true;
+      });
+      const result = await countStages(collection, pipeline, started, () => gone);
+      if (!gone) res.json(result);
       return;
     }
     const rows = await collection.aggregate([...pipeline, { $limit: AGGREGATE_RESULT_LIMIT + 1 }], options).toArray();
@@ -58,11 +64,13 @@ aggregateRouter.post('/databases/:db/collections/:col/aggregate', async (req, re
 // 스테이지마다 '여기까지 몇 개'를 앞에서부터 센다(앞부분 파이프라인 + $limit + $count). 개수는 상한에서 멈추고,
 // 한 번 세는 데 QUERY_MAX_TIME_MS, 전체는 COUNT_BUDGET_MS까지. 어느 스테이지에서 막히면(입력 오류·시간 초과)
 // 거기서 멈추고 그 스테이지를 알려 준다 — 그 뒤 카드는 개수 없이 보인다. 입력 탓이 아닌 오류는 그대로 던진다(500).
+// cancelled() = 브라우저가 요청을 끊었다(Cancel) — 받을 곳이 없으니 그만 센다
 const COUNT_BUDGET_MS = 15_000;
 
-const countStages = async (collection: Collection, pipeline: BsonDocument[], started: number): Promise<AggregateCounts> => {
+const countStages = async (collection: Collection, pipeline: BsonDocument[], started: number, cancelled: () => boolean): Promise<AggregateCounts> => {
   const counts: StageCount[] = [];
   for (let i = 0; i <= pipeline.length; i++) {
+    if (cancelled()) return { counts, elapsedMs: Date.now() - started };
     const left = started + COUNT_BUDGET_MS - Date.now();
     // i = 0(들어오는 문서)은 늘 센다 — 나머지는 남은 시간 안에서만
     if (i > 0 && left <= 0) {

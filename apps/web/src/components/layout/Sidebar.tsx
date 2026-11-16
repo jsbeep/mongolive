@@ -11,7 +11,7 @@
 // 좁은 화면(<1024px)에선 레일까지만 붙고, 전체는 컬럼 위에 떠서 열린다(바깥 클릭·Esc → 레일).
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
-import { Activity, Bookmark, ChevronRight, ChevronsLeft, Link, LogOut, PanelLeftClose, PanelLeftOpen, Search, Server, Settings, Workflow, type LucideIcon } from 'lucide-react';
+import { Activity, Bookmark, ChevronRight, ChevronsLeft, Link, LogOut, PanelLeftClose, PanelLeftOpen, Search, Server, Settings, Undo2, Workflow, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, MutationRequest } from '../../types/explorer';
 import { clampFullWidth, FULL_DEFAULT, RAIL_WIDTH, snapMode, type SidebarMode, type SidebarState } from '../../hooks/useSidebar';
 import { ConnectionsTree, type ConnectionsTreeProps } from './ConnectionsTree';
@@ -151,6 +151,8 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
         >
           <Activity size={15} />
           <span>Monitor</span>
+          {/* 켜져 있으면 — 다시 누르면 Explorer로 돌아간다는 표시(버튼 전체가 돌아가기) */}
+          {tree.monitor.active && <Undo2 size={13} className="ml-auto shrink-0 opacity-70" aria-hidden="true" />}
         </button>
         {SOON_ITEMS.map(({ icon: Icon, label }) => (
           <div key={label} className={styles.navItem} role="button" aria-disabled="true" data-tt={`${label} — coming soon`}>
@@ -222,7 +224,8 @@ function RailContent({ connected, onExpand, onHide, panels, monitor, onOpenSetti
           data-tt={!connected ? 'Monitor — connect first' : monitor.active ? 'Back to Explorer' : MONITOR_TIP}
           onClick={() => connected && monitor.onToggle()}
         >
-          <Activity size={16} />
+          {/* 켜져 있으면 돌아가기 아이콘(누르면 Explorer로) */}
+          {monitor.active ? <Undo2 size={16} /> : <Activity size={16} />}
         </button>
         {SOON_ITEMS.map(({ icon: Icon, label }) => (
           <div key={label} className={styles.railBtnSoon} role="button" aria-disabled="true" aria-label={label} data-tt={`${label} — coming soon`}>

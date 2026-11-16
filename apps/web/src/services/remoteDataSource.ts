@@ -307,8 +307,8 @@ export const createRemoteDataSource = (): DataSource => {
     },
     aggregate: (database, collection, pipeline) =>
       request<AggregateResult>(`${collectionPath(database, collection)}/aggregate`, { method: 'POST', body: JSON.stringify({ pipeline }) }),
-    aggregateCounts: (database, collection, pipeline) =>
-      request<AggregateCounts>(`${collectionPath(database, collection)}/aggregate`, { method: 'POST', body: JSON.stringify({ pipeline, counts: true }) }),
+    aggregateCounts: (database, collection, pipeline, signal) =>
+      request<AggregateCounts>(`${collectionPath(database, collection)}/aggregate`, { method: 'POST', body: JSON.stringify({ pipeline, counts: true }), signal }),
     getFullDocumentByIdInCollection: (database, collection, documentId) =>
       request<Document>(`${collectionPath(database, collection)}/documents/${enc(documentId)}`),
     exportCollection: (database, collection) => request<CollectionExport>(`${collectionPath(database, collection)}/export`),

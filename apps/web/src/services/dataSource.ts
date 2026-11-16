@@ -82,7 +82,8 @@ export interface DataSource {
   // ── Aggregation(읽기만, 서버 연결에서만 — Mock은 거절) ──
   // pipeline은 Canonical EJSON. counts = 스테이지 카드의 개수(들어오는 문서 + 스테이지마다 지난 문서)
   aggregate(database: string, collection: string, pipeline: JsonValue[]): Promise<AggregateResult>;
-  aggregateCounts(database: string, collection: string, pipeline: JsonValue[]): Promise<AggregateCounts>;
+  // signal — 화면의 Cancel(요청을 끊으면 서버도 다음 스테이지부터 세지 않는다)
+  aggregateCounts(database: string, collection: string, pipeline: JsonValue[], signal?: AbortSignal): Promise<AggregateCounts>;
 
   // ── 쓰기 ──
   mutate(op: MutationRequest): Promise<MutationResult>;

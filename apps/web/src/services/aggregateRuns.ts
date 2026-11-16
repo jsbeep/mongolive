@@ -12,7 +12,9 @@ import { onConnectionSwitch } from './connectionStorage';
 export type RunState<T> =
   | { status: 'loading' }
   | { status: 'done'; data: T }
-  | { status: 'error'; message: string };
+  | { status: 'error'; message: string }
+  // 개수만 — Cancel로 멈췄다(다시 셀 때까지 카드에 개수 없음)
+  | { status: 'cancelled' };
 
 // 결과는 최대 500개씩이라 너무 많이 들고 있지 않는다 — 오래된 것부터 버린다
 const MAX_OUTPUTS = 40;
@@ -20,6 +22,8 @@ const MAX_OUTPUTS = 40;
 const outputs = new Map<string, RunState<AggregateResult>>();
 const counts = new Map<string, RunState<AggregateCounts>>();
 const stale = new Set<string>();
+// 도는 중인 요청을 끊는 손잡이 — 'loading' 상태 객체마다
+const aborts = new WeakMap<object, AbortController>();
 // 편집기 미리보기 — 대상(DB·컬렉션)마다 하나. stageId '*' = 통 JSON 모드 전체
 export interface PipelinePreview {
   stageId: string;
@@ -60,16 +64,18 @@ const watchLive = () => {
   });
 };
 
-const run = <T,>(map: Map<string, RunState<T>>, key: string, force: boolean, request: () => Promise<T>, max = Infinity) => {
+const run = <T,>(map: Map<string, RunState<T>>, key: string, force: boolean, request: (signal: AbortSignal) => Promise<T>, max = Infinity) => {
   watchLive();
   if (!force && map.has(key)) return;
   const loading: RunState<T> = { status: 'loading' };
+  const controller = new AbortController();
+  aborts.set(loading, controller);
   map.delete(key);
   map.set(key, loading);
   // Map은 넣은 순서를 지킨다 — 맨 앞이 가장 오래된 것
   if (map.size > max) map.delete(map.keys().next().value!);
   emit();
-  request()
+  request(controller.signal)
     .then((data) => {
       // 그 사이 다시 돌렸으면(Run) 늦게 온 옛 응답은 버린다
       if (map.get(key) === loading) map.set(key, { status: 'done', data });
@@ -85,7 +91,17 @@ export const loadOutput = (database: string, collection: string, pipeline: Ejson
   run(outputs, runKey(database, collection, pipeline), force, () => api.aggregate(database, collection, pipeline), MAX_OUTPUTS);
 
 export const loadCounts = (database: string, collection: string, pipeline: EjsonObject[], force = false) =>
-  run(counts, runKey(database, collection, pipeline), force, () => api.aggregateCounts(database, collection, pipeline), MAX_OUTPUTS);
+  run(counts, runKey(database, collection, pipeline), force, (signal) => api.aggregateCounts(database, collection, pipeline, signal), MAX_OUTPUTS);
+
+// Cancel — 세는 중이면 요청을 끊고 '멈춤'으로. 늦게 오는 실패(AbortError)는 run이 버린다(상태가 바뀌었으니)
+export const cancelCounts = (database: string, collection: string, pipeline: EjsonObject[]) => {
+  const key = runKey(database, collection, pipeline);
+  const state = counts.get(key);
+  if (state?.status !== 'loading') return;
+  counts.set(key, { status: 'cancelled' });
+  aborts.get(state)?.abort();
+  emit();
+};
 
 // Run — 이 대상의 받아 둔 출력·개수를 버린다(지금 보이는 것은 호출한 쪽이 force로 다시 받는다). 낡음 표시도 지운다
 export const forgetRuns = (database: string, collection: string) => {
