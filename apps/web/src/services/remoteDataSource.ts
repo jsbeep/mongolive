@@ -27,6 +27,7 @@ import type {
   LastWrites,
   HistoryInfo,
   HistoryReport,
+  BackfillReport,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -139,6 +140,9 @@ export const createRemoteDataSource = (): DataSource => {
   const emitStatus = (status: LiveStatus) => statusListeners.forEach((listener) => listener(status));
   const logListeners = new Set<(entries: LiveLogEntry[], isBacklog: boolean) => void>();
   const monitorListeners = new Set<(event: MonitorEvent) => void>();
+  // 'monitor:backfill'도 Monitor 방으로 온다 — 둘 중 하나라도 듣고 있으면 구독한다
+  const backfillListeners = new Set<(report: BackfillReport) => void>();
+  const monitorWanted = () => monitorListeners.size + backfillListeners.size;
 
   // ── 내 저장의 메아리 알아보기 ──
   // 내가 저장하면 서버 changeStream이 같은 변경을 알림으로 다시 보낸다(메아리). 저장 응답의 opTime과
@@ -203,7 +207,7 @@ export const createRemoteDataSource = (): DataSource => {
       // 활동 패널이 열려 있었다면 기록 구독도 다시(최근 기록이 다시 오지만 패널이 id로 중복을 거른다)
       if (logListeners.size > 0) next.emit('log:subscribe');
       // Monitor 화면도 마찬가지 — 최근 기록이 다시 오고 화면이 통째로 바꾼다
-      if (monitorListeners.size > 0) next.emit('monitor:subscribe');
+      if (monitorWanted() > 0) next.emit('monitor:subscribe');
       // 끊겨 있던 동안의 변경은 받지 못했다 → 화면을 새로 받게 한다(첫 연결은 막 불러온 상태라 제외)
       if (everConnected) emitStatus({ state: lastServerState === 'polling' ? 'polling' : 'running', resync: true });
       everConnected = true;
@@ -242,6 +246,7 @@ export const createRemoteDataSource = (): DataSource => {
     });
     next.on('monitor:backlog', (snapshot: MonitorSnapshot) => monitorListeners.forEach((listener) => listener({ kind: 'backlog', snapshot })));
     next.on('monitor:sample', (tick: MonitorTick) => monitorListeners.forEach((listener) => listener({ kind: 'sample', tick })));
+    next.on('monitor:backfill', (report: BackfillReport) => backfillListeners.forEach((listener) => listener(report)));
     next.on('log', (entry: LiveLogEntry) =>
       deliver(() => {
         const marked = { ...entry, own: isOwn(entry.opTime) };
@@ -408,6 +413,18 @@ export const createRemoteDataSource = (): DataSource => {
     async clearHistory() {
       await request<void>('/monitor/history', { method: 'DELETE' });
     },
+    getBackfill: () => request<BackfillReport>('/monitor/backfill'),
+    startBackfill: (id) => request<BackfillReport>('/monitor/backfill/start', { method: 'POST', body: JSON.stringify(id ? { id } : {}) }),
+    stopBackfill: (id) => request<BackfillReport>('/monitor/backfill/stop', { method: 'POST', body: JSON.stringify(id ? { id } : {}) }),
+    onBackfill(listener) {
+      const s = ensureSocket();
+      backfillListeners.add(listener);
+      if (monitorWanted() === 1 && s.connected) s.emit('monitor:subscribe');
+      return () => {
+        backfillListeners.delete(listener);
+        if (monitorWanted() === 0 && s.connected) s.emit('monitor:unsubscribe');
+      };
+    },
 
     getServerSettings: () => request<ServerSettings>('/settings'),
     saveServerSettings: (next) => request<ServerSettings>('/settings', { method: 'PUT', body: JSON.stringify(next) }),
@@ -423,10 +440,10 @@ export const createRemoteDataSource = (): DataSource => {
     onMonitor(listener) {
       const s = ensureSocket();
       monitorListeners.add(listener);
-      if (monitorListeners.size === 1 && s.connected) s.emit('monitor:subscribe');
+      if (monitorWanted() === 1 && s.connected) s.emit('monitor:subscribe');
       return () => {
         monitorListeners.delete(listener);
-        if (monitorListeners.size === 0 && s.connected) s.emit('monitor:unsubscribe');
+        if (monitorWanted() === 0 && s.connected) s.emit('monitor:unsubscribe');
       };
     },
     // 왕복 시간: 서버가 받자마자 응답하는 'rtt'를 보내고 응답까지 잰다(2초 안에 없으면 null)

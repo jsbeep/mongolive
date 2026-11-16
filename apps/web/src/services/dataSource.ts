@@ -29,6 +29,7 @@ import type {
   HistoryInfo,
   HistoryReport,
   MonitorRange,
+  BackfillReport,
   AggregateResult,
   AggregateCounts,
   ConnectionInfo,
@@ -117,6 +118,12 @@ export interface DataSource {
   // Monitor의 긴 기간(24h~All, 9-3b) — 기록 파일을 칸으로 묶은 것. writes = 컬렉션별 쓰기도(Collections 탭). Mock은 null
   getHistory(range: Exclude<MonitorRange, '5m' | '1h'>, options?: { writes?: boolean; database?: string | null; collection?: string | null }): Promise<HistoryReport | null>;
   clearHistory(): Promise<void>;
+  // 빈 구간 불러오기(9-4) — 탭이 없던 동안의 쓰기를 changeStream으로 다시 읽는다. id가 없으면 전부. Mock은 null / 아무것도 안 함
+  getBackfill(): Promise<BackfillReport | null>;
+  startBackfill(id?: string): Promise<BackfillReport | null>;
+  stopBackfill(id?: string): Promise<BackfillReport | null>;
+  // 바뀔 때마다(불러오는 중엔 1초에 한 번). 반환값을 부르면 해제
+  onBackfill(listener: (report: BackfillReport) => void): () => void;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 

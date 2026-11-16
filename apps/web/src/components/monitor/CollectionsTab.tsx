@@ -2,16 +2,20 @@
 //   범위 = 서버 전체 / DB:  쓰기 차트 + 컬렉션 표(쓰기 수 · 작업 비율 · 추세 · 마지막 쓰기). 행을 누르면 그 컬렉션으로 좁힌다
 //   범위 = 컬렉션:        쓰기 차트 + 자주 바뀐 필드 · 자주 바뀐 문서(누르면 Explorer에서 연다 — 최근 1시간만 있다)
 // 기간(범위 바): 5m·1h = 서버 메모리(10초마다), 24h~All = 기록 파일(1분마다). 기록은 탭이 연결을 쓰는 동안만 쌓인다.
+// 맨 위 배너(9-4): 탭이 없던 동안의 쓰기를 changeStream으로 다시 불러온다. 차트의 빈 구간 띠는 불러왔는지 툴팁에 적는다.
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpRight, CircleAlert, Loader2 } from 'lucide-react';
 import type { ActivityCollection, ActivityOps, ActivityRange, CollectionSummary, LastWrite, MonitorRange } from '../../types/explorer';
 import { LIVE_RANGES } from '../../types/explorer';
 import { api } from '../../services/api';
 import { useActivity, useHistory } from '../../hooks/useActivity';
+import { useBackfill } from '../../hooks/useBackfill';
 import { cn } from '../../utils/cn';
 import { TimeChart, Sparkline, type ChartSeries } from './charts';
 import { chartWindow, fmtAgo, fmtClock, fmtDateTime, fmtNumber, fmtSpan, RANGE_LABEL } from './format';
 import type { MonitorScope } from './ScopeBar';
+import { BackfillBanner } from './BackfillBanner';
+import { gapBand } from './backfill';
 
 const MINUTE = 60_000;
 const OPS: { key: keyof ActivityOps; label: string; color: string }[] = [
@@ -129,7 +133,7 @@ interface View {
   now: number;
   rows: ActivityCollection[];
   trendLength: number;
-  chart: { title: string; subtitle: string; times: number[]; series: ChartSeries[]; windowMs: number; gapMs: number; timeFormat: 'seconds' | 'datetime' | 'date'; bands: { from: number; to: number; label: string }[] };
+  chart: { title: string; subtitle: string; times: number[]; series: ChartSeries[]; windowMs: number; gapMs: number; timeFormat: 'seconds' | 'datetime' | 'date'; bands: { from: number; to: number; label: string; filled?: boolean }[] };
   target: ActivityCollection | null;
   fields?: { path: string; count: number }[];
   documents?: { id: string; count: number }[];
@@ -143,6 +147,9 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'writes', desc: true });
   const activity = useActivity(live, scope, (live ? range : '1h') as ActivityRange);
   const history = useHistory(!live, range, { writes: true, database: scope.database, collection: scope.collection });
+  // 탭이 없던 동안의 쓰기 불러오기(9-4) — 범위와 상관없이 이 연결 전체
+  const backfill = useBackfill(true);
+  const backfillGaps = backfill.report?.gaps;
   const atCollection = scope.database !== null && scope.collection !== null;
   const scopeName = scope.collection ?? scope.database ?? 'All databases';
 
@@ -210,11 +217,11 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
         windowMs: Math.max(report.bucketMs, report.to - report.from),
         gapMs: report.bucketMs * 1.5,
         timeFormat: report.bucketMs >= DAY_MS ? 'date' : 'datetime',
-        bands: report.gaps.map((g) => ({ from: g.from, to: g.to, label: `Not recording ${fmtDateTime(g.from)} – ${fmtDateTime(g.to)}` })),
+        bands: report.gaps.map((g) => ({ from: g.from, to: g.to, ...gapBand(g, report.fills ?? [], backfillGaps ?? []) })),
       },
       target: atCollection ? rows[0] ?? null : null,
     };
-  }, [live, activity.report, activity.now, history.report, lastWrites, range, scopeName, atCollection]);
+  }, [live, activity.report, activity.now, history.report, lastWrites, range, scopeName, atCollection, backfillGaps]);
 
   const rows = useMemo((): ActivityCollection[] => {
     if (!view || atCollection) return [];
@@ -265,6 +272,7 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
 
   return (
     <div className={styles.body}>
+      <BackfillBanner state={backfill} />
       <div className={styles.toolbar}>
         {live ? (
           <>

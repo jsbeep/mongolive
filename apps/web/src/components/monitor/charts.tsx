@@ -89,7 +89,8 @@ interface TimeChartProps {
   // 툴팁·표의 시각 모양 — 실시간(초까지) / 긴 기간(날짜+시각) / 일 단위(날짜만)
   timeFormat?: 'seconds' | 'datetime' | 'date';
   // 기록하지 않던 구간 — 회색 띠(올리면 설명)
-  bands?: { from: number; to: number; label: string }[];
+  // 기록하지 않던 구간. filled = 그 구간의 값을 나중에 채웠다(더 옅게)
+  bands?: { from: number; to: number; label: string; filled?: boolean }[];
 }
 
 export function TimeChart({ title, subtitle, times, series, format, windowMs, now, gapMs, emptyText = 'No data yet', timeFormat = 'seconds', bands = [] }: TimeChartProps) {
@@ -256,7 +257,7 @@ export function TimeChart({ title, subtitle, times, series, format, windowMs, no
                 const x1 = Math.max(PAD_LEFT, x(band.from));
                 const x2 = Math.min(width - PAD_RIGHT, x(band.to));
                 if (x2 - x1 < 1) return null;
-                return <rect key={`${band.from}-${band.to}`} x={x1} y={PAD_TOP} width={x2 - x1} height={PLOT_H} className="fill-slate-100" data-tt={band.label} />;
+                return <rect key={`${band.from}-${band.to}`} x={x1} y={PAD_TOP} width={x2 - x1} height={PLOT_H} className={band.filled ? 'fill-slate-50' : 'fill-slate-100'} data-tt={band.label} />;
               })}
               {ticks.map(({ t, label }) => (
                 <text key={t} x={x(t)} y={PAD_TOP + PLOT_H + 13} textAnchor="middle" className="fill-slate-400 font-mono text-[10px]">{label}</text>

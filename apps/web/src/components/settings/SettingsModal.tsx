@@ -2,7 +2,7 @@
 //   Display     — 값 표시(Date 시간대, ObjectId 줄임). 이 브라우저에만(services/preferences)
 //   Safety      — read-only·보호 대상(서버 settings.json, 모든 브라우저 공통 — 서버가 막는다), 삭제 확인 강도·Undo 단계(이 브라우저)
 //   Realtime    — 실시간 반영 간격(즉시 / 느슨하게)
-//   Monitor     — 지표 기록 파일의 보관 기간(서버 settings.json), 이 연결의 기록 크기·지우기(9-3)
+//   Monitor     — 지표 기록 파일의 보관 기간(서버 settings.json), 빈 구간 자동 불러오기 한도(9-4), 이 연결의 기록 크기·지우기(9-3)
 //   Data        — 샘플 데이터 불러오기
 //   Diagnostics — 서버·MongoDB·changeStream·권한 (GET /api/diagnostics)
 //   Security    — 보안 설정(.env)을 읽기만. 화면에서 바꿀 수 있으면 세션 하나만 탈취돼도 인증을 끌 수 있어서
@@ -10,7 +10,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom';
 import { AnimatePresence, m } from 'framer-motion';
 import { Activity, CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import type { CollectionSummary, DatabaseSummary, Diagnostics, HistoryInfo, MonitorHistory, MutationRequest } from '../../types/explorer';
+import type { BackfillAutoLimit, CollectionSummary, DatabaseSummary, Diagnostics, HistoryInfo, MonitorHistory, MutationRequest, ServerSettings } from '../../types/explorer';
+import { BACKFILL_AUTO_LIMITS } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
 import { useActiveConnection } from '../../services/activeConnection';
 import { sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type Theme, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type StandaloneRefresh, type UndoDepth } from '../../services/preferences';
@@ -467,14 +468,15 @@ function MonitorSection() {
   }, [connection]);
   useEffect(load, [load]);
 
-  const setHistory = async (monitorHistory: MonitorHistory) => {
+  const save = async (patch: Partial<ServerSettings>) => {
     setError(null);
     try {
-      await saveServerSettings({ ...settings, monitorHistory });
+      await saveServerSettings({ ...settings, ...patch });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save');
     }
   };
+  const setHistory = (monitorHistory: MonitorHistory) => save({ monitorHistory });
   const clear = async () => {
     if (!armed) return setArmed(true);
     setBusy(true);
@@ -516,6 +518,28 @@ function MonitorSection() {
         {settings.monitorHistory === 'off' && (
           <p className="mt-2 text-[11px] text-slate-500">Off: only the last hour, in memory. Files already written stay until you clear them.</p>
         )}
+      </div>
+
+      <div className={styles.group}>
+        <p className={styles.groupTitle}>Fill gaps</p>
+        <p className={styles.groupHint}>
+          Writes made while no tab had the connection open are read back from the change stream when you open it again — counts only, no documents.
+          Gaps up to this many writes load by themselves; bigger ones wait for you in Monitor › Collections. Saved on the server, for every browser.
+        </p>
+        <div className={cn(settings.monitorHistory === 'off' && 'pointer-events-none opacity-50')} aria-disabled={settings.monitorHistory === 'off'}>
+          <Segment<string>
+            value={String(settings.backfillAuto)}
+            onChange={(v) => void save({ backfillAuto: Number(v) as BackfillAutoLimit })}
+            options={BACKFILL_AUTO_LIMITS.map((n) => ({ value: String(n), label: n === 0 ? 'Off' : `Up to ${n / 1000}K` }))}
+          />
+        </div>
+        <p className="mt-2 text-[11px] text-slate-500">
+          {settings.monitorHistory === 'off'
+            ? 'History is off — there is nothing to fill.'
+            : settings.backfillAuto === 0
+              ? 'Off: every gap with writes waits for you to load it.'
+              : 'Big gaps take a while and read the oplog — load them when the server is quiet.'}
+        </p>
       </div>
 
       <div className={styles.group}>

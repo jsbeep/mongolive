@@ -383,11 +383,13 @@ export interface BackfillEstimate {
   resumable: boolean | null;
   // 남은 쓰기 이벤트 수. 모르면 null
   events: number | null;
+  // 구간 전체 쓰기 이벤트 수(진행률 = loaded / total). 모르면 null
+  total: number | null;
   // 어떻게 셌나 — serverStatus 누적값 차이 / oplog 세기(5초 제한)
   source: 'counters' | 'oplog' | null;
   // 남은 크기(바이트) = oplog 평균 항목 크기 × 이벤트 수
   bytes: number | null;
-  // 이때까지 불러오지 않으면 시작 지점이 oplog에서 지워지기 시작한다(ms)
+  // 이때까지 불러오지 않으면 시작 지점이 oplog에서 지워지기 시작한다(ms). oplog이 아직 크기 한도까지 안 찼거나 모르면 null
   deadline: number | null;
 }
 
@@ -408,7 +410,7 @@ export interface BackfillGap {
 
 export interface BackfillReport {
   gaps: BackfillGap[];
-  // 설정 › Realtime의 자동 한도(0 = 끔)
+  // 설정 › Monitor의 자동 한도(0 = 끔)
   autoLimit: number;
 }
 

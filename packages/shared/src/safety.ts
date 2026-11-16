@@ -26,7 +26,7 @@ export interface ServerSettings {
   protected: ProtectedTarget[];
   // Monitor 기록(설정 › Monitor)
   monitorHistory: MonitorHistory;
-  // 빈 구간 자동 불러오기 한도(설정 › Realtime)
+  // 빈 구간 자동 불러오기 한도(설정 › Monitor)
   backfillAuto: BackfillAutoLimit;
 }
 

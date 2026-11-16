@@ -9,7 +9,7 @@
 //
 // 추정(불러오기 전에 보여 줄 것): 이어 받을 수 있나(oplog 가장 오래된 ts), 이벤트 수(serverStatus 누적값 차이 →
 // 안 되면 oplog 세기, 5초 제한), 크기(oplog 평균 항목 × 수), 언제까지 불러와야 하나(시작 지점이 oplog에서 밀려날 때).
-// 추정이 설정 › Realtime의 한도 이하면 바로 불러오고, 넘으면 기다린다(POST /monitor/backfill/start).
+// 추정이 설정 › Monitor의 한도 이하면 바로 불러오고, 넘으면 기다린다(POST /monitor/backfill/start).
 // oplog가 이미 시작 지점을 지나갔으면 남아 있는 데부터만(partialFrom).
 //
 // 흔적 없음: changeStream과 local.oplog.rs를 읽기만 한다. 피드가 닫히면(탭이 다 떠남) 멈추고 위치를 남긴다 — 다음에 이어서.
@@ -74,6 +74,8 @@ export const clusterNow = async (client: MongoClient): Promise<ResumePoint | nul
 interface OplogInfo {
   oldest: Ts | null;
   avgBytes: number | null;
+  // 크기 한도까지 거의 찼나(찬 뒤에야 앞에서부터 지워진다). 모르면 null
+  full: boolean | null;
 }
 
 // oplog의 가장 오래된 항목과 평균 크기 — local 읽기 권한이 없으면 null
@@ -81,6 +83,7 @@ const oplogInfo = async (client: MongoClient): Promise<OplogInfo> => {
   const oplog = client.db('local').collection('oplog.rs');
   let oldest: Ts | null = null;
   let avgBytes: number | null = null;
+  let full: boolean | null = null;
   try {
     const [first] = await withTimeout(oplog.find({}, { projection: { _id: 0, ts: 1 }, sort: { $natural: 1 }, limit: 1, maxTimeMS: 5000 }).toArray());
     oldest = tsOf(first?.ts);
@@ -89,12 +92,18 @@ const oplogInfo = async (client: MongoClient): Promise<OplogInfo> => {
   }
   try {
     const [stats] = await withTimeout(oplog.aggregate([{ $collStats: { storageStats: {} } }], { maxTimeMS: 5000 }).toArray());
-    const avg = (stats as { storageStats?: { avgObjSize?: unknown } } | undefined)?.storageStats?.avgObjSize;
+    const storage = (stats as { storageStats?: { avgObjSize?: unknown; size?: unknown; maxSize?: unknown } } | undefined)?.storageStats;
+    const avg = storage?.avgObjSize;
     avgBytes = typeof avg === 'number' && avg > 0 ? avg : null;
+    // 큰 값은 Long으로 올 수 있다
+    const num = (v: unknown): number | null => (typeof v === 'number' ? v : v && typeof v === 'object' && 'toNumber' in v ? (v as { toNumber: () => number }).toNumber() : null);
+    const size = num(storage?.size);
+    const maxSize = num(storage?.maxSize);
+    if (size !== null && maxSize !== null && maxSize > 0) full = size >= maxSize * 0.9;
   } catch {
     // 권한 없음 등
   }
-  return { oldest, avgBytes };
+  return { oldest, avgBytes, full };
 };
 
 // 구간 전체의 이벤트 수 — 닫힐 때와 다시 열린 직후의 serverStatus 누적값 차이, 안 되면 oplog 세기(5초 제한)
@@ -131,10 +140,12 @@ const estimateOf = (gap: StoredGap, oplog: OplogInfo, now: number): BackfillEsti
   return {
     resumable,
     events,
+    total: gap.estimated?.events ?? null,
     source: gap.estimated?.source ?? null,
     bytes: events !== null && oplog.avgBytes !== null ? Math.round(events * oplog.avgBytes) : null,
-    // 시작 지점과 oplog 맨 앞의 거리만큼 더 지나면 시작 지점이 밀려난다(쓰기 속도가 그대로라면)
-    deadline: resumable && oplog.oldest ? now + (start.ts.t - oplog.oldest.t) * 1000 : null,
+    // 시작 지점과 oplog 맨 앞의 거리만큼 더 지나면 시작 지점이 밀려난다(쓰기 속도가 그대로라면).
+    // 아직 크기 한도까지 안 찼으면 아무것도 지워지지 않으니 기한이 없다(null)
+    deadline: resumable && oplog.oldest && oplog.full !== false ? now + (start.ts.t - oplog.oldest.t) * 1000 : null,
   };
 };
 
@@ -184,7 +195,7 @@ export const createBackfill = (hooks: BackfillHooks): Backfill => {
   const wanted = new Set<string>();
   const estimates = new Map<string, BackfillEstimate>();
   const errors = new Map<string, string>();
-  let oplog: OplogInfo = { oldest: null, avgBytes: null };
+  let oplog: OplogInfo = { oldest: null, avgBytes: null, full: null };
   let notifyTimer: NodeJS.Timeout | null = null;
 
   const report = (): BackfillReport => ({
@@ -391,7 +402,8 @@ export const createBackfill = (hooks: BackfillHooks): Backfill => {
         const remaining = remainingOf(g);
         const est = estimates.get(g.id);
         console.log(`${label} 빈 구간 ${Math.round((g.to.at - g.from.at) / 1000)}초: 남은 이벤트 ${remaining ?? '?'}(${g.estimated?.source ?? '모름'}), 이어 받기 ${est?.resumable ?? '?'}`);
-        if (limit > 0 && !g.paused && remaining !== null && remaining <= limit) wanted.add(g.id);
+        // 0건이면 한도가 꺼져 있어도 바로 정리한다(읽을 게 없다)
+        if (!g.paused && remaining !== null && (remaining === 0 || (limit > 0 && remaining <= limit))) wanted.add(g.id);
       }
       notify(true);
       runNext();
