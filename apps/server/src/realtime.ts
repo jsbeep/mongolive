@@ -39,6 +39,7 @@ import { toWire } from './wire';
 import { createSampler, type Sampler } from './monitor/sampler';
 import { createActivityStats, type ActivityStats } from './monitor/activity';
 import { createRecorder, type Recorder, type ResumePoint } from './monitor/history';
+import { createSlowLog, type SlowLog } from './monitor/slowQueries';
 import { clusterNow, createBackfill, resumePointOf, toTimestamp, tokenTs, tsOf, type Backfill } from './monitor/backfill';
 import { clusterFingerprint } from './monitor/identity';
 import { SAMPLE_INTERVAL_MS } from './monitor/sampler';
@@ -161,6 +162,8 @@ interface Feed {
   recorder: Recorder;
   // 빈 구간 불러오기(monitor/backfill)
   backfill: Backfill;
+  // 느린 쿼리(서버 로그, monitor/slowQueries) — 샘플러 박자에 읽는다
+  slow: SlowLog;
   // 다음에 스트림을 새로 열 때 T0(지금 클러스터 시각)부터 열고 그 앞을 빈 구간으로 넘긴다 — 피드를 열 때·주소가 바뀔 때
   needsBoundary: boolean;
   // 실시간을 다시 받기 시작한 때(ms) — 맨 마지막 빈 구간을 다 채우면 메모리 집계의 '세기 시작'을 앞당긴다
@@ -211,6 +214,9 @@ export const recorderOf = (connectionId: string): Recorder | null => feeds.get(c
 
 // Monitor — 그 연결의 빈 구간 불러오기. 피드가 없으면 null
 export const backfillOf = (connectionId: string): Backfill | null => feeds.get(connectionId)?.backfill ?? null;
+
+// Monitor › Operations — 그 연결의 느린 쿼리. 피드가 없으면 null(안 읽는 중 — 기록 파일은 그대로 있다)
+export const slowOf = (connectionId: string): SlowLog | null => feeds.get(connectionId)?.slow ?? null;
 
 // 진단용 — 그 연결의 실시간 상태. 피드가 없으면(쓰는 탭이 없음) connecting
 export const realtimeStatus = (connectionId: string): Omit<LiveStatus, 'resync'> => {
@@ -366,6 +372,7 @@ export const startRealtime = (io: Server) => {
     // 불러오기가 위치를 적고 멈춘 뒤 기록기를 닫는다(같은 파일 줄에 선다). 클라이언트는 그다음에 놓는다
     return feed.backfill
       .stop()
+      .then(() => feed.slow.stop())
       .then(() => feed.recorder.stop())
       .finally(() => feed.releaseClient());
   };
@@ -411,6 +418,13 @@ export const startRealtime = (io: Server) => {
             created.recorder.addSample(tick.sample);
           },
           onReading: (counters, at) => created.recorder.addCounters(counters, at),
+          eachTick: () => created.slow.poll(),
+        }),
+        slow: createSlowLog({
+          connectionId: id,
+          client: () => clientFor(id),
+          recorder: () => created.recorder,
+          stored: () => getServerSettings().monitorHistory !== 'off',
         }),
         backfill: createBackfill({
           connectionId: id,
@@ -464,6 +478,8 @@ export const startRealtime = (io: Server) => {
         feed.windowEvents = 0;
         feed.windowLags = [];
         feed.activity = createActivityStats();
+        // 느린 쿼리를 옛 서버 폴더에 먼저 적는다(기록기 reset보다 앞서 줄에 선다)
+        void feed.slow.reset();
         feed.sampler.reset();
         feed.needsBoundary = true;
         feed.t0At = null;

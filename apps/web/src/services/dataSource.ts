@@ -31,6 +31,8 @@ import type {
   MonitorRange,
   BackfillReport,
   OperationsReport,
+  SlowQueriesReport,
+  SlowThreshold,
   AggregateResult,
   AggregateCounts,
   ConnectionInfo,
@@ -128,6 +130,8 @@ export interface DataSource {
   // Monitor › Operations(9-5a) — 지금 실행 중인 작업($currentOp) / 하나 멈추기(killOp). Mock은 null / 아무것도 안 함
   getOperations(scope: { database: string | null; collection: string | null }): Promise<OperationsReport | null>;
   killOperation(opid: string): Promise<void>;
+  // Monitor › Operations › 느린 쿼리 — 서버가 MongoDB 로그에서 모은 것(9-5b). Mock은 null
+  getSlowQueries(query: { database: string | null; collection: string | null; range: MonitorRange; min: SlowThreshold }): Promise<SlowQueriesReport | null>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 

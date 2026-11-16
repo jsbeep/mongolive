@@ -490,6 +490,79 @@ export interface OperationsReport {
   error: string | null;
 }
 
+// ── Monitor › Operations › 느린 쿼리 (9-5b) ──────────────────────────────────
+//   GET /api/monitor/slow?range=&database=&collection=&min= → SlowQueriesReport
+// MongoDB가 스스로 로그에 남기는 "Slow query"(slowms보다 오래 걸린 작업)를 샘플러가 10초마다 getLog로 읽는다.
+// slowms는 바꾸지 않는다(읽기만). 같은 모양의 쿼리(queryHash, 없으면 명령의 모양)끼리 묶는다.
+
+// 화면 필터(이보다 빠른 건 숨김) — 기록도 이 경계로 나눠 두어 필터가 정확하다
+export const SLOW_THRESHOLDS = [100, 500, 1000, 5000] as const;
+export type SlowThreshold = (typeof SLOW_THRESHOLDS)[number];
+
+// 한 번의 실행 — 기록은 분마다 모양별로 가장 느린 것 하나만 남긴다
+export interface SlowRun {
+  // 끝난 시각(로그 시각)
+  at: number;
+  ms: number;
+  app: string | null;
+  client: string | null;
+  plan: string | null;
+  docsExamined: number | null;
+  keysExamined: number | null;
+  // 돌려준 문서 수(수정·삭제는 맞은 문서 수)
+  returned: number | null;
+  summary: string;
+  // 너무 길면 { $truncated: 요약 }
+  command: EjsonObject | null;
+}
+
+export interface SlowGroup {
+  key: string;
+  kind: RunningOpKind;
+  ns: string;
+  op: string;
+  queryHash: string | null;
+  // 가장 느린 실행의 요약
+  summary: string;
+  count: number;
+  totalMs: number;
+  maxMs: number;
+  docsExamined: number;
+  keysExamined: number;
+  returned: number;
+  plan: string | null;
+  last: number;
+  // 최근 것부터(분마다 가장 느린 것), 최대 20개
+  runs: SlowRun[];
+}
+
+// 서버 로그가 읽는 속도보다 빨리 넘어가서 못 본 줄이 있던 구간 — 그사이 느린 쿼리를 놓쳤을 수 있다
+export interface SlowMissed {
+  from: number;
+  to: number;
+  lines: number;
+}
+
+//   ok = 읽는 중, closed = 이 연결을 쓰는 탭이 없어 안 읽음, denied = getLog 권한 없음,
+//   unsupported = 4.4 전(로그가 JSON이 아님), error = 그 밖의 실패
+export type SlowLogStatus = 'ok' | 'closed' | 'denied' | 'unsupported' | 'error';
+
+export interface SlowQueriesReport {
+  at: number;
+  range: MonitorRange;
+  status: SlowLogStatus;
+  error: string | null;
+  // 서버의 기준(profile:-1로 읽음). 못 읽으면 null(기본 100ms)
+  slowms: number | null;
+  min: SlowThreshold;
+  groups: SlowGroup[];
+  // min보다 빨라서 뺀 실행 수
+  hidden: number;
+  missed: SlowMissed[];
+  // 기록 파일에 남기는가(설정 › Monitor 기록이 켜져 있음). 꺼져 있으면 최근 1시간만 메모리에
+  stored: boolean;
+}
+
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 

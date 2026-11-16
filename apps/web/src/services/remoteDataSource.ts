@@ -29,6 +29,7 @@ import type {
   HistoryReport,
   BackfillReport,
   OperationsReport,
+  SlowQueriesReport,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -425,6 +426,12 @@ export const createRemoteDataSource = (): DataSource => {
     },
     async killOperation(opid) {
       await request<void>('/monitor/operations/kill', { method: 'POST', body: JSON.stringify({ opid }) });
+    },
+    getSlowQueries(query) {
+      const params = new URLSearchParams({ range: query.range, min: String(query.min) });
+      if (query.database) params.set('database', query.database);
+      if (query.database && query.collection) params.set('collection', query.collection);
+      return request<SlowQueriesReport>(`/monitor/slow?${params}`);
     },
     onBackfill(listener) {
       const s = ensureSocket();

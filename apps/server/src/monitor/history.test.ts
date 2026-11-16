@@ -214,6 +214,33 @@ describe('createRecorder', () => {
     expect(files).toContain('days-2020.jsonl'); // 일 기록은 지우지 않는다
   });
 
+  it('느린 쿼리: 날짜 파일에 덧붙이고 커서를 남기며, 시 기록과 같은 보관 기간으로 지운다', async () => {
+    const r = make();
+    expect(await r.slowCursor()).toBeNull();
+    await r.appendSlow([{ t: T0 - 24 * 60 * MIN }, { t: T0 }], T0 + 5000);
+    expect(await r.slowCursor()).toBe(T0 + 5000);
+    expect(await readJsonl(join(dir(), 'slow-2026-11-16.jsonl'))).toEqual([{ t: T0 }]);
+    expect(await readJsonl(join(dir(), 'slow-2026-11-15.jsonl'))).toHaveLength(1);
+    // 더 옛 커서로는 되돌리지 않는다
+    await r.appendSlow([], T0);
+    expect(await r.slowCursor()).toBe(T0 + 5000);
+
+    await writeFile(join(dir(), 'slow-2026-08-01.jsonl'), '{}\n');
+    await writeFile(join(dir(), 'slow-2026-08-30.jsonl'), '{}\n');
+    feed(r, T0 + 60 * MIN); // 시간 경계 → 합치고 정리
+    feed(r, T0 + 61 * MIN);
+    await r.idle();
+    const files = await readdir(dir());
+    expect(files).not.toContain('slow-2026-08-01.jsonl'); // 90일보다 오래됨
+    expect(files).toContain('slow-2026-08-30.jsonl');
+    expect(files).toContain('slow-2026-11-15.jsonl');
+
+    retention = 'off';
+    await r.appendSlow([{ t: T0 }], T0 + 9000);
+    retention = '90d';
+    expect(await readJsonl(join(dir(), 'slow-2026-11-16.jsonl'))).toHaveLength(1); // 꺼져 있으면 안 적는다
+  });
+
   it('기록 끄기면 아무 파일도, 지운 연결이면 폴더를 만들지 않는다', async () => {
     retention = 'off';
     const r = make();

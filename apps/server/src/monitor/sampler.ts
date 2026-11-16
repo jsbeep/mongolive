@@ -32,6 +32,8 @@ export interface SamplerHooks {
   onSample: (tick: MonitorTick) => void;
   // serverStatus의 누적값을 읽을 때마다 — 기록 파일이 빈 구간 합계를 내는 데 쓴다(monitor/history)
   onReading?: (counters: StatusCounters, at: number) => void;
+  // 칸을 알린 뒤 같은 박자에 할 일(느린 쿼리 로그 읽기, 9-5b) — 끝나야 다음 칸을 예약한다(겹치지 않게)
+  eachTick?: () => Promise<void>;
   // 로그에 붙일 이름(연결 id)
   label: string;
 }
@@ -130,6 +132,14 @@ export const createSampler = (hooks: SamplerHooks): Sampler => {
     samples.push(sample);
     if (samples.length > KEEP_SAMPLES) samples = samples.slice(-KEEP_SAMPLES);
     hooks.onSample({ sample, info });
+    if (hooks.eachTick) {
+      try {
+        await hooks.eachTick();
+      } catch (e) {
+        console.warn(`[monitor] ${hooks.label} 칸 작업 실패:`, e instanceof Error ? e.message : String(e));
+      }
+      if (!running || mine !== generation) return;
+    }
     timer = setTimeout(() => void tick(), Math.max(0, SAMPLE_INTERVAL_MS - (Date.now() - started)));
   };
 

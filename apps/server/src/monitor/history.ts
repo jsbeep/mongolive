@@ -7,6 +7,7 @@
 //   state.json                 어디까지 합쳤나 + 마지막 누적값(다음에 빈 구간을 계산할 재료)
 //                              + changeStream 위치와 아직 안 불러온 빈 구간 목록(9-4)
 //   fills.jsonl                빈 구간 중 쓰기를 다시 불러온 부분(9-4)
+//   slow-YYYY-MM-DD.jsonl      느린 쿼리(9-5b) — 분·모양·걸린 시간 구간마다 한 줄. 시 기록과 같은 보관 기간이 지나면 통째로 지운다
 //
 // 파일은 다시 쓰지 않는다 — 덧붙이기와 통째 삭제만(SD카드 쓰기를 줄이려고). state.json만 임시 파일 → 이름 바꾸기로 교체.
 // 파일 작업은 한 줄로 세운다(queue) — 덧붙이기·합치기·지우기가 서로 끼어들지 않게.
@@ -91,9 +92,11 @@ interface StateFile {
   // 실시간 스트림이 마지막으로 받은 위치 — 다음에 열릴 때 그 사이가 빈 구간
   resume: ResumePoint | null;
   gaps: StoredGap[];
+  // 느린 쿼리를 파일에 적은 마지막 로그 시각 — 다음에 열려 서버 로그를 다시 읽을 때 그 뒤만 받는다(9-5b)
+  slowCursor?: number | null;
 }
 
-const emptyState = (): StateFile => ({ version: 1, rolledHour: null, rolledDay: null, last: null, resume: null, gaps: [] });
+const emptyState = (): StateFile => ({ version: 1, rolledHour: null, rolledDay: null, last: null, resume: null, gaps: [], slowCursor: null });
 
 // 연결 id는 UUID나 'env' — 그래도 경로에 쓰기 전에 거른다
 const connectionDir = (connectionId: string) => join(metricsDirPath(), connectionId.replace(/[^A-Za-z0-9_-]/g, '_'));
@@ -195,6 +198,11 @@ export interface Recorder {
   // 지금 누적값(샘플러가 마지막으로 읽은 것)
   latestCounters: () => { at: number; counters: StatusCounters } | null;
   currentFingerprint: () => string | null;
+  // ── 느린 쿼리(9-5b) ──
+  // 지난번에 적은 마지막 로그 시각(기록이 꺼져 있거나 폴더를 못 정하면 null)
+  slowCursor: () => Promise<number | null>;
+  // 줄을 그 날짜의 slow 파일에 덧붙이고 커서를 남긴다
+  appendSlow: (lines: { t: number }[], cursor: number | null) => Promise<void>;
   // 줄 서 있는 파일 작업이 끝날 때까지(테스트)
   idle: () => Promise<void>;
 }
@@ -292,6 +300,12 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
     for (const name of await readdir(dir)) {
       const minute = /^minutes-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
       if (minute && minute[1] < oldestMinuteKey) await rm(join(dir, name), { force: true });
+      const slow = /^slow-(\d{4})-(\d{2})-(\d{2})\.jsonl$/.exec(name);
+      if (slow) {
+        // 그날의 마지막 순간(다음 날 0시)이 보관 기간보다 오래됐으면
+        const dayEnd = new Date(Number(slow[1]), Number(slow[2]) - 1, Number(slow[3]) + 1).getTime();
+        if (dayEnd < now - keepHoursMs) await rm(join(dir, name), { force: true });
+      }
       const hour = /^hours-(\d{4})-(\d{2})\.jsonl$/.exec(name);
       if (hour) {
         // 그달의 마지막 순간(다음 달 1일)이 보관 기간보다 오래됐으면
@@ -481,6 +495,32 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
       return withGap(id, async (target) => {
         state.gaps = state.gaps.filter((g) => g.id !== id);
         await appendLine(join(target, 'fills.jsonl'), fill);
+      });
+    },
+    slowCursor() {
+      let cursor: number | null = null;
+      return enqueue(async () => {
+        if (!enabled() || !(await resolveDir())) return;
+        cursor = state.slowCursor ?? null;
+      }).then(() => cursor);
+    },
+    appendSlow(lines, cursor) {
+      return enqueue(async () => {
+        if (!enabled() || !hooks.alive()) return;
+        const target = await resolveDir();
+        if (!target) return;
+        const byDay = new Map<string, { t: number }[]>();
+        for (const line of lines) {
+          const key = dateKey(line.t);
+          byDay.set(key, [...(byDay.get(key) ?? []), line]);
+        }
+        for (const [key, dayLines] of byDay) {
+          await appendFile(join(target, `slow-${key}.jsonl`), dayLines.map((l) => `${JSON.stringify(l)}\n`).join(''), 'utf8');
+        }
+        if (cursor !== null && cursor > (state.slowCursor ?? 0)) {
+          state.slowCursor = cursor;
+          await saveState(target, state);
+        }
       });
     },
     latestCounters: () => latest,

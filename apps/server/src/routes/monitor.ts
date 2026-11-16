@@ -9,9 +9,10 @@
 //   POST /api/monitor/backfill/start {id?} — 불러오기/계속,  POST /api/monitor/backfill/stop {id?} — 멈춤
 //   GET /api/monitor/operations?database=&collection= → OperationsReport ($currentOp, 9-5a)
 //   POST /api/monitor/operations/kill {opid} → 204 (killOp — 다른 클라이언트의 작업만)
+//   GET /api/monitor/slow?range=&database=&collection=&min=100|500|1000|5000 → SlowQueriesReport (서버 로그의 느린 쿼리, 9-5b)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
-import type { ActivityRange, ActivityReport, BackfillReport, LastWrites } from '@mongolive/shared';
+import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type BackfillReport, type LastWrites, type MonitorRange, type SlowQueriesReport, type SlowThreshold } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
@@ -19,7 +20,7 @@ import { killOperation, listOperations } from '../monitor/operations';
 import { connectionUri } from '../connections';
 import { clientFor, connectionIdOf } from '../db';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
-import { activityOf, backfillOf, recorderOf } from '../realtime';
+import { activityOf, backfillOf, recorderOf, slowOf } from '../realtime';
 import { getServerSettings } from '../settings';
 
 export const monitorRouter = Router();
@@ -135,4 +136,28 @@ monitorRouter.post('/monitor/operations/kill', async (req, res) => {
   if (typeof opid !== 'string' || !/^(?:[\w.-]+:)?\d+$/.test(opid)) throw new HttpError(400, 'opid must be an operation id from GET /monitor/operations');
   await killOperation(await clientFor(connectionIdOf(res)), opid);
   res.status(204).end();
+});
+
+const RANGES: readonly MonitorRange[] = ['5m', '1h', '24h', '7d', '30d', '90d', 'all'];
+
+// 느린 쿼리 — 피드가 열려 있는 동안 샘플러가 서버 로그에서 모은 것(기록 파일 + 아직 안 적은 지금 분)
+monitorRouter.get('/monitor/slow', async (req, res) => {
+  const range = String(req.query.range ?? '1h') as MonitorRange;
+  if (!RANGES.includes(range)) throw new HttpError(400, `range must be one of ${RANGES.join(', ')}`);
+  const min = Number(req.query.min ?? SLOW_THRESHOLDS[0]) as SlowThreshold;
+  if (!SLOW_THRESHOLDS.includes(min)) throw new HttpError(400, `min must be one of ${SLOW_THRESHOLDS.join(', ')}`);
+  const database = text(req.query.database);
+  const collection = text(req.query.collection);
+  if (collection && !database) throw new HttpError(400, 'collection needs a database');
+  const scope = {
+    database: database ? checkDatabaseName(database) : null,
+    collection: collection ? checkCollectionName(collection) : null,
+  };
+  const slow = slowOf(connectionIdOf(res));
+  if (!slow) {
+    const closed: SlowQueriesReport = { at: Date.now(), range, status: 'closed', error: null, slowms: null, min, groups: [], hidden: 0, missed: [], stored: getServerSettings().monitorHistory !== 'off' };
+    res.json(closed);
+    return;
+  }
+  res.json(await slow.report({ range, scope, min }));
 });

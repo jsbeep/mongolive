@@ -9,7 +9,7 @@ import { READ_OPTIONS, toWire } from '../wire';
 import { withTimeout } from './sampler';
 
 // db.ts가 드라이버에 거는 appName — 이 앱 자신의 작업(changeStream getMore, 샘플러 등)을 가려낸다
-const APP_NAME = 'mongolive';
+export const APP_NAME = 'mongolive';
 const SUMMARY_MAX = 160;
 // 화면에 쓸모없는 세션·라우팅 정보
 const DROP_KEYS = new Set(['lsid', '$clusterTime', '$db', '$readPreference', 'signature', '$audit', '$client', 'mayBypassWriteBlocking']);
@@ -28,13 +28,13 @@ const num = (value: unknown): number | null => {
 const asObject = (value: unknown): EjsonObject | null =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as EjsonObject) : null;
 
-const clean = (command: unknown): BsonDocument | null => {
+export const cleanCommand = (command: unknown): BsonDocument | null => {
   if (command === null || typeof command !== 'object' || Array.isArray(command)) return null;
   return Object.fromEntries(Object.entries(command as BsonDocument).filter(([key]) => !DROP_KEYS.has(key)));
 };
 
 const fmt = (value: EjsonValue | undefined): string => formatQueryValue(value ?? {});
-const short = (text: string): string => (text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX - 1)}…` : text);
+export const shortSummary = (text: string): string => (text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX - 1)}…` : text);
 
 // 명령 한 줄 — 무엇을 찾는지(필터)·파이프라인 모양만. 컬렉션 이름은 ns 칸에 따로 있다
 export const describeCommand = (command: EjsonObject | null): string => {
@@ -96,8 +96,8 @@ const isOwnProbe = (doc: BsonDocument): boolean =>
   doc.appName === APP_NAME && Array.isArray(doc.command?.pipeline) && doc.command.pipeline[0]?.$currentOp !== undefined;
 
 export const toRunningOp = (doc: BsonDocument): RunningOp => {
-  const command = asObject(doc.command ? toWire(clean(doc.command)) : null);
-  const origin = asObject(doc.originatingCommand ? toWire(clean(doc.originatingCommand)) : null);
+  const command = asObject(doc.command ? toWire(cleanCommand(doc.command)) : null);
+  const origin = asObject(doc.originatingCommand ? toWire(cleanCommand(doc.originatingCommand)) : null);
   const op = typeof doc.op === 'string' ? doc.op : 'none';
   const summary = op === 'getmore' ? (origin ? `getMore · ${describeCommand(origin)}` : 'getMore') : describeCommand(command);
   const micros = num(doc.microsecs_running);
@@ -111,7 +111,7 @@ export const toRunningOp = (doc: BsonDocument): RunningOp => {
     op,
     ns: typeof doc.ns === 'string' && doc.ns !== '' ? doc.ns : null,
     ms,
-    summary: short(summary),
+    summary: shortSummary(summary),
     command,
     origin,
     planSummary: typeof doc.planSummary === 'string' ? doc.planSummary : null,
@@ -131,7 +131,7 @@ export const inScope = (ns: string | null, scope: OperationsScope): boolean => {
   return scope.collection ? ns === `${scope.database}.${scope.collection}` : ns.startsWith(`${scope.database}.`);
 };
 
-const isUnauthorized = (e: unknown) => Number((e as { code?: unknown })?.code) === 13;
+export const isUnauthorized = (e: unknown) => Number((e as { code?: unknown })?.code) === 13;
 
 // 다른 사용자 것까지 묻고, 권한(inprog)이 없으면 이 사용자 것만 다시 묻는다
 const currentOps = async (client: MongoClient, match: BsonDocument): Promise<{ docs: BsonDocument[]; limited: boolean }> => {

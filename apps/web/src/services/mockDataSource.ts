@@ -115,6 +115,7 @@ export const createMockDataSource = (): DataSource => {
     onBackfill: () => () => undefined,
     getOperations: async () => null,
     killOperation: async () => undefined,
+    getSlowQueries: async () => null,
     getDiagnostics: async () => null,
 
     getServerSettings: async () => settings,
