@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ActivityOps, MonitorHistory, MonitorSample } from '@mongolive/shared';
-import { createRecorder, dropConnectionHistory, gapBetween, historyInfo, readJsonl, type GapRecord } from './history';
+import { createRecorder, dropConnectionHistory, gapBetween, historyInfo, readJsonl, type GapRecord, type ResumePoint } from './history';
 import { addSample, average, emptyRollup, mergeRollups, type Rollup } from './rollup';
 import type { StatusCounters } from './serverStatus';
 
@@ -237,5 +237,85 @@ describe('createRecorder', () => {
     await r.clear();
     expect(await readdir(root)).toEqual([]);
     await dropConnectionHistory('conn1');
+  });
+
+  // ── 빈 구간(9-4) ──
+  const HOUR = 60 * MIN;
+  const point = (at: number, token = true): ResumePoint => ({
+    ...(token ? { token: { _data: `82${'0'.repeat(16)}` } } : {}),
+    ts: { t: Math.floor(at / 1000), i: 1 },
+    at,
+  });
+  const ops = (n: number): ActivityOps => ({ insert: n, update: 0, replace: 0, delete: 0 });
+
+  it('실시간 위치는 1분 기록 때 남고, 다음에 열리면 그 위치 → T0가 빈 구간이 된다', async () => {
+    const r1 = make();
+    r1.addCounters(counters(100_000, 10), T0);
+    r1.noteResume(point(T0 + 30_000));
+    for (let i = 0; i < 6; i++) feed(r1, T0 + i * 10_000);
+    feed(r1, T0 + MIN);
+    await r1.stop();
+
+    const r2 = make();
+    now = T0 + 3 * HOUR;
+    await r2.openGap(point(now, false));
+    const gaps = r2.gaps();
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]).toMatchObject({ id: `${T0 + 30_000}-${now}`, from: { at: T0 + 30_000 }, to: { at: now }, loaded: 0, progress: null });
+    expect(gaps[0].before?.counters.ops.insert).toBe(10);
+    // 같은 열림에서 두 번 부르면 더 만들지 않는다
+    await r2.openGap(point(now + 1000, false));
+    expect(r2.gaps()).toHaveLength(1);
+  });
+
+  it('불러온 쓰기: 합칠 예정인 시간은 분 기록에만, 이미 합친 시·일엔 그 단계에도 한 줄', async () => {
+    // 10:00에 1분 적음 → 09:00까지 합쳤음(rolledHour), 11-15까지 합쳤음(rolledDay)
+    const r1 = make();
+    r1.noteResume(point(T0 - 2 * HOUR));
+    for (let i = 0; i < 6; i++) feed(r1, T0 + i * 10_000);
+    writes.set(T0, new Map([['shop.orders', ops(1)]]));
+    feed(r1, T0 + MIN);
+    await r1.stop();
+
+    const r2 = make();
+    now = T0 + 3 * HOUR; // 13:00
+    await r2.openGap(point(now, false));
+    const [gap] = r2.gaps();
+    const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).getTime();
+    await r2.writeFill(
+      gap.id,
+      new Map([
+        [at(16, 10, 30), new Map([['shop.orders', ops(2)]])], // 10시: 아직 안 합침 → 분 기록만
+        [at(16, 8, 15), new Map([['shop.orders', ops(3)]])], // 8시: 이미 합침 → 분 + 시
+        [at(13, 12, 0), new Map([['shop.old', ops(4)]])], // 사흘 전: 분 파일은 지워질 것 → 시 + 일
+      ]),
+      { progress: point(at(16, 10, 30)), loaded: 9 },
+    );
+    const minutes = await readJsonl<Rollup>(join(dir(), 'minutes-2026-11-16.jsonl'));
+    expect(minutes.filter((r) => r.n === 0).map((r) => [r.t, r.w])).toEqual([
+      [at(16, 8, 15), { 'shop.orders': ops(3) }],
+      [at(16, 10, 30), { 'shop.orders': ops(2) }],
+    ]);
+    expect((await readdir(dir())).includes('minutes-2026-11-13.jsonl')).toBe(false);
+    const hours = await readJsonl<Rollup>(join(dir(), 'hours-2026-11.jsonl'));
+    expect(hours.map((r) => [r.t, r.w])).toEqual([
+      [at(13, 12), { 'shop.old': ops(4) }],
+      [at(16, 8), { 'shop.orders': ops(3) }],
+    ]);
+    const days = await readJsonl<Rollup>(join(dir(), 'days-2026.jsonl'));
+    expect(days.map((r) => [r.t, r.w])).toEqual([[at(13, 0), { 'shop.old': ops(4) }]]);
+    expect(r2.gaps()[0]).toMatchObject({ loaded: 9, progress: { at: at(16, 10, 30) } });
+
+    // 13:01에 1분을 적으면 10~12시를 합친다 — 10시엔 실시간 1 + 불러온 2
+    for (let i = 0; i < 6; i++) feed(r2, now + i * 10_000);
+    feed(r2, now + MIN);
+    await r2.idle();
+    const rolled = await readJsonl<Rollup>(join(dir(), 'hours-2026-11.jsonl'));
+    expect(rolled.find((r) => r.t === at(16, 10))?.w).toEqual({ 'shop.orders': ops(3) });
+
+    // 다 불러옴 → 목록에서 빠지고 fills.jsonl에
+    await r2.finishGap(gap.id, { from: gap.from.at, to: gap.to.at, events: 9 });
+    expect(r2.gaps()).toEqual([]);
+    expect(await readJsonl(join(dir(), 'fills.jsonl'))).toEqual([{ from: gap.from.at, to: gap.to.at, events: 9 }]);
   });
 });

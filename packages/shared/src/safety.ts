@@ -14,6 +14,9 @@ export interface ProtectedTarget {
 // Monitor 기록을 파일로 남길지(9-3) — 시 단위 기록의 보관 기간. 일 단위 요약은 켜져 있으면 늘 남긴다(하루 1줄)
 export type MonitorHistory = 'off' | '30d' | '90d' | '1y';
 export const MONITOR_HISTORY_DAYS: Record<Exclude<MonitorHistory, 'off'>, number> = { '30d': 30, '90d': 90, '1y': 365 };
+// 빈 구간 자동 불러오기 한도(이벤트 수, 9-4) — 추정이 이 이하면 피드가 열릴 때 바로 불러온다. 0 = 끔(늘 버튼으로)
+export const BACKFILL_AUTO_LIMITS = [0, 1_000, 10_000, 100_000] as const;
+export type BackfillAutoLimit = (typeof BACKFILL_AUTO_LIMITS)[number];
 
 // 서버 쪽 설정(~/.mongolive/settings.json). 모든 브라우저에 똑같이 적용된다
 export interface ServerSettings {
@@ -23,9 +26,11 @@ export interface ServerSettings {
   protected: ProtectedTarget[];
   // Monitor 기록(설정 › Monitor)
   monitorHistory: MonitorHistory;
+  // 빈 구간 자동 불러오기 한도(설정 › Realtime)
+  backfillAuto: BackfillAutoLimit;
 }
 
-export const DEFAULT_SERVER_SETTINGS: ServerSettings = { readOnly: false, protected: [], monitorHistory: '90d' };
+export const DEFAULT_SERVER_SETTINGS: ServerSettings = { readOnly: false, protected: [], monitorHistory: '90d', backfillAuto: 10_000 };
 
 // 이 쓰기가 건드리는 곳. null = MongoDB를 건드리지 않는 연산(메타데이터)
 export const mutationTarget = (op: MutationRequest): { database: string; collections: string[] } | null => {
@@ -86,5 +91,7 @@ export const normalizeServerSettings = (raw: unknown): ServerSettings => {
   }
   const history = obj.monitorHistory;
   const monitorHistory: MonitorHistory = history === 'off' || history === '30d' || history === '90d' || history === '1y' ? history : DEFAULT_SERVER_SETTINGS.monitorHistory;
-  return { readOnly: obj.readOnly === true, protected: protectedTargets, monitorHistory };
+  const auto = BACKFILL_AUTO_LIMITS.find((n) => n === obj.backfillAuto);
+  const backfillAuto: BackfillAutoLimit = auto ?? DEFAULT_SERVER_SETTINGS.backfillAuto;
+  return { readOnly: obj.readOnly === true, protected: protectedTargets, monitorHistory, backfillAuto };
 };

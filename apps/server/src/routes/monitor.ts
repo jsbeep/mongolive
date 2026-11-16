@@ -5,16 +5,19 @@
 //   GET /api/monitor/history-info → HistoryInfo (설정 › Monitor — 기록 파일 크기·가장 오래된 기록)
 //   DELETE /api/monitor/history → 이 연결의 기록 파일 전부 지우기
 //   GET /api/monitor/history?range=24h|7d|30d|90d|all[&writes=1&database=&collection=] → HistoryReport (긴 기간, 9-3b)
+//   GET /api/monitor/backfill → BackfillReport (빈 구간 불러오기, 9-4)
+//   POST /api/monitor/backfill/start {id?} — 불러오기/계속,  POST /api/monitor/backfill/stop {id?} — 멈춤
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
-import type { ActivityRange, ActivityReport, LastWrites } from '@mongolive/shared';
+import type { ActivityRange, ActivityReport, BackfillReport, LastWrites } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
 import { connectionUri } from '../connections';
 import { clientFor, connectionIdOf } from '../db';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
-import { activityOf, recorderOf } from '../realtime';
+import { activityOf, backfillOf, recorderOf } from '../realtime';
+import { getServerSettings } from '../settings';
 
 export const monitorRouter = Router();
 
@@ -81,4 +84,32 @@ monitorRouter.get('/monitor/history', async (req, res) => {
     database: database ? checkDatabaseName(database) : null,
     collection: collection ? checkCollectionName(collection) : null,
   }));
+});
+
+monitorRouter.get('/monitor/backfill', (_req, res) => {
+  const backfill = backfillOf(connectionIdOf(res));
+  const empty: BackfillReport = { gaps: [], autoLimit: getServerSettings().backfillAuto };
+  res.json(backfill ? backfill.report() : empty);
+});
+
+// 본문의 id — 없으면 전부
+const gapId = (body: unknown): string | undefined => {
+  const id = (body as { id?: unknown } | undefined)?.id;
+  if (id === undefined) return undefined;
+  if (typeof id !== 'string' || !/^\d+-\d+$/.test(id)) throw new HttpError(400, 'id must be a gap id from GET /monitor/backfill');
+  return id;
+};
+
+monitorRouter.post('/monitor/backfill/start', async (req, res) => {
+  const backfill = backfillOf(connectionIdOf(res));
+  if (!backfill) throw new HttpError(409, 'Nothing is open for this connection — open it in a tab first.');
+  await backfill.load(gapId(req.body));
+  res.json(backfill.report());
+});
+
+monitorRouter.post('/monitor/backfill/stop', async (req, res) => {
+  const backfill = backfillOf(connectionIdOf(res));
+  if (!backfill) throw new HttpError(409, 'Nothing is open for this connection — open it in a tab first.');
+  await backfill.pause(gapId(req.body));
+  res.json(backfill.report());
 });

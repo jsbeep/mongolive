@@ -107,4 +107,26 @@ describe('createActivityStats', () => {
     expect(stats.lastWrites()['shop.orders']).toEqual({ at: T0 + 5, op: 'drop' });
     expect(stats.report({ range: '1h' }).collections[0].total).toBe(1);
   });
+
+  it('불러오기(9-4)로 넣은 몫은 메모리 집계엔 들어가고 1분 기록(minuteWrites)에선 빠진다', () => {
+    const clock = clockAt();
+    const stats = createActivityStats(T0, clock.now);
+    clock.set(T0 + 30_000);
+    stats.record(change({ op: 'insert', clusterTime: T0 + 5_000 }), true);
+    stats.record(change({ op: 'insert', clusterTime: T0 + 20_000 }));
+    expect(stats.report({ range: '5m' }).collections[0].total).toBe(2);
+    expect(stats.minuteWrites(T0)?.get('shop.orders')).toEqual({ insert: 1, update: 0, replace: 0, delete: 0 });
+  });
+
+  it('늦게 읽은 옛 이벤트가 마지막 쓰기를 덮지 않고, 세기 시작을 앞당길 수 있다', () => {
+    const clock = clockAt();
+    const stats = createActivityStats(T0 + MINUTE_MS, clock.now);
+    clock.set(T0 + 2 * MINUTE_MS);
+    stats.record(change({ op: 'update', clusterTime: T0 + 90_000 }));
+    stats.record(change({ op: 'delete', clusterTime: T0 + 10_000 }), true);
+    expect(stats.lastWrites()['shop.orders']).toEqual({ at: T0 + 90_000, op: 'update' });
+    stats.extendSince(T0);
+    expect(stats.since).toBe(T0);
+    expect(stats.report({ range: '5m' }).timeline[0].at).toBe(T0);
+  });
 });

@@ -358,6 +358,60 @@ export interface HistoryGap {
   docs?: { inserted: number; updated: number; deleted: number; returned: number };
 }
 
+// 빈 구간을 불러온 결과(fills.jsonl 한 줄)
+export interface HistoryFill {
+  from: number;
+  to: number;
+  // 불러온 쓰기 이벤트 수
+  events: number;
+  // 앞부분이 oplog에서 이미 지워져 이 시각부터만 불러왔다
+  partialFrom?: number;
+  // 전부 지워져 하나도 못 불러왔다
+  lost?: boolean;
+}
+
+// ── 빈 구간 불러오기(9-4) ──
+// 탭이 없어 실시간을 안 받던 동안의 쓰기를 changeStream으로 다시 읽어 통계(컬렉션별 쓰기 수)만 채운다.
+//   GET /api/monitor/backfill → BackfillReport
+//   POST /api/monitor/backfill/start {id?} — 불러오기/계속(id가 없으면 전부)
+//   POST /api/monitor/backfill/stop {id?} — 멈춤(자동으로 다시 시작하지 않는다)
+//   socket 'monitor:backfill' (Monitor를 연 탭) → BackfillReport, 바뀔 때마다(불러오는 중엔 1초에 한 번)
+export type BackfillStatus = 'pending' | 'loading' | 'paused' | 'error';
+
+export interface BackfillEstimate {
+  // oplog에 시작 지점이 남아 있나. 모르면 null(local 읽기 권한 없음 등)
+  resumable: boolean | null;
+  // 남은 쓰기 이벤트 수. 모르면 null
+  events: number | null;
+  // 어떻게 셌나 — serverStatus 누적값 차이 / oplog 세기(5초 제한)
+  source: 'counters' | 'oplog' | null;
+  // 남은 크기(바이트) = oplog 평균 항목 크기 × 이벤트 수
+  bytes: number | null;
+  // 이때까지 불러오지 않으면 시작 지점이 oplog에서 지워지기 시작한다(ms)
+  deadline: number | null;
+}
+
+export interface BackfillGap {
+  id: string;
+  from: number;
+  // 실시간을 다시 받기 시작한 때
+  to: number;
+  status: BackfillStatus;
+  // 불러온 데까지(ms)와 이벤트 수
+  loadedTo: number | null;
+  loaded: number;
+  partialFrom?: number;
+  error?: string;
+  // 아직 안 쟀으면 null
+  estimate: BackfillEstimate | null;
+}
+
+export interface BackfillReport {
+  gaps: BackfillGap[];
+  // 설정 › Realtime의 자동 한도(0 = 끔)
+  autoLimit: number;
+}
+
 //   GET /api/monitor/history?range=24h|7d|30d|90d|all[&writes=1&database=&collection=] → HistoryReport
 export interface HistoryReport {
   range: MonitorRange;
@@ -368,6 +422,8 @@ export interface HistoryReport {
   // 기록이 있는 칸만(오래된 것 → 최신). 비어 있는 칸은 없다 — 선이 끊긴다
   points: HistoryPoint[];
   gaps: HistoryGap[];
+  // 빈 구간 중 쓰기를 다시 불러온 부분(9-4) — 그 구간의 컬렉션별 쓰기는 차트에 들어 있다
+  fills?: HistoryFill[];
   // writes=1일 때 — 기간 동안 컬렉션별 쓰기(많은 순, 상위 50). trend는 points와 같은 칸
   collections?: { database: string; collection: string; total: number; ops: ActivityOps; trend: number[] }[];
   // 기록을 읽을 수 있는가(서버 신분을 아직 모르면 false — 막 연결함)

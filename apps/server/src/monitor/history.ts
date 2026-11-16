@@ -5,13 +5,15 @@
 //   days-YYYY.jsonl            1일 기록. 지우지 않는다(하루 한 줄)
 //   gaps.jsonl                 기록하지 않던 구간 — MongoDB가 그사이 재시작하지 않았으면 그동안의 합계(누적값 차이)
 //   state.json                 어디까지 합쳤나 + 마지막 누적값(다음에 빈 구간을 계산할 재료)
+//                              + changeStream 위치와 아직 안 불러온 빈 구간 목록(9-4)
+//   fills.jsonl                빈 구간 중 쓰기를 다시 불러온 부분(9-4)
 //
 // 파일은 다시 쓰지 않는다 — 덧붙이기와 통째 삭제만(SD카드 쓰기를 줄이려고). state.json만 임시 파일 → 이름 바꾸기로 교체.
 // 파일 작업은 한 줄로 세운다(queue) — 덧붙이기·합치기·지우기가 서로 끼어들지 않게.
 // 시·일 경계는 서버의 시간대 기준. 피드가 닫혀 있던 동안 끝난 시·일은 다음에 피드가 열릴 때 따라잡아 합친다.
 import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { MONITOR_HISTORY_DAYS, type ActivityOps, type HistoryInfo, type MonitorHistory, type MonitorOp, type MonitorSample } from '@mongolive/shared';
+import { MONITOR_HISTORY_DAYS, type ActivityOps, type HistoryFill, type HistoryInfo, type MonitorHistory, type MonitorOp, type MonitorSample } from '@mongolive/shared';
 import { metricsDirPath } from '../paths';
 import {
   addSample,
@@ -31,7 +33,8 @@ import {
 } from './rollup';
 import type { StatusCounters } from './serverStatus';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 // 분 기록 파일은 이틀치 남긴다(24시간을 보여 주려면 어제 파일도 필요)
 const KEEP_MINUTE_DAYS = 2;
 // 따라잡기 한도 — 그보다 오래된 분·시 기록은 이미 지워졌다
@@ -47,6 +50,37 @@ export interface GapRecord {
   docs?: { inserted: number; updated: number; deleted: number; returned: number };
 }
 
+// changeStream 위치 — token이 있으면 그 뒤부터(resumeAfter), 없으면 ts부터(startAtOperationTime)
+export interface ResumePoint {
+  token?: { _data: string };
+  // 클러스터 시각(Timestamp의 초·증가값)
+  ts: { t: number; i: number };
+  // 그 위치의 시각(ms)
+  at: number;
+}
+
+// 아직 다 불러오지 않은 빈 구간(9-4) — 실시간을 안 받던 from부터 다시 받기 시작한 to까지
+export interface StoredGap {
+  id: string;
+  from: ResumePoint;
+  to: ResumePoint;
+  // 불러온 데까지(멈췄다 이어 받기)
+  progress: ResumePoint | null;
+  loaded: number;
+  partialFrom?: number;
+  // 닫힐 때의 누적값 — 이벤트 수 추정(serverStatus 차이)
+  before: { at: number; counters: StatusCounters } | null;
+  // 사람이 멈춤 — 다음에 열려도 자동으로 다시 시작하지 않는다
+  paused?: boolean;
+  // 처음 잰 이벤트 수(구간 전체) — 누적값 차이는 그때만 낼 수 있어서 남겨 둔다
+  estimated?: { events: number | null; source: 'counters' | 'oplog' | null };
+}
+
+// 빈 구간 목록 최대 길이 — 넘으면 가장 오래된 것을 '못 불러옴'으로 넘긴다
+const MAX_GAPS = 20;
+
+const compareTs = (a: { t: number; i: number }, b: { t: number; i: number }) => a.t - b.t || a.i - b.i;
+
 interface StateFile {
   version: 1;
   // 합쳐 둔 마지막 시·일의 시작 시각
@@ -54,9 +88,12 @@ interface StateFile {
   rolledDay: number | null;
   // 마지막으로 본 누적값 — 다음에 열릴 때 빈 구간의 합계를 낸다
   last: { at: number; counters: StatusCounters } | null;
+  // 실시간 스트림이 마지막으로 받은 위치 — 다음에 열릴 때 그 사이가 빈 구간
+  resume: ResumePoint | null;
+  gaps: StoredGap[];
 }
 
-const emptyState = (): StateFile => ({ version: 1, rolledHour: null, rolledDay: null, last: null });
+const emptyState = (): StateFile => ({ version: 1, rolledHour: null, rolledDay: null, last: null, resume: null, gaps: [] });
 
 // 연결 id는 UUID나 'env' — 그래도 경로에 쓰기 전에 거른다
 const connectionDir = (connectionId: string) => join(metricsDirPath(), connectionId.replace(/[^A-Za-z0-9_-]/g, '_'));
@@ -91,7 +128,7 @@ const appendLine = (file: string, value: unknown) => appendFile(file, `${JSON.st
 const loadState = async (dir: string): Promise<StateFile> => {
   try {
     const raw = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')) as Partial<StateFile>;
-    return { ...emptyState(), ...raw, version: 1 };
+    return { ...emptyState(), ...raw, gaps: Array.isArray(raw.gaps) ? raw.gaps : [], version: 1 };
   } catch {
     return emptyState();
   }
@@ -144,6 +181,19 @@ export interface Recorder {
   reset: () => Promise<void>;
   // 이 연결의 기록을 모두 지운다(설정 › Monitor)
   clear: () => Promise<void>;
+  // ── 빈 구간 불러오기(9-4) ──
+  // 실시간 스트림의 지금 위치(이벤트·하트비트마다) — 1분 기록 때와 닫힐 때 state.json에 남긴다
+  noteResume: (point: ResumePoint) => void;
+  // 실시간을 새로 받기 시작함(t0) — 지난번 위치가 있으면 그 사이를 빈 구간 목록에 넣는다
+  openGap: (t0: ResumePoint) => Promise<void>;
+  gaps: () => StoredGap[];
+  updateGap: (id: string, patch: Partial<StoredGap>) => Promise<void>;
+  // 불러온 분별 컬렉션 쓰기를 알맞은 기록 파일에 덧붙이고 진행 위치를 남긴다
+  writeFill: (id: string, minutes: Map<number, Map<string, ActivityOps>>, patch: Partial<StoredGap>) => Promise<void>;
+  // 다 불러왔거나 잃음 — 목록에서 빼고 fills.jsonl에 남긴다
+  finishGap: (id: string, fill: HistoryFill) => Promise<void>;
+  // 지금 누적값(샘플러가 마지막으로 읽은 것)
+  latestCounters: () => { at: number; counters: StatusCounters } | null;
   currentFingerprint: () => string | null;
   // 줄 서 있는 파일 작업이 끝날 때까지(테스트)
   idle: () => Promise<void>;
@@ -164,6 +214,10 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
   let latest: { at: number; counters: StatusCounters } | null = null;
   // 이번에 열린 뒤 처음 본 누적값인가 — 그때 지난번과 비교해 빈 구간을 남긴다
   let firstCounters = true;
+  // 실시간 스트림의 지금 위치(메모리) — 1분 기록 때 state.resume으로
+  let liveResume: ResumePoint | null = null;
+  // 폴더를 정할 때 파일에서 읽은 지난번 위치·누적값 — openGap이 한 번 쓴다(그 전에 1분 기록이 state를 덮어도 남게)
+  let closed: { resume: ResumePoint | null; last: StateFile['last'] } | null = null;
 
   const enabled = () => hooks.retention() !== 'off';
 
@@ -180,6 +234,7 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
     await mkdir(next, { recursive: true });
     dir = next;
     state = await loadState(next);
+    closed = { resume: state.resume, last: state.last };
     // 닫혀 있던 동안 끝난 시·일은 첫 1분을 적은 뒤 flushMinute의 rollUp이 따라잡는다 —
     // 여기서 먼저 합치면 방금 끝난 시간을 그 마지막 1분을 적기 전에 '합쳤음'으로 표시해 버린다
     return dir;
@@ -254,9 +309,65 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
     const w = topWrites(writes ?? new Map<string, ActivityOps>(), TOP_WRITES.minute);
     await appendLine(join(target, `minutes-${dateKey(minute.t)}.jsonl`), w ? { ...minute, w } : minute);
     if (latest) state.last = latest;
+    if (liveResume) state.resume = liveResume;
     await rollUp(minute.t);
     await saveState(target, state);
   };
+
+  // 불러온 쓰기를 기록 파일에 덧붙인다(9-4). 단계마다 따로 정한다:
+  //   그 시·일을 나중에 rollUp이 합칠 예정이면 → 아래 단계에만(합칠 때 같이 들어간다)
+  //   이미 합쳤거나 따라잡기 한도 밖이면 → 그 단계 파일에도 한 줄 더(읽을 때 같은 칸끼리 더한다)
+  // 줄 선 작업 안에서만 부른다 — rollUp과 엇갈리지 않게
+  const appendFill = async (target: string, minutes: Map<number, Map<string, ActivityOps>>) => {
+    const now = clock();
+    // 한도 경계는 1시간·1일 여유를 둔다(지금 판단한 뒤 다음 rollUp 전에 한도 밖으로 밀려나지 않게)
+    const hourWillRoll = (h: number) => (state.rolledHour === null || h > state.rolledHour) && h >= nextHour(hourStart(now - CATCH_UP_HOURS_MS));
+    const dayWillRoll = (d: number) => (state.rolledDay === null || d > state.rolledDay) && d >= nextDay(dayStart(now - CATCH_UP_DAYS_MS));
+    const retention = hooks.retention();
+    const keepHoursFrom = retention === 'off' ? Infinity : now - MONITOR_HISTORY_DAYS[retention] * DAY_MS;
+    const keepMinutesKey = dateKey(now - KEEP_MINUTE_DAYS * DAY_MS);
+    const hours = new Map<number, Map<string, ActivityOps>>();
+    const days = new Map<number, Map<string, ActivityOps>>();
+    const add = (into: Map<number, Map<string, ActivityOps>>, t: number, writes: Map<string, ActivityOps>) => {
+      let sum = into.get(t);
+      if (!sum) {
+        sum = new Map();
+        into.set(t, sum);
+      }
+      for (const [ns, ops] of writes) {
+        const prev = sum.get(ns);
+        sum.set(ns, prev ? { insert: prev.insert + ops.insert, update: prev.update + ops.update, replace: prev.replace + ops.replace, delete: prev.delete + ops.delete } : { ...ops });
+      }
+    };
+    for (const [m, writes] of [...minutes].sort((a, b) => a[0] - b[0])) {
+      const w = topWrites(writes, TOP_WRITES.minute);
+      if (!w) continue;
+      if (dateKey(m) >= keepMinutesKey) await appendLine(join(target, `minutes-${dateKey(m)}.jsonl`), { ...emptyRollup(m), w });
+      const h = hourStart(m);
+      if (!hourWillRoll(h) && h >= keepHoursFrom) add(hours, h, writes);
+      const d = dayStart(m);
+      if (!dayWillRoll(d)) add(days, d, writes);
+    }
+    for (const [h, writes] of hours) {
+      const w = topWrites(writes, TOP_WRITES.hour);
+      if (w) await appendLine(join(target, `hours-${monthKey(h)}.jsonl`), { ...emptyRollup(h), w });
+    }
+    for (const [d, writes] of days) {
+      const w = topWrites(writes, TOP_WRITES.day);
+      if (w) await appendLine(join(target, `days-${yearKey(d)}.jsonl`), { ...emptyRollup(d), w });
+    }
+  };
+
+  // 빈 구간 작업 — 기록을 꺼 뒀거나 폴더를 못 정했으면 아무것도 안 한다
+  const withGap = (id: string, task: (target: string, gap: StoredGap) => Promise<void>) =>
+    enqueue(async () => {
+      if (!enabled() || !hooks.alive()) return;
+      const target = await resolveDir();
+      const gap = state.gaps.find((g) => g.id === id);
+      if (!target || !gap) return;
+      await task(target, gap);
+      await saveState(target, state);
+    });
 
   const stop = () => {
     const done = current;
@@ -266,8 +377,9 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
       void enqueue(() => flushMinute(done, writes));
     }
     return enqueue(async () => {
-      if (dir && latest && hooks.alive()) {
-        state.last = latest;
+      if (dir && (latest || liveResume) && hooks.alive()) {
+        if (latest) state.last = latest;
+        if (liveResume) state.resume = liveResume;
         await saveState(dir, state);
       }
     });
@@ -314,6 +426,8 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
         state = emptyState();
         latest = null;
         firstCounters = true;
+        liveResume = null;
+        closed = null;
       });
     },
     clear() {
@@ -325,8 +439,51 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
         state = emptyState();
         // 지운 직후의 누적값과 비교할 '지난번'이 없으니 빈 구간을 만들지 않는다
         firstCounters = false;
+        closed = null;
       });
     },
+    noteResume(point) {
+      liveResume = point;
+    },
+    openGap(t0) {
+      return enqueue(async () => {
+        if (!enabled()) return;
+        const target = await resolveDir();
+        if (!target || !hooks.alive()) return;
+        const prev = closed?.resume ?? null;
+        const before = closed?.last ?? null;
+        closed = null;
+        if (prev && t0.at - prev.at >= 1000 && compareTs(prev.ts, t0.ts) < 0) {
+          state.gaps.push({ id: `${prev.at}-${t0.at}`, from: prev, to: t0, progress: null, loaded: 0, before });
+          while (state.gaps.length > MAX_GAPS) {
+            const dropped = state.gaps.shift() as StoredGap;
+            const fill: HistoryFill = { from: dropped.from.at, to: dropped.to.at, events: dropped.loaded, lost: dropped.loaded === 0 };
+            await appendLine(join(target, 'fills.jsonl'), fill);
+          }
+        }
+        state.resume = liveResume ?? t0;
+        await saveState(target, state);
+      });
+    },
+    gaps: () => state.gaps.map((g) => ({ ...g })),
+    updateGap(id, patch) {
+      return withGap(id, async (_target, gap) => {
+        Object.assign(gap, patch);
+      });
+    },
+    writeFill(id, minutes, patch) {
+      return withGap(id, async (target, gap) => {
+        await appendFill(target, minutes);
+        Object.assign(gap, patch);
+      });
+    },
+    finishGap(id, fill) {
+      return withGap(id, async (target) => {
+        state.gaps = state.gaps.filter((g) => g.id !== id);
+        await appendLine(join(target, 'fills.jsonl'), fill);
+      });
+    },
+    latestCounters: () => latest,
     currentFingerprint: () => fingerprint,
     idle: () => queue,
   };

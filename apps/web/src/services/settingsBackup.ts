@@ -107,6 +107,10 @@ export const parseBackup = (text: string): SettingsBackup => {
             monitorHistory: (obj.server as { monitorHistory?: unknown }).monitorHistory === undefined
               ? getServerSettingsSnapshot().monitorHistory
               : normalizeServerSettings(obj.server).monitorHistory,
+            // 9-4 전 백업엔 backfillAuto가 없다 — 마찬가지로 지금 값을 둔다
+            backfillAuto: (obj.server as { backfillAuto?: unknown }).backfillAuto === undefined
+              ? getServerSettingsSnapshot().backfillAuto
+              : normalizeServerSettings(obj.server).backfillAuto,
           },
         }
       : {}),

@@ -15,7 +15,7 @@ const KEEP_SAMPLES = 360;
 // 드라이버 7의 명령별 timeoutMS는 효과가 없어서 직접 건다(늦게 온 응답은 버린다)
 const COMMAND_TIMEOUT_MS = 5000;
 
-const withTimeout = <T>(promise: Promise<T>): Promise<T> => {
+export const withTimeout = <T>(promise: Promise<T>): Promise<T> => {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error('timed out')), COMMAND_TIMEOUT_MS);

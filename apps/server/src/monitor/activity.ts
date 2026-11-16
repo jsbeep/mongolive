@@ -46,6 +46,8 @@ export const normalizePath = (path: string): string =>
 interface MinuteBucket {
   start: number;
   byNs: Map<string, ActivityOps>;
+  // 그중 빈 구간 불러오기(9-4)로 넣은 몫 — 1분 기록 파일엔 불러오기가 따로 적으므로 minuteWrites에서 뺀다
+  filled?: Map<string, ActivityOps>;
 }
 
 interface SlotBucket {
@@ -64,16 +66,20 @@ export interface ActivityQuery {
 }
 
 export interface ActivityStats {
-  record: (change: LiveChange) => void;
+  // backfill = 빈 구간 불러오기로 다시 읽은 이벤트(9-4)
+  record: (change: LiveChange, backfill?: boolean) => void;
   report: (query: ActivityQuery, now?: number) => ActivityReport;
   lastWrites: () => Record<string, LastWrite>;
   // 그 1분 동안의 컬렉션별 쓰기 — 기록 파일(monitor/history)이 1분 기록에 붙인다
   minuteWrites: (start: number) => Map<string, ActivityOps> | undefined;
   readonly since: number;
+  // 빈 구간을 불러와 그 앞부터 센 셈이 됨 — 세기 시작한 때를 앞당긴다
+  extendSince: (t: number) => void;
 }
 
 // clock: 테스트가 시간을 정할 수 있게
-export const createActivityStats = (since = Date.now(), clock: () => number = Date.now): ActivityStats => {
+export const createActivityStats = (start = Date.now(), clock: () => number = Date.now): ActivityStats => {
+  let since = start;
   const minutes = new Map<number, MinuteBucket>();
   const slots = new Map<number, SlotBucket>();
   const last = new Map<string, LastWrite>();
@@ -111,11 +117,13 @@ export const createActivityStats = (since = Date.now(), clock: () => number = Da
     } else slot.overflow.add(ns);
   };
 
-  const record = (change: LiveChange) => {
+  const record = (change: LiveChange, backfill = false) => {
     if (!change.collection) return;
     const ns = nsOf(change.database, change.collection);
     const at = change.clusterTime;
-    last.set(ns, { at, op: change.op });
+    // 불러오기로 늦게 읽은 옛 이벤트가 더 최근의 마지막 쓰기를 덮지 않게
+    const prev = last.get(ns);
+    if (!prev || prev.at <= at) last.set(ns, { at, op: change.op });
     if (!COUNTED_OPS.has(change.op)) return;
 
     const minuteStart = Math.floor(at / MINUTE_MS) * MINUTE_MS;
@@ -130,6 +138,15 @@ export const createActivityStats = (since = Date.now(), clock: () => number = Da
       minute.byNs.set(ns, ops);
     }
     ops[change.op as keyof ActivityOps] += 1;
+    if (backfill) {
+      minute.filled ??= new Map();
+      let filled = minute.filled.get(ns);
+      if (!filled) {
+        filled = emptyOps();
+        minute.filled.set(ns, filled);
+      }
+      filled[change.op as keyof ActivityOps] += 1;
+    }
 
     const slot = slotOf(Math.floor(at / SLOT_MS) * SLOT_MS);
     if (change.documentId) bump(slot, 'docs', ns, change.documentId.slice(0, MAX_KEY_LENGTH));
@@ -221,10 +238,21 @@ export const createActivityStats = (since = Date.now(), clock: () => number = Da
     report,
     lastWrites: () => Object.fromEntries(last),
     minuteWrites: (start) => {
-      const byNs = minutes.get(start)?.byNs;
-      // 복사본 — 나중에 도착한 이벤트가 이미 넘긴 값을 바꾸지 않게
-      return byNs ? new Map([...byNs].map(([ns, ops]) => [ns, { ...ops }])) : undefined;
+      const bucket = minutes.get(start);
+      if (!bucket) return undefined;
+      // 복사본 — 나중에 도착한 이벤트가 이미 넘긴 값을 바꾸지 않게. 불러오기 몫은 뺀다
+      const out = new Map<string, ActivityOps>();
+      for (const [ns, ops] of bucket.byNs) {
+        const f = bucket.filled?.get(ns);
+        out.set(ns, f ? { insert: ops.insert - f.insert, update: ops.update - f.update, replace: ops.replace - f.replace, delete: ops.delete - f.delete } : { ...ops });
+      }
+      return out;
     },
-    since,
+    get since() {
+      return since;
+    },
+    extendSince: (t) => {
+      since = Math.min(since, t);
+    },
   };
 };

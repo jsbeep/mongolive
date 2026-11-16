@@ -17,8 +17,9 @@
 // 단독(standalone) MongoDB는 changeStream이 안 되므로 열지 않고 그 사실을 알린다(8-6에서 폴링).
 //
 // 흔적 없음: changeStream은 읽기 전용이다. 변경 전 문서(pre-image)는 DB 옵션을 켜야 해서 쓰지 않는다.
-// resume token은 저장하지 않는다 — 잠깐 끊기면 드라이버가 알아서 이어 받고, 스트림을 새로 열어야 할 땐
-// 클라이언트에 resync를 보내 화면을 다시 받게 한다.
+// 잠깐 끊기면 드라이버가 알아서 이어 받고, 스트림을 새로 열어야 할 땐 클라이언트에 resync를 보내 화면을 다시 받게 한다.
+// 빈 구간(9-4): 스트림 위치를 기록 파일(state.json)에 남겨 두고, 피드를 새로 열 땐 지금 클러스터 시각 T0부터 실시간을 받는다.
+// 지난번 위치 → T0 사이는 monitor/backfill이 따로 읽어 통계만 채운다(화면에는 보내지 않는다).
 import type { ChangeStream, ChangeStreamDocument, Document as BsonDocument, ResumeToken } from 'mongodb';
 import type { Server, Socket } from 'socket.io';
 import {
@@ -37,7 +38,8 @@ import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES } from './name
 import { toWire } from './wire';
 import { createSampler, type Sampler } from './monitor/sampler';
 import { createActivityStats, type ActivityStats } from './monitor/activity';
-import { createRecorder, type Recorder } from './monitor/history';
+import { createRecorder, type Recorder, type ResumePoint } from './monitor/history';
+import { clusterNow, createBackfill, resumePointOf, toTimestamp, tokenTs, tsOf, type Backfill } from './monitor/backfill';
 import { clusterFingerprint } from './monitor/identity';
 import { SAMPLE_INTERVAL_MS } from './monitor/sampler';
 import { getServerSettings } from './settings';
@@ -53,6 +55,9 @@ const logRoom = (id: string) => `c:${id}:log`;
 const monitorRoom = (id: string) => `c:${id}:monitor`;
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+// 실시간·불러오기 스트림 공통 — 숨김 DB(admin/config/local)는 빼고
+const STREAM_PIPELINE: BsonDocument[] = [{ $match: { 'ns.db': { $nin: [...HIDDEN_DATABASES] } } }];
 
 // ── 이벤트 변환: 드라이버 이벤트 → LiveChange ─────────────────────────────────
 
@@ -154,6 +159,12 @@ interface Feed {
   activity: ActivityStats;
   // 지표를 파일로 남긴다(monitor/history) — 설정 › Monitor에서 끌 수 있다
   recorder: Recorder;
+  // 빈 구간 불러오기(monitor/backfill)
+  backfill: Backfill;
+  // 다음에 스트림을 새로 열 때 T0(지금 클러스터 시각)부터 열고 그 앞을 빈 구간으로 넘긴다 — 피드를 열 때·주소가 바뀔 때
+  needsBoundary: boolean;
+  // 실시간을 다시 받기 시작한 때(ms) — 맨 마지막 빈 구간을 다 채우면 메모리 집계의 '세기 시작'을 앞당긴다
+  t0At: number | null;
 }
 
 const feeds = new Map<string, Feed>();
@@ -197,6 +208,9 @@ export const activityOf = (connectionId: string): ActivityStats | null => feeds.
 
 // 설정 › Monitor — 그 연결의 기록기. 피드가 없으면 null(기록 파일은 그대로 있다)
 export const recorderOf = (connectionId: string): Recorder | null => feeds.get(connectionId)?.recorder ?? null;
+
+// Monitor — 그 연결의 빈 구간 불러오기. 피드가 없으면 null
+export const backfillOf = (connectionId: string): Backfill | null => feeds.get(connectionId)?.backfill ?? null;
 
 // 진단용 — 그 연결의 실시간 상태. 피드가 없으면(쓰는 탭이 없음) connecting
 export const realtimeStatus = (connectionId: string): Omit<LiveStatus, 'resync'> => {
@@ -275,11 +289,13 @@ export const startRealtime = (io: Server) => {
         publish(feed);
         return;
       }
-      const pipeline: BsonDocument[] = [{ $match: { 'ns.db': { $nin: [...HIDDEN_DATABASES] } } }];
-      const next = client.watch(pipeline, {
+      // 새로 여는 피드면 지금 클러스터 시각부터 — 그 앞(지난번 위치부터)은 불러오기가 맡는다
+      const boundary: ResumePoint | null = !feed.lastToken && feed.needsBoundary ? await clusterNow(client) : null;
+      if (feed.stopped || feed.stream) return;
+      const next = client.watch(STREAM_PIPELINE, {
         // create 같은 구조 이벤트도 받는다(MongoDB 6+)
         showExpandedEvents: true,
-        ...(feed.lastToken ? { resumeAfter: feed.lastToken } : {}),
+        ...(feed.lastToken ? { resumeAfter: feed.lastToken } : boundary ? { startAtOperationTime: toTimestamp(boundary.ts) } : {}),
       });
       feed.stream = next;
 
@@ -297,17 +313,28 @@ export const startRealtime = (io: Server) => {
         // 새로 연 스트림이면(이어 받기가 아니면) 그 사이 변경을 놓쳤을 수 있다 → 화면 다시 받기
         publish(feed, !resumed);
         console.log(`[realtime] ${feed.id} changeStream ${resumed ? '이어 받기' : '시작'}`);
+        if (boundary && feed.needsBoundary) {
+          feed.needsBoundary = false;
+          feed.t0At = boundary.at;
+          const { recorder, backfill } = feed;
+          void recorder.openGap(boundary).then(() => (feed.stopped || feed.backfill !== backfill ? undefined : backfill.begin()));
+        }
       };
       // 이벤트가 없어도 서버가 위치를 갱신해 준다 — 다시 열 때 여기서부터
       next.on('resumeTokenChanged', (token: ResumeToken) => {
         if (feed.stream !== next) return;
         feed.lastToken = token;
         markOpened();
+        const ts = tokenTs(token);
+        const point = resumePointOf(token, ts, ts ? ts.t * 1000 : Date.now());
+        if (point) feed.recorder.noteResume(point);
       });
       next.on('change', (change: ChangeStreamDocument) => {
         if (feed.stream !== next) return;
         feed.lastToken = change._id;
         markOpened();
+        const point = resumePointOf(change._id, tsOf((change as { clusterTime?: unknown }).clusterTime), clusterTimeMs(change));
+        if (point) feed.recorder.noteResume(point);
         const live = toLiveChange(change);
         if (live) dispatch(feed, live);
       });
@@ -334,11 +361,13 @@ export const startRealtime = (io: Server) => {
     feed.stopped = true;
     if (feed.graceTimer) clearTimeout(feed.graceTimer);
     feed.sampler.stop();
-    const recorded = feed.recorder.stop();
     closeStream(feed);
-    feed.releaseClient();
     if (feeds.get(feed.id) === feed) feeds.delete(feed.id);
-    return recorded;
+    // 불러오기가 위치를 적고 멈춘 뒤 기록기를 닫는다(같은 파일 줄에 선다). 클라이언트는 그다음에 놓는다
+    return feed.backfill
+      .stop()
+      .then(() => feed.recorder.stop())
+      .finally(() => feed.releaseClient());
   };
 
   // 소켓이 이 연결을 쓰기 시작 — 피드가 없으면 연다
@@ -383,6 +412,21 @@ export const startRealtime = (io: Server) => {
           },
           onReading: (counters, at) => created.recorder.addCounters(counters, at),
         }),
+        backfill: createBackfill({
+          connectionId: id,
+          client: () => clientFor(id),
+          recorder: () => created.recorder,
+          pipeline: STREAM_PIPELINE,
+          convert: toLiveChange,
+          record: (change) => created.activity.record(change, true),
+          filledUpTo: (from, to) => {
+            if (created.t0At !== null && to >= created.t0At) created.activity.extendSince(from);
+          },
+          autoLimit: () => getServerSettings().backfillAuto,
+          onReport: (report) => io.to(monitorRoom(id)).emit('monitor:backfill', report),
+        }),
+        needsBoundary: true,
+        t0At: null,
       };
       feed = created;
       feeds.set(id, feed);
@@ -419,12 +463,20 @@ export const startRealtime = (io: Server) => {
         feed.logBacklog = [];
         feed.windowEvents = 0;
         feed.windowLags = [];
-        // 지금 1분을 옛 서버의 폴더에 적고, 새 주소의 서버 신분부터 다시(같은 서버로 되돌리면 옛 폴더에 이어 붙는다)
-        void feed.recorder.reset();
         feed.activity = createActivityStats();
         feed.sampler.reset();
+        feed.needsBoundary = true;
+        feed.t0At = null;
         publish(feed);
-        void open(feed);
+        // 불러오기를 멈춰 위치를 옛 서버의 폴더에 적고, 지금 1분도 적은 뒤 새 주소의 서버 신분부터 다시
+        // (같은 서버로 되돌리면 옛 폴더에 이어 붙는다). 그다음에 연다 — 새 빈 구간이 옛 폴더에 들어가지 않게
+        const current = feed;
+        void current.backfill
+          .stop()
+          .then(() => current.recorder.reset())
+          .then(() => {
+            if (!current.stopped) void open(current);
+          });
       }
     }
   });
@@ -489,6 +541,7 @@ export const startRealtime = (io: Server) => {
       if (!feed) return;
       void socket.join(monitorRoom(feed.id));
       socket.emit('monitor:backlog', feed.sampler.snapshot());
+      socket.emit('monitor:backfill', feed.backfill.report());
     });
     socket.on('monitor:unsubscribe', () => {
       if (feed) void socket.leave(monitorRoom(feed.id));

@@ -6,7 +6,7 @@
 // 칸은 서버 시간대 기준(2시간 칸 = 자정부터 2시간씩).
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ActivityOps, HistoryGap, HistoryPoint, HistoryReport, MonitorRange } from '@mongolive/shared';
+import type { ActivityOps, HistoryFill, HistoryGap, HistoryPoint, HistoryReport, MonitorRange } from '@mongolive/shared';
 import { readJsonl, serverHistoryDir } from './history';
 import { average, dayStart, hourStart, MINUTE_MS, mergeRollups, METRIC_KEYS, nextDay, nextHour, TOP_WRITES, type Rollup } from './rollup';
 
@@ -103,6 +103,7 @@ export const readHistory = async (connectionId: string, fingerprint: string, que
   });
 
   const gaps = (await readJsonl<HistoryGap>(join(dir, 'gaps.jsonl'))).filter((g) => g.to > from && g.from <= now);
+  const fills = (await readJsonl<HistoryFill>(join(dir, 'fills.jsonl'))).filter((f) => f.to > from && f.from <= now);
 
   const report: HistoryReport = {
     range: query.range,
@@ -111,6 +112,7 @@ export const readHistory = async (connectionId: string, fingerprint: string, que
     to: now,
     points,
     gaps,
+    ...(fills.length ? { fills } : {}),
     ready: true,
   };
 
