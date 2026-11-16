@@ -493,20 +493,28 @@ export function useExplorerState(): UseExplorerStateResult {
       setDatabases(result.databases);
       const live = liveStateRef.current;
       setConnectionStatus(live === 'polling' ? 'polling' : live === 'error' ? 'error' : 'connected');
-      activeDatabaseRef.current = result.activeDatabase;
-      setActiveDatabase(result.activeDatabase);
+      // 사용자 DB가 없으면 ''가 온다 — 다른 곳과 같이 null(DB 없음)로
+      const firstDb = result.activeDatabase || null;
+      activeDatabaseRef.current = firstDb;
+      setActiveDatabase(firstDb);
 
-      const cols = await api.getCollections(result.activeDatabase);
-      setCollections(cols);
-      setActivePaths([
-        {
-          kind: 'normal',
-          columnKind: 'collections',
-          label: result.activeDatabase,
-          databaseName: result.activeDatabase,
-          comp: { id: nextPathId(), direction: 1 },
-        },
-      ]);
+      if (!firstDb) {
+        // 사용자 DB가 아직 없는 서버 — 연결은 된 것(사이드바에 "No databases yet."). DB를 지워 비었을 때와 같은 모양
+        setCollections([]);
+        setActivePaths([]);
+      } else {
+        const cols = await api.getCollections(result.activeDatabase);
+        setCollections(cols);
+        setActivePaths([
+          {
+            kind: 'normal',
+            columnKind: 'collections',
+            label: result.activeDatabase,
+            databaseName: result.activeDatabase,
+            comp: { id: nextPathId(), direction: 1 },
+          },
+        ]);
+      }
       setEditingId(null);
       initializedRef.current = true;
     } catch {
