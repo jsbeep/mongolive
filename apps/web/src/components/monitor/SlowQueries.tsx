@@ -7,7 +7,7 @@ import { LIVE_RANGES, SLOW_THRESHOLDS, type MonitorRange, type SlowGroup, type S
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { fmtAgo, fmtClock, fmtDateTime, fmtMs, fmtNumber, RANGE_LABEL } from './format';
-import { durationTone, Fact, opStyles as styles, PlanBadge, pretty } from './opParts';
+import { durationTone, Fact, HiddenKinds, KindChips, opStyles as styles, PlanBadge, pretty, useKindFilter, type OpKind } from './opParts';
 import type { MonitorScope } from './ScopeBar';
 
 // 서버가 10초마다 로그를 읽는다 — 짧은 기간은 그 박자로, 긴 기간은 1분마다
@@ -38,6 +38,12 @@ const wasteful = (g: SlowGroup) => {
 };
 
 const KIND_LABEL = { user: 'Your apps', mongolive: 'mongolive', system: 'Internal' } as const;
+// 종류 칩 툴팁 — 숫자는 느린 실행 횟수
+const KIND_TIPS: Record<OpKind, string> = {
+  user: 'Slow runs from other apps and shells',
+  mongolive: 'Slow runs from mongolive itself — your Explorer queries and aggregations, and its own reads',
+  system: 'MongoDB’s internal work — TTL deletes, replication',
+};
 
 function SlowDetail({ group }: { group: SlowGroup }) {
   // 처음엔 가장 느린 실행의 명령
@@ -111,8 +117,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
   const [report, setReport] = useState<SlowQueriesReport | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [min, setMin] = useState<SlowThreshold>(SLOW_THRESHOLDS[0]);
-  const [showOwn, setShowOwn] = useState(false);
-  const [showSystem, setShowSystem] = useState(false);
+  const kindFilter = useKindFilter();
   const [sort, setSort] = useState<SortKey>('total');
   const [open, setOpen] = useState<string | null>(null);
   const scopeKey = `${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
@@ -164,11 +169,10 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
   const slowms = report?.slowms ?? null;
   const floor = floorOf(slowms);
   const groups = report?.groups ?? [];
-  const runsOf = (kind: SlowGroup['kind']) => groups.filter((g) => g.kind === kind).reduce((n, g) => n + g.count, 0);
-  const own = runsOf('mongolive');
-  const system = runsOf('system');
+  const kindCounts = { user: 0, mongolive: 0, system: 0 };
+  for (const g of groups) kindCounts[g.kind] += g.count;
   const shown = groups
-    .filter((g) => g.kind === 'user' || (g.kind === 'mongolive' && showOwn) || (g.kind === 'system' && showSystem))
+    .filter((g) => kindFilter.kinds.has(g.kind))
     .sort((a, b) => SORTS[sort](b) - SORTS[sort](a));
   const where = scope.collection ? `${scope.database}.${scope.collection}` : scope.database ? `the ${scope.database} database` : 'this server';
   const missedLines = report?.missed.reduce((n, m) => n + m.lines, 0) ?? 0;
@@ -212,12 +216,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
               );
             })}
           </div>
-          <button type="button" className={cn(styles.chip, showOwn ? styles.chipOn : styles.chipOff)} onClick={() => setShowOwn((v) => !v)} data-tt="Slow runs from mongolive itself — your Explorer queries and its own reads">
-            mongolive {own}
-          </button>
-          <button type="button" className={cn(styles.chip, showSystem ? styles.chipOn : styles.chipOff)} onClick={() => setShowSystem((v) => !v)} data-tt="MongoDB’s internal work — TTL deletes, replication">
-            internal {system}
-          </button>
+          <KindChips filter={kindFilter} counts={kindCounts} tips={KIND_TIPS} />
         </div>
       </div>
 
@@ -263,10 +262,13 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
       ) : report && (status === 'ok' || status === 'closed') && (
         <div className={styles.card}>
           {shown.length === 0 ? (
-            <p className={styles.empty}>
-              No slow queries on {where} — {RANGE_LABEL[range].toLowerCase()}.
-              {report.hidden > 0 ? ` ${fmtNumber(report.hidden)} faster than ${thresholdLabel(min)} hidden.` : ' With small data they’re rare.'}
-            </p>
+            <div className={styles.empty}>
+              <p>
+                No slow queries on {where} — {RANGE_LABEL[range].toLowerCase()}.
+                {report.hidden > 0 ? ` ${fmtNumber(report.hidden)} faster than ${thresholdLabel(min)} hidden.` : ' With small data they’re rare.'}
+              </p>
+              <HiddenKinds filter={kindFilter} counts={kindCounts} />
+            </div>
           ) : (
             <table className={styles.table}>
               <thead>

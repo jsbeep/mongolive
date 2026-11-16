@@ -1,4 +1,5 @@
 // Monitor › Operations의 두 표(지금 실행 중 · 느린 쿼리)가 같이 쓰는 모양
+import { useState } from 'react';
 import { formatQueryValue, valueKind, type EjsonObject, type EjsonValue } from '../../types/explorer';
 import { cn } from '../../utils/cn';
 
@@ -66,5 +67,63 @@ export function Fact({ label, value }: { label: string; value: string | null }) 
       <span className={opStyles.factKey}>{label}</span>
       <span className={opStyles.factValue} data-tt={value ?? undefined}>{value ?? '—'}</span>
     </>
+  );
+}
+
+// ── 종류 칩(user · mongolive · internal) — 두 표가 같은 규칙 ─────────────────
+// 기본은 user만. 최소 하나는 늘 켜져 있다(다 끄면 목록이 비어 헷갈린다)
+export type OpKind = 'user' | 'mongolive' | 'system';
+const KINDS: { kind: OpKind; label: string }[] = [
+  { kind: 'user', label: 'user' },
+  { kind: 'mongolive', label: 'mongolive' },
+  { kind: 'system', label: 'internal' },
+];
+
+export function useKindFilter() {
+  const [kinds, setKinds] = useState<ReadonlySet<OpKind>>(() => new Set(['user']));
+  const toggle = (kind: OpKind) =>
+    setKinds((prev) => {
+      if (prev.has(kind) && prev.size === 1) return prev;
+      const next = new Set(prev);
+      if (!next.delete(kind)) next.add(kind);
+      return next;
+    });
+  const show = (kind: OpKind) => setKinds((prev) => new Set([...prev, kind]));
+  return { kinds, toggle, show };
+}
+export type KindFilter = ReturnType<typeof useKindFilter>;
+
+export function KindChips({ filter, counts, tips }: { filter: KindFilter; counts: Record<OpKind, number>; tips: Record<OpKind, string> }) {
+  return (
+    <>
+      {KINDS.map(({ kind, label }) => {
+        const on = filter.kinds.has(kind);
+        const last = on && filter.kinds.size === 1;
+        return (
+          <button key={kind} type="button" aria-pressed={on} className={cn(opStyles.chip, on ? opStyles.chipOn : opStyles.chipOff)} onClick={() => filter.toggle(kind)} data-tt={last ? `${tips[kind]} — at least one kind stays shown` : tips[kind]}>
+            {label} {counts[kind]}
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+// 빈 표 아래 — 숨긴 종류에 뭔가 있으면 알려 준다(누르면 그 칩을 켠다)
+export function HiddenKinds({ filter, counts }: { filter: KindFilter; counts: Record<OpKind, number> }) {
+  const hidden = KINDS.filter(({ kind }) => !filter.kinds.has(kind) && counts[kind] > 0);
+  if (hidden.length === 0) return null;
+  return (
+    <p className="mt-1.5">
+      Hidden:{' '}
+      {hidden.map(({ kind, label }, i) => (
+        <span key={kind}>
+          {i > 0 && ' · '}
+          <button type="button" className="font-medium text-emerald-700 hover:underline" onClick={() => filter.show(kind)}>
+            {counts[kind]} {label}
+          </button>
+        </span>
+      ))}
+    </p>
   );
 }
