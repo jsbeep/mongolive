@@ -87,12 +87,27 @@ function OpDetail({ op, finished, onStopped }: { op: RunningOp; finished: boolea
   );
 }
 
+// 작업 종류 칩 — 순서대로 보인다
+const KIND_CHIPS: { kind: RunningOp['kind']; label: string; tip: string }[] = [
+  { kind: 'user', label: 'user', tip: 'Work from other apps and shells connected to this server' },
+  { kind: 'mongolive', label: 'mongolive', tip: 'mongolive’s own work — the change stream it listens on, the 10 s sampler, your Explorer queries and aggregations' },
+  { kind: 'system', label: 'internal', tip: 'MongoDB’s internal threads, replication, and drivers waiting for server news (hello)' },
+];
+
 export function OperationsTab({ scope }: { scope: MonitorScope }) {
   const [report, setReport] = useState<OperationsReport | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
-  const [showOwn, setShowOwn] = useState(false);
-  const [showSystem, setShowSystem] = useState(false);
+  // 보일 종류 — 기본은 user만. 최소 하나는 늘 켜져 있다(다 끄면 목록이 비어 헷갈린다)
+  const [kinds, setKinds] = useState<ReadonlySet<RunningOp['kind']>>(() => new Set(['user']));
+  const toggleKind = (kind: RunningOp['kind']) =>
+    setKinds((prev) => {
+      if (prev.has(kind) && prev.size === 1) return prev;
+      const next = new Set(prev);
+      if (!next.delete(kind)) next.add(kind);
+      return next;
+    });
+  const showKind = (kind: RunningOp['kind']) => setKinds((prev) => new Set([...prev, kind]));
   // 펼친 작업 — 끝나서 목록에서 사라져도 접을 때까지 마지막 모습을 남긴다(읽던 중 사라지지 않게)
   const [open, setOpen] = useState<{ op: RunningOp; finished: boolean } | null>(null);
   const [nudge, setNudge] = useState(0);
@@ -146,9 +161,10 @@ export function OperationsTab({ scope }: { scope: MonitorScope }) {
   const refreshSoon = useCallback(() => setNudge((n) => n + 1), []);
 
   const ops = report?.ops ?? [];
-  const own = ops.filter((o) => o.kind === 'mongolive').length;
-  const system = ops.filter((o) => o.kind === 'system').length;
-  const shown = ops.filter((o) => o.kind === 'user' || (o.kind === 'mongolive' && showOwn) || (o.kind === 'system' && showSystem));
+  const countOf = (kind: RunningOp['kind']) => ops.filter((o) => o.kind === kind).length;
+  const shown = ops.filter((o) => kinds.has(o.kind));
+  // 숨긴 종류에 작업이 있으면 빈 화면에서 알려 준다(누르면 그 칩을 켠다)
+  const hidden = KIND_CHIPS.filter(({ kind }) => !kinds.has(kind) && countOf(kind) > 0);
   const rows = open?.finished ? [open.op, ...shown.filter((o) => o.opid !== open.op.opid)] : shown;
   const where = scope.collection ? `${scope.database}.${scope.collection}` : scope.database ? `the ${scope.database} database` : 'this server';
 
@@ -162,12 +178,15 @@ export function OperationsTab({ scope }: { scope: MonitorScope }) {
           </span>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <button type="button" className={cn(styles.chip, showOwn ? styles.chipOn : styles.chipOff)} onClick={() => setShowOwn((v) => !v)} data-tt="mongolive’s own work — the change stream it listens on, the 10 s sampler, your Explorer queries">
-            mongolive {own}
-          </button>
-          <button type="button" className={cn(styles.chip, showSystem ? styles.chipOn : styles.chipOff)} onClick={() => setShowSystem((v) => !v)} data-tt="MongoDB’s internal threads, replication, and drivers waiting for server news (hello)">
-            internal {system}
-          </button>
+          {KIND_CHIPS.map(({ kind, label, tip }) => {
+            const on = kinds.has(kind);
+            const last = on && kinds.size === 1;
+            return (
+              <button key={kind} type="button" aria-pressed={on} className={cn(styles.chip, on ? styles.chipOn : styles.chipOff)} onClick={() => toggleKind(kind)} data-tt={last ? `${tip} — at least one kind stays shown` : tip}>
+                {label} {countOf(kind)}
+              </button>
+            );
+          })}
           <button type="button" className={styles.iconBtn} onClick={() => setPaused((v) => !v)} data-tt={paused ? 'Resume refreshing' : 'Hold the list still while you read it'}>
             {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
             {paused ? 'Resume' : 'Pause'}
@@ -201,9 +220,22 @@ export function OperationsTab({ scope }: { scope: MonitorScope }) {
       ) : report && !report.error && (
         <div className={styles.card}>
           {rows.length === 0 ? (
-            <p className={styles.empty}>
-              Nothing running on {where} right now. Most operations finish in milliseconds — long ones show up here while they run.
-            </p>
+            <div className={styles.empty}>
+              <p>Nothing running on {where} right now. Most operations finish in milliseconds — long ones show up here while they run.</p>
+              {hidden.length > 0 && (
+                <p className="mt-1.5">
+                  Hidden:{' '}
+                  {hidden.map(({ kind, label }, i) => (
+                    <span key={kind}>
+                      {i > 0 && ' · '}
+                      <button type="button" className="font-medium text-emerald-700 hover:underline" onClick={() => showKind(kind)}>
+                        {countOf(kind)} {label}
+                      </button>
+                    </span>
+                  ))}
+                </p>
+              )}
+            </div>
           ) : (
             <table className={styles.table}>
               <thead>
