@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { LineChart as LineChartIcon, Table2 } from 'lucide-react';
 import { cn } from '../../utils/cn';
-import { fmtClock, tickStepFor } from './format';
+import { fmtClock, fmtDate, fmtDateTime, timeTicks } from './format';
 
 export interface ChartSeries {
   key: string;
@@ -86,9 +86,14 @@ interface TimeChartProps {
   gapMs: number;
   // 그릴 값이 하나도 없을 때
   emptyText?: string;
+  // 툴팁·표의 시각 모양 — 실시간(초까지) / 긴 기간(날짜+시각) / 일 단위(날짜만)
+  timeFormat?: 'seconds' | 'datetime' | 'date';
+  // 기록하지 않던 구간 — 회색 띠(올리면 설명)
+  bands?: { from: number; to: number; label: string }[];
 }
 
-export function TimeChart({ title, subtitle, times, series, format, windowMs, now, gapMs, emptyText = 'No data yet' }: TimeChartProps) {
+export function TimeChart({ title, subtitle, times, series, format, windowMs, now, gapMs, emptyText = 'No data yet', timeFormat = 'seconds', bands = [] }: TimeChartProps) {
+  const fmtTime = (t: number) => (timeFormat === 'date' ? fmtDate(t) : timeFormat === 'datetime' ? fmtDateTime(t) : fmtClock(t, true));
   const { ref, width } = useWidth();
   const [hover, setHover] = useState<number | null>(null);
   const [showTable, setShowTable] = useState(false);
@@ -156,11 +161,11 @@ export function TimeChart({ title, subtitle, times, series, format, windowMs, no
   };
 
   // 시각 눈금(창 길이에 따라 2·5·15분 간격)
-  const tickMs = tickStepFor(windowMs);
-  const ticks: number[] = [];
-  for (let t = Math.ceil(start / tickMs) * tickMs; t <= now; t += tickMs) {
+  const ticks: { t: number; label: string }[] = [];
+  for (const tick of timeTicks(start, now)) {
+    const t = tick.t;
     // 양 끝에 너무 붙은 눈금은 뺀다 — y축 숫자·오른쪽 가장자리와 겹치지 않게(시각 글자 폭의 절반쯤)
-    if (x(t) >= PAD_LEFT + 18 && x(t) <= width - PAD_RIGHT - 4) ticks.push(t);
+    if (x(t) >= PAD_LEFT + 18 && x(t) <= width - PAD_RIGHT - 4) ticks.push(tick);
   }
 
   const single = series.length === 1;
@@ -217,7 +222,7 @@ export function TimeChart({ title, subtitle, times, series, format, windowMs, no
             <tbody>
               {[...visible].reverse().map((i) => (
                 <tr key={times[i]} className="border-t border-slate-100">
-                  <td className={cn(styles.td, 'font-mono text-slate-500')}>{fmtClock(times[i], true)}</td>
+                  <td className={cn(styles.td, 'font-mono text-slate-500')}>{fmtTime(times[i])}</td>
                   {series.map((s) => <td key={s.key} className={cn(styles.td, 'text-right')}>{s.values[i] === null ? '—' : format(s.values[i] as number)}</td>)}
                 </tr>
               ))}
@@ -246,8 +251,15 @@ export function TimeChart({ title, subtitle, times, series, format, windowMs, no
                   <text x={PAD_LEFT - 6} y={y(v) + 3.5} textAnchor="end" className="fill-slate-400 text-[10px] tabular-nums">{format(v)}</text>
                 </g>
               ))}
-              {ticks.map((t) => (
-                <text key={t} x={x(t)} y={PAD_TOP + PLOT_H + 13} textAnchor="middle" className="fill-slate-400 font-mono text-[10px]">{fmtClock(t)}</text>
+              {/* 기록하지 않던 구간 — 선 뒤에 옅은 띠 */}
+              {bands.map((band) => {
+                const x1 = Math.max(PAD_LEFT, x(band.from));
+                const x2 = Math.min(width - PAD_RIGHT, x(band.to));
+                if (x2 - x1 < 1) return null;
+                return <rect key={`${band.from}-${band.to}`} x={x1} y={PAD_TOP} width={x2 - x1} height={PLOT_H} className="fill-slate-100" data-tt={band.label} />;
+              })}
+              {ticks.map(({ t, label }) => (
+                <text key={t} x={x(t)} y={PAD_TOP + PLOT_H + 13} textAnchor="middle" className="fill-slate-400 font-mono text-[10px]">{label}</text>
               ))}
 
               {hasData && series.map((s, si) => (
@@ -293,7 +305,7 @@ export function TimeChart({ title, subtitle, times, series, format, windowMs, no
 
           {hover !== null && (
             <div className={styles.tooltip} style={hoverX > width / 2 ? { right: width - hoverX + 10 } : { left: hoverX + 10 }}>
-              <div className={styles.tooltipTime}>{fmtClock(times[hover], true)}</div>
+              <div className={styles.tooltipTime}>{fmtTime(times[hover])}</div>
               {series.map((s) => (
                 <div key={s.key} className={styles.tooltipRow}>
                   <LineKey color={s.color} />

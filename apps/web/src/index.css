@@ -53,6 +53,9 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 9999px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
+/* 가로로 넘치면 스크롤은 되지만 스크롤바는 안 보이게(브레드크럼·범위 바). 이 클래스는 쓰이고 있었지만 정의가 없었다 */
+.scrollbar-hide { scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
 /* Firefox는 위 ::-webkit-scrollbar를 모른다 — 기본(두껍고 다크에서도 밝은) 스크롤바 대신 같은 색의 얇은 것으로.
    Chrome은 표준 속성을 주면 위 규칙을 무시하므로 Firefox에만 준다 */
 @supports not selector(::-webkit-scrollbar) {

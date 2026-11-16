@@ -107,6 +107,7 @@ export const createMockDataSource = (): DataSource => {
     getActivity: async () => null,
     getLastWrites: async () => null,
     getHistoryInfo: async () => null,
+    getHistory: async () => null,
     clearHistory: async () => undefined,
     getDiagnostics: async () => null,
 

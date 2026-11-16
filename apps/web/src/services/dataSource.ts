@@ -27,6 +27,8 @@ import type {
   ActivityReport,
   LastWrites,
   HistoryInfo,
+  HistoryReport,
+  MonitorRange,
   AggregateResult,
   AggregateCounts,
   ConnectionInfo,
@@ -112,6 +114,8 @@ export interface DataSource {
   getLastWrites(): Promise<LastWrites | null>;
   // 설정 › Monitor(9-3) — 이 연결의 기록 파일 크기·가장 오래된 기록 / 전부 지우기. Mock은 null / 아무것도 안 함
   getHistoryInfo(): Promise<HistoryInfo | null>;
+  // Monitor의 긴 기간(24h~All, 9-3b) — 기록 파일을 칸으로 묶은 것. writes = 컬렉션별 쓰기도(Collections 탭). Mock은 null
+  getHistory(range: Exclude<MonitorRange, '5m' | '1h'>, options?: { writes?: boolean; database?: string | null; collection?: string | null }): Promise<HistoryReport | null>;
   clearHistory(): Promise<void>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;

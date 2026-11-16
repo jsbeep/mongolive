@@ -51,8 +51,46 @@ export const chartWindow = (firstAt: number | undefined, now: number): { ms: num
   const ms = Math.min(MAX_WINDOW_MS, Math.max(10 * MINUTE, Math.ceil(span / (5 * MINUTE)) * 5 * MINUTE));
   return { ms, label: ms === MAX_WINDOW_MS ? 'Last hour' : `Last ${ms / MINUTE} min` };
 };
-// 시간 축 눈금 간격 — 창이 짧으면 촘촘하게
-export const tickStepFor = (windowMs: number): number => (windowMs <= 15 * MINUTE ? 2 * MINUTE : windowMs <= 30 * MINUTE ? 5 * MINUTE : 15 * MINUTE);
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+// 날짜 — 11/16, 11/16 14:05
+export const fmtDate = (ms: number): string => {
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+};
+export const fmtDateTime = (ms: number): string => `${fmtDate(ms)} ${fmtClock(ms)}`;
+
+// 시간 축 눈금 — 창 길이에 맞춰 간격을 고르고(눈금 8개 이하), 이 브라우저 시간대의 시·자정에 맞춘다
+const STEPS = [2 * MINUTE, 5 * MINUTE, 15 * MINUTE, 30 * MINUTE, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 5 * DAY, 7 * DAY, 15 * DAY, 30 * DAY, 90 * DAY, 365 * DAY];
+export const timeTicks = (start: number, end: number): { t: number; label: string }[] => {
+  const span = end - start;
+  const step = STEPS.find((s) => span / s <= 8) ?? STEPS[STEPS.length - 1];
+  const out: { t: number; label: string }[] = [];
+  if (step < HOUR) {
+    for (let t = Math.ceil(start / step) * step; t <= end; t += step) out.push({ t, label: fmtClock(t) });
+    return out;
+  }
+  if (step < DAY) {
+    // 시 단위 — 그 간격의 배수 시각(0·3·6…시)
+    const hours = step / HOUR;
+    const d = new Date(start);
+    d.setMinutes(0, 0, 0);
+    while (d.getTime() < start || d.getHours() % hours !== 0) d.setHours(d.getHours() + 1);
+    for (; d.getTime() <= end; d.setHours(d.getHours() + hours)) out.push({ t: d.getTime(), label: d.getHours() === 0 ? fmtDate(d.getTime()) : fmtClock(d.getTime()) });
+    return out;
+  }
+  // 일 단위 — 자정. 여러 날 간격이면 1월 1일부터 센 날짜로 고른다(달이 바뀌어도 간격이 일정하게)
+  const days = Math.round(step / DAY);
+  const d = new Date(start);
+  d.setHours(0, 0, 0, 0);
+  if (d.getTime() < start) d.setDate(d.getDate() + 1);
+  const dayOfYear = (x: Date) => Math.round((x.getTime() - new Date(x.getFullYear(), 0, 1).getTime()) / DAY);
+  for (; d.getTime() <= end; d.setDate(d.getDate() + 1)) {
+    if (days === 1 || dayOfYear(d) % days === 0) out.push({ t: d.getTime(), label: fmtDate(d.getTime()) });
+  }
+  return out;
+};
 
 // 지난 시각 — 짧게: now / 12s / 3m / 2h / 3d
 export const fmtAgo = (at: number, now: number): string => {
@@ -62,4 +100,31 @@ export const fmtAgo = (at: number, now: number): string => {
   if (sec < 3600) return `${Math.floor(sec / 60)}m`;
   if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
   return `${Math.floor(sec / 86400)}d`;
+};
+
+// 기간 이름 — 범위 바·제목
+export const RANGE_LABEL = {
+  '5m': 'Last 5 min',
+  '1h': 'Last hour',
+  '24h': 'Last 24 hours',
+  '7d': 'Last 7 days',
+  '30d': 'Last 30 days',
+  '90d': 'Last 90 days',
+  all: 'All history',
+} as const;
+
+// 칸 길이 이름 — 5 min / 1 hour / 6 hours / 1 day
+export const fmtSpan = (ms: number): string => {
+  if (ms >= DAY) return `${Math.round(ms / DAY)} day${ms >= 2 * DAY ? 's' : ''}`;
+  if (ms >= HOUR) return `${Math.round(ms / HOUR)} hour${ms >= 2 * HOUR ? 's' : ''}`;
+  return `${Math.round(ms / MINUTE)} min`;
+};
+
+// 걸린 시간 — 3h 20m / 2d 4h
+export const fmtDuration = (ms: number): string => {
+  const m = Math.round(ms / MINUTE);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ${m % 60}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
 };

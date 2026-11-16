@@ -322,6 +322,58 @@ export interface ActivityReport {
   partial?: boolean;
 }
 
+// ── Monitor 기간(9-3b) — 범위 바의 기간 선택. 5m·1h = 서버 메모리(실시간), 그보다 길면 기록 파일 ──
+export type MonitorRange = '5m' | '1h' | '24h' | '7d' | '30d' | '90d' | 'all';
+export const LIVE_RANGES: readonly MonitorRange[] = ['5m', '1h'];
+
+// 기록 파일의 지표 이름(서버 monitor/rollup과 같다)
+export const MONITOR_METRIC_KEYS = [
+  'insert', 'query', 'update', 'delete', 'getmore', 'command', // 초당 요청(opcounters)
+  'returned', 'inserted', 'updated', 'deleted', // 초당 문서
+  'latReads', 'latWrites', 'latCommands', // 평균 지연(ms)
+  'scannedKeys', 'scannedDocs', 'collScans', // 초당 훑기
+  'newConns', 'asserts', 'userAsserts', // 초당
+  'netIn', 'netOut', // 초당 바이트
+  'conns', 'memMb', // 그 순간 값
+  'ping', 'lag', // ms
+  'events', // 초당 changeStream 이벤트
+] as const;
+export type MonitorMetricKey = (typeof MONITOR_METRIC_KEYS)[number];
+
+export interface HistoryPoint {
+  // 칸 시작
+  t: number;
+  // 들어간 10초 칸 수 — 칸 길이 ÷ 10초보다 작으면 일부만 기록된 칸
+  n: number;
+  avg: Partial<Record<MonitorMetricKey, number>>;
+  max: Partial<Record<MonitorMetricKey, number>>;
+}
+
+export interface HistoryGap {
+  from: number;
+  to: number;
+  // MongoDB가 그사이 재시작했다 — 합계를 모른다
+  restarted: boolean;
+  ops?: Record<MonitorOp, number>;
+  docs?: { inserted: number; updated: number; deleted: number; returned: number };
+}
+
+//   GET /api/monitor/history?range=24h|7d|30d|90d|all[&writes=1&database=&collection=] → HistoryReport
+export interface HistoryReport {
+  range: MonitorRange;
+  // 한 칸의 길이(24h = 5분, 7d = 1시간, 30d = 2시간, 90d = 6시간, all = 1일)
+  bucketMs: number;
+  from: number;
+  to: number;
+  // 기록이 있는 칸만(오래된 것 → 최신). 비어 있는 칸은 없다 — 선이 끊긴다
+  points: HistoryPoint[];
+  gaps: HistoryGap[];
+  // writes=1일 때 — 기간 동안 컬렉션별 쓰기(많은 순, 상위 50). trend는 points와 같은 칸
+  collections?: { database: string; collection: string; total: number; ops: ActivityOps; trend: number[] }[];
+  // 기록을 읽을 수 있는가(서버 신분을 아직 모르면 false — 막 연결함)
+  ready: boolean;
+}
+
 // 설정 › Monitor — 이 연결의 기록 파일(9-3). GET /api/monitor/history-info, DELETE /api/monitor/history
 export interface HistoryInfo {
   // 디스크에 있는 이 연결의 기록 크기(바이트) — 옛 서버(주소를 바꾸기 전)의 기록 포함

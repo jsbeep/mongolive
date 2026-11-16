@@ -3,14 +3,14 @@
 // 처음 열 때만 불러온다(React.lazy) — Explorer만 쓰는 사람의 첫 로딩에는 들어가지 않는다.
 // 지표는 서버가 이 연결(피드)에 대해 10초마다 잰다 — 이 연결을 쓰는 탭이 하나라도 열려 있는 동안만 기록된다.
 import { m } from 'framer-motion';
-import type { CollectionSummary, DatabaseSummary } from '../../types/explorer';
+import type { CollectionSummary, DatabaseSummary, LastWrite, MonitorRange } from '../../types/explorer';
+import { useServerSettings } from '../../services/serverSettings';
 import { api } from '../../services/api';
 import { useMonitor } from '../../hooks/useMonitor';
 import { cn } from '../../utils/cn';
 import { ScopeBar, type LiveIndicator, type MonitorScope } from './ScopeBar';
 import { OverviewTab } from './OverviewTab';
 import { CollectionsTab } from './CollectionsTab';
-import { chartWindow } from './format';
 import type { MonitorState } from '../../hooks/useMonitor';
 
 export type MonitorTab = 'overview' | 'collections';
@@ -24,6 +24,11 @@ export interface MonitorViewProps {
   onTabChange: (tab: MonitorTab) => void;
   // Collections의 '자주 바뀐 문서' → Explorer에서 그 문서를 연다
   onOpenDocument: (database: string, collection: string, documentId: string) => void;
+  // 기간(범위 바) — 모든 탭에 같이. 화면을 닫았다 열어도 남게 page가 들고 있다
+  range: MonitorRange;
+  onRangeChange: (range: MonitorRange) => void;
+  // 서버 메모리의 마지막 쓰기(긴 기간 표의 '마지막 쓰기' 칸) — page가 10초마다 받는다
+  lastWrites: Record<string, LastWrite> | null;
   databases: DatabaseSummary[];
   explorerDatabase: string | null;
   explorerCollections: CollectionSummary[];
@@ -56,7 +61,8 @@ const liveOf = (monitor: MonitorState): LiveIndicator => {
   return { tone: 'ok', label: 'Live', tip: `Measured every ${monitor.intervalMs / 1000}s by the mongolive server` };
 };
 
-export default function MonitorView({ connectionName, scope, onScopeChange, tab, onTabChange, onOpenDocument, databases, explorerDatabase, explorerCollections, onOpenInExplorer }: MonitorViewProps) {
+export default function MonitorView({ connectionName, scope, onScopeChange, tab, onTabChange, onOpenDocument, range, onRangeChange, lastWrites, databases, explorerDatabase, explorerCollections, onOpenInExplorer }: MonitorViewProps) {
+  const settings = useServerSettings();
   // 범위 바의 상태 표시가 Overview 지표를 쓰므로 탭과 상관없이 받는다
   const monitor = useMonitor(api.supportsMonitor);
 
@@ -70,7 +76,8 @@ export default function MonitorView({ connectionName, scope, onScopeChange, tab,
         explorerDatabase={explorerDatabase}
         explorerCollections={explorerCollections}
         live={api.supportsMonitor ? liveOf(monitor) : { tone: 'idle', label: 'Unavailable', tip: 'Monitor needs a MongoDB server' }}
-        windowLabel={`${chartWindow(monitor.samples[0]?.at, monitor.now).label} · every ${monitor.intervalMs / 1000}s`}
+        range={range}
+        onRangeChange={onRangeChange}
         onOpenInExplorer={onOpenInExplorer}
       />
 
@@ -95,6 +102,8 @@ export default function MonitorView({ connectionName, scope, onScopeChange, tab,
             <CollectionsTab
               scope={scope}
               onScopeChange={onScopeChange}
+              range={range}
+              lastWrites={lastWrites}
               explorerDatabase={explorerDatabase}
               explorerCollections={explorerCollections}
               onOpenDocument={onOpenDocument}
@@ -106,7 +115,7 @@ export default function MonitorView({ connectionName, scope, onScopeChange, tab,
                   MongoDB reports these numbers for the whole server, not per database — the scope above applies to the Collections tab.
                 </p>
               )}
-              <OverviewTab monitor={monitor} />
+              <OverviewTab monitor={monitor} range={range} historyOff={settings.monitorHistory === 'off'} />
             </>
           )
         )}

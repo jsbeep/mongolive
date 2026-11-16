@@ -4,11 +4,15 @@
 //   GET /api/monitor/last-writes → LastWrites (사이드바 트리의 '마지막 쓰기')
 //   GET /api/monitor/history-info → HistoryInfo (설정 › Monitor — 기록 파일 크기·가장 오래된 기록)
 //   DELETE /api/monitor/history → 이 연결의 기록 파일 전부 지우기
+//   GET /api/monitor/history?range=24h|7d|30d|90d|all[&writes=1&database=&collection=] → HistoryReport (긴 기간, 9-3b)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
 import type { ActivityRange, ActivityReport, LastWrites } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
-import { connectionIdOf } from '../db';
+import { isFileRange, readHistory } from '../monitor/historyRead';
+import { clusterFingerprint } from '../monitor/identity';
+import { connectionUri } from '../connections';
+import { clientFor, connectionIdOf } from '../db';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
 import { activityOf, recorderOf } from '../realtime';
 
@@ -49,4 +53,32 @@ monitorRouter.delete('/monitor/history', async (_req, res) => {
   // 피드가 열려 있으면 기록기가 줄 선 쓰기를 마친 뒤 지운다(지우는 도중 다시 쓰지 않게)
   await (recorder ? recorder.clear() : dropConnectionHistory(id));
   res.status(204).end();
+});
+
+monitorRouter.get('/monitor/history', async (req, res) => {
+  const range = String(req.query.range ?? '');
+  if (!isFileRange(range)) throw new HttpError(400, 'range must be 24h, 7d, 30d, 90d or all — shorter ranges come live over the socket');
+  const database = text(req.query.database);
+  const collection = text(req.query.collection);
+  if (collection && !database) throw new HttpError(400, 'collection needs a database');
+  const id = connectionIdOf(res);
+  // 서버 신분 — 기록기가 이미 알면 그것, 아니면 직접 묻는다(기록을 꺼 둬도 옛 기록은 볼 수 있게)
+  let fingerprint = recorderOf(id)?.currentFingerprint() ?? null;
+  if (!fingerprint) {
+    try {
+      fingerprint = await clusterFingerprint(await clientFor(id), connectionUri(id) ?? '');
+    } catch {
+      fingerprint = null;
+    }
+  }
+  if (!fingerprint) {
+    res.json({ range, bucketMs: 0, from: Date.now(), to: Date.now(), points: [], gaps: [], ready: false });
+    return;
+  }
+  res.json(await readHistory(id, fingerprint, {
+    range,
+    writes: req.query.writes === '1',
+    database: database ? checkDatabaseName(database) : null,
+    collection: collection ? checkCollectionName(collection) : null,
+  }));
 });

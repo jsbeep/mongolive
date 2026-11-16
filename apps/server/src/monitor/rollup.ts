@@ -4,21 +4,11 @@
 //   평균 = s ÷ c (읽을 때 계산). 합·개수를 들고 있어서 1분 → 1시간으로 합쳐도 평균이 정확하고,
 //   최대값을 따로 들고 있어서 시·일 단위로 합쳐도 순간 급증이 묻히지 않는다.
 // 컬렉션별 쓰기 수(w)는 상위 N개만(분 50 · 시 100 · 일 200) — 컬렉션이 많아도 한 줄이 커지지 않게.
-import type { ActivityOps, MonitorSample } from '@mongolive/shared';
+import { MONITOR_METRIC_KEYS, type ActivityOps, type MonitorMetricKey, type MonitorSample } from '@mongolive/shared';
 
-// 지표 이름 — 파일에 그대로 들어간다(사람이 열어 봐도 알 수 있게)
-export const METRIC_KEYS = [
-  'insert', 'query', 'update', 'delete', 'getmore', 'command', // 초당 요청(opcounters)
-  'returned', 'inserted', 'updated', 'deleted', // 초당 문서
-  'latReads', 'latWrites', 'latCommands', // 평균 지연(ms)
-  'scannedKeys', 'scannedDocs', 'collScans', // 초당 훑기
-  'newConns', 'asserts', 'userAsserts', // 초당
-  'netIn', 'netOut', // 초당 바이트
-  'conns', 'memMb', // 그 순간 값
-  'ping', 'lag', // ms
-  'events', // 초당 changeStream 이벤트
-] as const;
-export type MetricKey = (typeof METRIC_KEYS)[number];
+// 지표 이름 — 파일에 그대로 들어간다(사람이 열어 봐도 알 수 있게). 목록은 shared(화면도 같은 이름을 쓴다)
+export const METRIC_KEYS = MONITOR_METRIC_KEYS;
+export type MetricKey = MonitorMetricKey;
 type Metrics = Partial<Record<MetricKey, number>>;
 
 export interface Rollup {

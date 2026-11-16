@@ -61,6 +61,9 @@ const emptyState = (): StateFile => ({ version: 1, rolledHour: null, rolledDay: 
 // 연결 id는 UUID나 'env' — 그래도 경로에 쓰기 전에 거른다
 const connectionDir = (connectionId: string) => join(metricsDirPath(), connectionId.replace(/[^A-Za-z0-9_-]/g, '_'));
 
+// 그 연결의 그 서버 기록 폴더(monitor/historyRead가 읽는다)
+export const serverHistoryDir = (connectionId: string, fingerprint: string) => join(connectionDir(connectionId), fingerprint);
+
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export const readJsonl = async <T>(file: string): Promise<T[]> => {

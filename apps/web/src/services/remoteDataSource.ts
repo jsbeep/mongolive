@@ -26,6 +26,7 @@ import type {
   ActivityReport,
   LastWrites,
   HistoryInfo,
+  HistoryReport,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -397,6 +398,13 @@ export const createRemoteDataSource = (): DataSource => {
     },
     getLastWrites: () => request<LastWrites>('/monitor/last-writes'),
     getHistoryInfo: () => request<HistoryInfo>('/monitor/history-info'),
+    getHistory(range, options = {}) {
+      const params = new URLSearchParams({ range });
+      if (options.writes) params.set('writes', '1');
+      if (options.database) params.set('database', options.database);
+      if (options.database && options.collection) params.set('collection', options.collection);
+      return request<HistoryReport>(`/monitor/history?${params}`);
+    },
     async clearHistory() {
       await request<void>('/monitor/history', { method: 'DELETE' });
     },
