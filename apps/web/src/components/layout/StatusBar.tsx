@@ -31,6 +31,8 @@ interface StatusBarProps {
   defaultColumns: number;
   // 컬럼 수를 못 바꿀 때(집계 Tree는 늘 3패널) — ± 버튼을 끈다
   columnCountFixed: boolean;
+  // Tree/Columns·컬럼 수 조절을 보일지 — Monitor 화면에선 컬럼이 없으니 숨긴다
+  showColumnControls: boolean;
   unreadChanges: number;
   unseenErrors: number;
   isCenterOpen: boolean;
@@ -60,6 +62,7 @@ export function StatusBar({
   connectionStatus,
   onRefresh,
   refreshCount,
+  showColumnControls,
   pollInterval,
   maxVisibleColumns,
   setMaxVisibleColumns,
@@ -144,7 +147,7 @@ export function StatusBar({
           <Search size={16} />
           <span className="text-slate-400">{navigator.platform.toLowerCase().includes('mac') ? '⌘K' : 'Ctrl+K'}</span>
         </button>
-        {connected && (
+        {connected && showColumnControls && (
         <>
         <span className={styles.sep} aria-hidden="true" />
         <button

@@ -1,7 +1,7 @@
 // 알림 센터 (VSCode의 알림 센터처럼 오른쪽 아래, 상태바의 종으로 연다).
 //   Changes — 서버 changeStream의 변경 기록(레거시 ChangeStreamLogs). 누르면 그 위치로 이동하고 닫힌다
 //   System  — 에러 토스트, 실시간 연결 끊김/복구
-//   Metrics — 서버 지표(레거시 PerformanceMetrics)
+// (서버 지표는 9단계에서 사이드바의 Monitor 화면으로 옮겼다)
 // 바깥을 누르거나 Esc로 닫는다. data-keeps-notifications가 붙은 곳(상태바의 종·연결 상태, 토스트)은 바깥으로 치지 않는다
 // — 종은 직접 여닫고, 토스트의 Undo는 센터와 상관없으므로.
 import { useEffect, useRef } from 'react';
@@ -14,10 +14,9 @@ import type { ActivityLog } from '../../hooks/useActivityLog';
 import type { SystemLog } from '../../hooks/useSystemLog';
 import type { LiveLogEntry } from '../../types/explorer';
 import { ChangesTab } from '../activity/ChangesTab';
-import { MetricsTab } from '../activity/MetricsTab';
 import { SystemTab } from './SystemTab';
 
-export type NotificationTab = 'changes' | 'system' | 'metrics';
+export type NotificationTab = 'changes' | 'system';
 
 interface NotificationCenterProps {
   open: boolean;
@@ -82,7 +81,6 @@ export function NotificationCenter({ open, onClose, tab, onTabChange, activity, 
   const tabs: { id: NotificationTab; label: string; badge?: { n: number; color: string } }[] = [
     { id: 'changes', label: 'Changes', badge: activity.unread ? { n: activity.unread, color: 'bg-sky-500' } : undefined },
     { id: 'system', label: 'System', badge: system.unseenErrors ? { n: system.unseenErrors, color: 'bg-rose-500' } : undefined },
-    { id: 'metrics', label: 'Metrics' },
   ];
 
   return createPortal(
@@ -124,10 +122,10 @@ export function NotificationCenter({ open, onClose, tab, onTabChange, activity, 
               <SystemTab entries={system.entries} onClear={system.clear} />
             ) : dataSourceKind === 'mock' ? (
               <p className={styles.mockNotice}>
-                Live changes and server metrics appear when the app is connected to a MongoDB server
+                Live changes appear when the app is connected to a MongoDB server
                 (<code className="font-mono">pnpm dev:web:remote</code>). The in-browser mock has no outside changes to show.
               </p>
-            ) : tab === 'changes' ? (
+            ) : (
               <ChangesTab
                 entries={activity.entries}
                 seenAt={activity.seenAt}
@@ -139,8 +137,6 @@ export function NotificationCenter({ open, onClose, tab, onTabChange, activity, 
                 activeCollection={activeCollection}
                 activeDocumentId={activeDocumentId}
               />
-            ) : (
-              <MetricsTab />
             )}
           </div>
         </m.div>

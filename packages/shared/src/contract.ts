@@ -189,7 +189,7 @@ export interface LiveStatus {
   gone?: boolean;
 }
 
-// ── 활동 패널(ChangeStreamLogs / PerformanceMetrics) ──────────────────────────
+// ── 활동 패널(ChangeStreamLogs) ──────────────────────────────────────────────
 // 소켓: 클라이언트 → 'log:subscribe' / 'log:unsubscribe', 'rtt'(ack로 응답)
 //       서버 → 'log:backlog'(LiveLogEntry[]), 'log'(LiveLogEntry)
 
@@ -211,35 +211,70 @@ export interface LiveLogEntry {
   own?: boolean;
 }
 
-export interface LagStats {
-  p50: number;
-  p95: number;
-  max: number;
-  samples: number;
+// ── Monitor 화면(9단계) ──────────────────────────────────────────────────────
+// 서버가 연결(피드)마다 10초에 한 번 serverStatus + ping을 재서 최근 1시간을 들고 있다(피드가 열려 있는 동안만).
+// 소켓: 클라이언트 → 'monitor:subscribe' / 'monitor:unsubscribe'
+//       서버 → 'monitor:backlog'(MonitorSnapshot), 'monitor:sample'(MonitorTick)
+
+export type MonitorOp = 'insert' | 'query' | 'update' | 'delete' | 'getmore' | 'command';
+
+// 한 칸을 못 잰 이유 — denied: serverStatus 권한(clusterMonitor) 없음, unreachable: MongoDB에 닿지 않음
+export type MonitorProblem = 'denied' | 'unreachable' | 'error';
+
+// 지난 칸과의 차이로 낸 초당 값(serverStatus는 MongoDB가 켜진 뒤의 누적값을 준다)
+export interface MonitorRates {
+  // 요청 수 — updateMany 하나는 update 1
+  ops: Record<MonitorOp, number>;
+  // 문서 수 — updateMany로 문서 100개를 바꾸면 updated 100
+  docs: { inserted: number; updated: number; deleted: number; returned: number };
+  // 그 종류 작업의 평균 지연(ms). 그동안 작업이 없었으면 null
+  latencyMs: { reads: number | null; writes: number | null; commands: number | null };
+  // 훑은 인덱스 키 / 문서, 컬렉션 전체 훑기(COLLSCAN) 수 — 돌려준 문서보다 훨씬 많이 훑으면 인덱스가 없다는 신호
+  scannedKeys: number;
+  scannedDocs: number;
+  collectionScans: number | null;
+  // 새로 맺은 연결 — 계속 높으면 앱이 연결을 재사용(커넥션 풀)하지 않는다
+  newConnections: number;
+  // 서버 내부 경고·에러 수(user = 중복 키 같은 요청 에러)
+  asserts: { regular: number; warning: number; msg: number; user: number };
+  network: { inBps: number; outBps: number };
 }
 
-export interface ServerMetrics {
+export interface MonitorGauges {
+  connections: { current: number; available: number } | null;
+  memResidentMb: number | null;
+}
+
+export interface MonitorSample {
+  // 잰 시각(ms)
   at: number;
-  realtime: {
-    status: LiveStatus;
-    // 서버가 시작된 뒤 받은 이벤트 수
-    eventsTotal: number;
-    // 최근 60초, 1초 단위 이벤트 수(오래된 것 → 최신)
-    eventsPerSecond: number[];
-    // DB 기록 시각(wallTime) → 서버 수신까지(ms), 최근 이벤트 기준
-    lag: LagStats | null;
-  };
-  // serverStatus — 계정에 권한(clusterMonitor)이 없으면 error만 온다
-  mongo: {
-    version?: string;
-    uptimeSec?: number;
-    connections?: { current: number; available: number };
-    memResidentMb?: number;
-    // 누적값 — 초당 값은 두 번 받아 차이로 계산한다
-    opcounters?: Record<string, number>;
-    network?: { bytesIn: number; bytesOut: number };
-    error?: string;
-  };
+  problem?: MonitorProblem;
+  // mongolive 서버 → MongoDB ping 왕복(ms)
+  pingMs: number | null;
+  // 첫 칸이거나 MongoDB가 재시작했거나 못 쟀으면 null
+  rates: MonitorRates | null;
+  gauges: MonitorGauges | null;
+  // 이 칸 동안 changeStream으로 받은 이벤트 수, DB 기록 → 서버 수신 지연 p95(ms)
+  stream: { events: number; lagP95Ms: number | null };
+}
+
+export interface MonitorInfo {
+  version: string | null;
+  uptimeSec: number | null;
+  host: string | null;
+  topology: MongoTopology;
+}
+
+export interface MonitorSnapshot {
+  intervalMs: number;
+  // 오래된 것 → 최신
+  samples: MonitorSample[];
+  info: MonitorInfo;
+}
+
+export interface MonitorTick {
+  sample: MonitorSample;
+  info: MonitorInfo;
 }
 
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
@@ -259,7 +294,7 @@ export interface Diagnostics {
   };
   // 서버가 연 changeStream의 지금 상태
   realtime: Omit<LiveStatus, 'resync'>;
-  // serverStatus(지표 탭) 권한 — clusterMonitor 역할이 있어야 한다
+  // serverStatus(Monitor 화면) 권한 — clusterMonitor 역할이 있어야 한다
   serverStatus: 'ok' | 'denied' | 'error';
   // .env 값(읽기 전용). mongoUri는 비밀번호와 옵션을 가린 것
   security: {

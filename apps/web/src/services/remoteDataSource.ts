@@ -21,7 +21,8 @@ import type {
   MutationRequest,
   MutationResult,
   ReferenceInfo,
-  ServerMetrics,
+  MonitorSnapshot,
+  MonitorTick,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -36,7 +37,7 @@ import { mutationTarget } from '../types/explorer';
 import { fetchAuthStatus, notifySessionExpired } from './auth';
 import { getActiveConnection, leaveConnection, onActiveConnectionChange } from './activeConnection';
 import { getPreferences } from './preferences';
-import type { ClientMetrics, DataSource } from './dataSource';
+import type { DataSource, MonitorEvent } from './dataSource';
 
 const BASE = '/api';
 
@@ -133,6 +134,7 @@ export const createRemoteDataSource = (): DataSource => {
   const connectionsListeners = new Set<(connections: ConnectionInfo[]) => void>();
   const emitStatus = (status: LiveStatus) => statusListeners.forEach((listener) => listener(status));
   const logListeners = new Set<(entries: LiveLogEntry[], isBacklog: boolean) => void>();
+  const monitorListeners = new Set<(event: MonitorEvent) => void>();
 
   // ── 내 저장의 메아리 알아보기 ──
   // 내가 저장하면 서버 changeStream이 같은 변경을 알림으로 다시 보낸다(메아리). 저장 응답의 opTime과
@@ -196,6 +198,8 @@ export const createRemoteDataSource = (): DataSource => {
       next.emit('view', view);
       // 활동 패널이 열려 있었다면 기록 구독도 다시(최근 기록이 다시 오지만 패널이 id로 중복을 거른다)
       if (logListeners.size > 0) next.emit('log:subscribe');
+      // Monitor 화면도 마찬가지 — 최근 기록이 다시 오고 화면이 통째로 바꾼다
+      if (monitorListeners.size > 0) next.emit('monitor:subscribe');
       // 끊겨 있던 동안의 변경은 받지 못했다 → 화면을 새로 받게 한다(첫 연결은 막 불러온 상태라 제외)
       if (everConnected) emitStatus({ state: lastServerState === 'polling' ? 'polling' : 'running', resync: true });
       everConnected = true;
@@ -232,6 +236,8 @@ export const createRemoteDataSource = (): DataSource => {
       const marked = entries.map((e) => ({ ...e, own: isOwn(e.opTime) }));
       logListeners.forEach((listener) => listener(marked, true));
     });
+    next.on('monitor:backlog', (snapshot: MonitorSnapshot) => monitorListeners.forEach((listener) => listener({ kind: 'backlog', snapshot })));
+    next.on('monitor:sample', (tick: MonitorTick) => monitorListeners.forEach((listener) => listener({ kind: 'sample', tick })));
     next.on('log', (entry: LiveLogEntry) =>
       deliver(() => {
         const marked = { ...entry, own: isOwn(entry.opTime) };
@@ -391,16 +397,24 @@ export const createRemoteDataSource = (): DataSource => {
       };
     },
 
-    async getMetrics(): Promise<ClientMetrics> {
+    supportsMonitor: true,
+    onMonitor(listener) {
       const s = ensureSocket();
-      // 왕복 시간: 서버가 받자마자 응답하는 'rtt'를 보내고 응답까지 잰다(2초 안에 없으면 null)
-      const rtt = new Promise<number | null>((resolve) => {
+      monitorListeners.add(listener);
+      if (monitorListeners.size === 1 && s.connected) s.emit('monitor:subscribe');
+      return () => {
+        monitorListeners.delete(listener);
+        if (monitorListeners.size === 0 && s.connected) s.emit('monitor:unsubscribe');
+      };
+    },
+    // 왕복 시간: 서버가 받자마자 응답하는 'rtt'를 보내고 응답까지 잰다(2초 안에 없으면 null)
+    measureRtt() {
+      const s = ensureSocket();
+      return new Promise<number | null>((resolve) => {
         if (!s.connected) return resolve(null);
         const t0 = performance.now();
         s.timeout(2000).emit('rtt', (err: Error | null) => resolve(err ? null : Math.round(performance.now() - t0)));
       });
-      const [metrics, rttMs] = await Promise.all([request<ServerMetrics>('/metrics'), rtt]);
-      return { ...metrics, rttMs };
     },
 
     listOwnedOids: () => request<string[]>('/meta/owned-oids'),

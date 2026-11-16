@@ -126,6 +126,8 @@ export function useMillerKeyboard(containerRef: RefObject<HTMLElement | null>, o
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
       if (document.querySelector('[aria-modal="true"]')) return;
+      // 컬럼이 안 보이면(Monitor 화면을 보는 중 — display:none) 쉰다
+      if (!root()?.offsetParent) return;
       const key = e.key;
       const handled = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Delete', 'F2', 'Escape', 'j', 'k', 'h', 'l', 'e', '/', 'q', '?'];
       if (!handled.includes(key)) return;

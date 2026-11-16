@@ -21,6 +21,12 @@
   --scrollbar-hover: #9ca3af;
   /* 키보드 탐색 커서 링(hooks/useMillerKeyboard) */
   --kb-cursor: rgb(16 185 129 / 0.6);
+  /* Monitor 차트의 계열 색(정한 순서대로만 쓴다). 색약 구분·밝기·대비를 dataviz 검사 스크립트로 확인한 값 —
+     라이트 = Tailwind blue/orange/violet/teal 500, 다크 = 어두운 카드(#262626) 위 밝기 범위에 맞춰 orange·teal만 600 */
+  --chart-1: #3b82f6;
+  --chart-2: #f97316;
+  --chart-3: #8b5cf6;
+  --chart-4: #14b8a6;
 }
 :root.dark {
   /* 입력칸·날짜 선택기·체크박스 같은 브라우저 기본 요소도 어둡게 */
@@ -33,6 +39,10 @@
   --scrollbar: #454545;
   --scrollbar-hover: #5c5c5c;
   --kb-cursor: rgb(151 181 151 / 0.7);
+  --chart-1: #3b82f6;
+  --chart-2: #ea580c;
+  --chart-3: #8b5cf6;
+  --chart-4: #0d9488;
 }
 body {
   background: var(--bg-grid-fade);
@@ -43,6 +53,11 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 9999px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
+/* Firefox는 위 ::-webkit-scrollbar를 모른다 — 기본(두껍고 다크에서도 밝은) 스크롤바 대신 같은 색의 얇은 것으로.
+   Chrome은 표준 속성을 주면 위 규칙을 무시하므로 Firefox에만 준다 */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+}
 
 /* 기능 설명 툴팁은 data-tt 속성 + TooltipLayer(body portal)로 처리한다.
    ::after로 하면 컬럼의 z-index/overflow에 가리거나 잘려서 CSS만으로는 안 된다 —

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useExplorerState } from '../hooks/useExplorerState';
 import { StatusBar } from '../components/layout/StatusBar';
 import { Breadcrumbs } from '../components/dashboard/Breadcrumbs';
@@ -12,7 +12,7 @@ import { NotificationCenter, type NotificationTab } from '../components/notifica
 import { Toast } from '../components/notifications/Toast';
 import { SettingsModal, type SettingsSection } from '../components/settings/SettingsModal';
 import { QuickJump, type QuickCommand } from '../components/palette/QuickJump';
-import { Bell, ListTree, Lock, LogOut, PanelLeft, Plus, RefreshCw, Settings, Undo2, Unplug } from 'lucide-react';
+import { Activity, Bell, ListTree, Lock, LogOut, PanelLeft, Plus, RefreshCw, Settings, Undo2, Unplug } from 'lucide-react';
 import { useAuth } from '../components/auth/AuthGate';
 import { getServerSettingsSnapshot, saveServerSettings } from '../services/serverSettings';
 import { startServerSettingsSync } from '../services/serverSettings';
@@ -38,6 +38,11 @@ import { useConnections } from '../hooks/useConnections';
 import { WelcomeScreen } from '../components/connections/WelcomeScreen';
 import { ConnectionModal, type ConnectionModalTarget } from '../components/connections/ConnectionModal';
 import { useConnect } from '../components/connections/useConnect';
+import type { MonitorScope } from '../components/monitor/ScopeBar';
+import { connectionLabel } from '../types/explorer';
+
+// Monitor 화면(9단계) — 처음 열 때만 불러온다(Explorer만 쓰면 받지 않는다)
+const MonitorView = lazy(() => import('../components/monitor/MonitorView'));
 
 // ── 스타일 ────────────────────────────────────────────────────────────────────
 
@@ -48,6 +53,8 @@ const styles = {
   // 사이드바와 컬럼 사이 틈은 사이드바가 스스로 둔다(접히면 틈도 0)
   body: 'relative flex flex-1 min-h-0 m-3 mb-2',
   columns: 'flex-1 min-w-0 min-h-0 flex flex-col h-full overflow-hidden rounded-2xl bg-white/80 border border-slate-200/60 shadow-panel',
+  // Explorer(브레드크럼 + 컬럼) — Monitor를 보는 동안은 숨기기만 한다(돌아오면 경로·컬럼이 그대로)
+  explorer: 'flex min-h-0 flex-1 flex-col',
 } as const;
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────────────────
@@ -191,6 +198,28 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
   const openCollectionHere = (database: string, collection: string, label: string) =>
     isAggregation ? openPipeline(database, collection, label) : openCollection(database, collection, label);
 
+  // Monitor 화면 — 사이드바 버튼으로 Explorer와 바꿔 본다. 열 때 범위는 Explorer에서 보던 곳(DB·컬렉션)부터
+  const [view, setView] = useState<'explorer' | 'monitor'>('explorer');
+  const [monitorScope, setMonitorScope] = useState<MonitorScope>({ database: null, collection: null });
+  const monitoring = view === 'monitor';
+  const toggleMonitor = () => {
+    setSidebarPanel(null);
+    if (monitoring) return setView('explorer');
+    setMonitorScope({ database: activeDatabase, collection: activeDatabase ? treeCollectionName : null });
+    setView('monitor');
+  };
+  // 범위 바의 'Explorer' — 그 DB/컬렉션을 Explorer에서 연다
+  const openScopeInExplorer = (scope: MonitorScope) => {
+    setView('explorer');
+    if (!scope.database) return;
+    if (scope.collection) void openCollectionHere(scope.database, scope.collection, scope.collection);
+    else void selectDatabase(scope.database);
+  };
+  const connectionName = (() => {
+    const current = connections.connections.find((c) => c.id === connectionId);
+    return current ? connectionLabel(current) : 'Server';
+  })();
+
   // 밀러 컬럼 키보드 탐색(↑↓←→ / hjkl, Enter, e, Delete, /) — ?는 단축키 목록(설정 › Keyboard)
   const columnsRef = useRef<HTMLDivElement>(null);
   useMillerKeyboard(columnsRef, () => openSettings('keyboard'));
@@ -267,6 +296,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
   const quickCommands: QuickCommand[] = [
     ...(api.canManageConnections ? [{ id: 'new-connection', label: 'New connection', icon: Plus, run: () => setConnectionModal('new') }] : []),
     ...(connected ? [{ id: 'disconnect', label: 'Disconnect this tab', icon: Unplug, run: disconnect }] : []),
+    ...(connected ? [{ id: 'monitor', label: monitoring ? 'Back to Explorer' : 'Open Monitor', icon: Activity, run: toggleMonitor }] : []),
     { id: 'settings', label: 'Open settings', icon: Settings, run: () => openSettings() },
     { id: 'notifications', label: 'Show notifications', icon: Bell, run: () => setCenterOpen(true) },
     { id: 'resync', label: "Re-sync what's on screen", icon: RefreshCw, hint: 'R', run: refreshNow },
@@ -325,16 +355,23 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
             }}
             databases={databases}
             activeDatabase={activeDatabase}
-            activeCollection={treeCollectionName}
+            // Monitor를 보는 동안 트리는 범위를 강조하고, 트리에서 고르면 범위가 바뀐다(Explorer 경로는 그대로)
+            activeCollection={monitoring ? (monitorScope.database === activeDatabase ? monitorScope.collection : null) : treeCollectionName}
             collections={collections}
-            onSelectDatabase={selectDatabase}
+            onSelectDatabase={async (name) => {
+              // DB를 펼치는 건 Explorer가 그 DB의 컬렉션을 받아야 해서 Monitor 중에도 Explorer DB를 바꾼다
+              if (monitoring) setMonitorScope({ database: name, collection: null });
+              await selectDatabase(name);
+            }}
             onOpenCollection={async (database, name, label) => {
               // 좁은 화면에서 떠 있는 사이드바는 고르면 닫는다(열린 경로를 가리므로)
               if (sidebar.isOverlay) sidebar.setMode('rail');
+              if (monitoring) return setMonitorScope({ database, collection: name });
               await openCollectionHere(database, name, label);
             }}
             onMutate={mutate}
             onOpenSettings={() => openSettings()}
+            monitor={{ active: monitoring, onToggle: toggleMonitor }}
             panels={{
               open: sidebarPanel?.kind ?? null,
               onToggle: (kind, anchor) => {
@@ -344,8 +381,8 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
             }}
           />
 
-          {/* Miller Columns — 연결을 고르기 전엔 같은 카드 자리에 웰컴 화면 */}
-          <div ref={columnsRef} className={styles.columns}>
+          {/* Miller Columns — 연결을 고르기 전엔 같은 카드 자리에 웰컴 화면, Monitor를 켜면 Monitor 화면 */}
+          <div className={styles.columns}>
             {!connected ? (
               <WelcomeScreen
                 connections={connections}
@@ -358,6 +395,21 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
               />
             ) : (
             <>
+            {monitoring && (
+              <Suspense fallback={null}>
+                <MonitorView
+                  connectionName={connectionName}
+                  scope={monitorScope}
+                  onScopeChange={setMonitorScope}
+                  databases={databases}
+                  explorerDatabase={activeDatabase}
+                  explorerCollections={collections}
+                  onOpenInExplorer={openScopeInExplorer}
+                />
+              </Suspense>
+            )}
+            {/* 숨김(display:none) 동안은 키보드 탐색(useMillerKeyboard)·'.' 경로 입력도 쉰다 — 둘 다 보이는지 확인한다 */}
+            <div ref={columnsRef} className={monitoring ? 'hidden' : styles.explorer}>
             {/* 브레드크럼 — 첫 칸(DB)은 DB 고르기 드롭다운 */}
             <Breadcrumbs
               breadcrumbs={breadcrumbs}
@@ -412,6 +464,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
             </CollectContext.Provider>
             </QbeContext.Provider>
             </ChangeToneContext.Provider>
+            </div>
             </>
             )}
           </div>
@@ -430,6 +483,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
           minColumns={minColumns}
           defaultColumns={defaultColumns}
           columnCountFixed={columnCountFixed}
+          showColumnControls={!monitoring}
           unreadChanges={activityLog.unread}
           unseenErrors={systemLog.unseenErrors}
           isCenterOpen={centerOpen}

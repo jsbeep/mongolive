@@ -1,5 +1,6 @@
 // 왼쪽 사이드바 — 세 단계(useSidebar): 완전 접힘 / 아이콘 레일 / 전체.
-//   전체: [ML 이름] · 쿼리 기록(Query)·집계 기록(Aggregation)·참조(References)·북마크(Bookmarks) 패널 · ── · 연결 트리(연결 › DB › 컬렉션)
+//   전체: [ML 이름] · 쿼리 기록(Query)·집계 기록(Aggregation)·참조(References)·북마크(Bookmarks) 패널 · Monitor 화면 전환
+//         · ── · 연결 트리(연결 › DB › 컬렉션)
 //   연결 전(웰컴 화면): 모두 보이되 패널 버튼은 흐리게('Connect first') — 연결이 있어야 의미가 있다
 //   레일: 아이콘만. 아무 아이콘이나 누르면 전체로 펼친다. 맨 아래 = 설정 · 로그아웃 · 완전히 접기
 //   전체 맨 아래: 설정 · 로그아웃(상태바는 '지금 상태'만, 앱·계정은 여기 — 완전히 접혀도 Ctrl+K 명령으로)
@@ -10,7 +11,7 @@
 // 좁은 화면(<1024px)에선 레일까지만 붙고, 전체는 컬럼 위에 떠서 열린다(바깥 클릭·Esc → 레일).
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
-import { Bookmark, ChevronRight, ChevronsLeft, Link, LogOut, PanelLeftClose, PanelLeftOpen, Search, Server, Settings, Workflow, type LucideIcon } from 'lucide-react';
+import { Activity, Bookmark, ChevronRight, ChevronsLeft, Link, LogOut, PanelLeftClose, PanelLeftOpen, Search, Server, Settings, Workflow, type LucideIcon } from 'lucide-react';
 import type { CollectionSummary, DatabaseSummary, MutationRequest } from '../../types/explorer';
 import { clampFullWidth, FULL_DEFAULT, RAIL_WIDTH, snapMode, type SidebarMode, type SidebarState } from '../../hooks/useSidebar';
 import { ConnectionsTree, type ConnectionsTreeProps } from './ConnectionsTree';
@@ -38,6 +39,8 @@ interface SidebarProps {
   // Bookmarks = 북마크. 한 번에 하나만. 서버 연결이든 Mock(데모 — mingo로 흉내)이든 다 된다
   // (집계 모드를 켜고 끄는 건 Collections 헤더의 Aggregation 버튼, Pipeline 헤더의 ×로도 나온다)
   panels: { open: SidebarPanelKind | null; onToggle: (kind: SidebarPanelKind, anchor: DOMRect) => void };
+  // Monitor 화면(9단계) — 떠 있는 패널이 아니라 컬럼 카드 자리를 Explorer ↔ Monitor로 바꾼다. 다시 누르면 Explorer
+  monitor: { active: boolean; onToggle: () => void };
   // 맨 아래(VSCode처럼 앱·계정은 사이드바 아래) — 설정 창, 로그아웃(로그인 모드일 때만)
   onOpenSettings: () => void;
 }
@@ -55,6 +58,8 @@ const PANEL_ITEMS: { kind: SidebarPanelKind; icon: LucideIcon; label: string; ti
   { kind: 'references', icon: Link, label: 'References', tip: 'References — everything you declared, across databases' },
   { kind: 'bookmarks', icon: Bookmark, label: 'Bookmarks', tip: 'Bookmarks — places you saved from a column’s icon' },
 ];
+
+const MONITOR_TIP = 'Monitor — server throughput, latency, connections and errors';
 
 const styles = {
   // 컬럼 패널과 같은 카드 모양
@@ -133,6 +138,17 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
             </button>
           );
         })}
+        <button
+          type="button"
+          aria-pressed={tree.monitor.active}
+          aria-disabled={!tree.connected || undefined}
+          className={cn(styles.navButton, !tree.connected ? styles.navButtonOff : tree.monitor.active ? styles.navButtonActive : styles.navButtonIdle)}
+          data-tt={!tree.connected ? 'Monitor — connect first' : tree.monitor.active ? 'Back to Explorer' : MONITOR_TIP}
+          onClick={() => tree.connected && tree.monitor.onToggle()}
+        >
+          <Activity size={15} />
+          <span>Monitor</span>
+        </button>
         {SOON_ITEMS.map(({ icon: Icon, label }) => (
           <div key={label} className={styles.navItem} role="button" aria-disabled="true" data-tt={`${label} — coming soon`}>
             <Icon size={15} />
@@ -167,7 +183,7 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
   );
 }
 
-function RailContent({ connected, onExpand, onHide, panels, onOpenSettings }: { connected: boolean; onExpand: () => void; onHide: () => void; panels: SidebarProps['panels']; onOpenSettings: () => void }) {
+function RailContent({ connected, onExpand, onHide, panels, monitor, onOpenSettings }: { connected: boolean; onExpand: () => void; onHide: () => void; panels: SidebarProps['panels']; monitor: SidebarProps['monitor']; onOpenSettings: () => void }) {
   const auth = useAuth();
   return (
     <>
@@ -193,6 +209,17 @@ function RailContent({ connected, onExpand, onHide, panels, onOpenSettings }: { 
             </button>
           );
         })}
+        <button
+          type="button"
+          aria-label="Monitor"
+          aria-pressed={monitor.active}
+          aria-disabled={!connected || undefined}
+          className={!connected ? styles.railBtnSoon : monitor.active ? styles.railBtnActive : styles.railBtn}
+          data-tt={!connected ? 'Monitor — connect first' : monitor.active ? 'Back to Explorer' : MONITOR_TIP}
+          onClick={() => connected && monitor.onToggle()}
+        >
+          <Activity size={16} />
+        </button>
         {SOON_ITEMS.map(({ icon: Icon, label }) => (
           <div key={label} className={styles.railBtnSoon} role="button" aria-disabled="true" aria-label={label} data-tt={`${label} — coming soon`}>
             <Icon size={16} />
@@ -397,7 +424,7 @@ export function Sidebar({ sidebar, ...tree }: SidebarProps) {
             <div className={styles.card}>
               {contentMode === 'full'
                 ? <FullContent {...tree} onCollapseToRail={toRail} />
-                : <RailContent connected={tree.connected} onExpand={toFull} onHide={hide} panels={tree.panels} onOpenSettings={tree.onOpenSettings} />}
+                : <RailContent connected={tree.connected} onExpand={toFull} onHide={hide} panels={tree.panels} monitor={tree.monitor} onOpenSettings={tree.onOpenSettings} />}
             </div>
             {/* 좁은 화면의 레일은 끌지 않는다(전체는 위에 떠서 열리므로).
                 끄는 중엔 미리보기가 '접힘'이어도 남겨 둔다 — 사라지면 포인터 캡처가 끊겨 '놓기'를 못 받는다 */}

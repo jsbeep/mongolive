@@ -101,7 +101,9 @@ export const createMockDataSource = (): DataSource => {
     onLiveChange: () => () => undefined,
     onLiveStatus: () => () => undefined,
     onActivityLog: () => () => undefined,
-    getMetrics: async () => null,
+    supportsMonitor: false,
+    onMonitor: () => () => undefined,
+    measureRtt: async () => null,
     getDiagnostics: async () => null,
 
     getServerSettings: async () => settings,

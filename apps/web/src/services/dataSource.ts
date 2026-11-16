@@ -21,7 +21,8 @@ import type {
   MutationRequest,
   MutationResult,
   ReferenceInfo,
-  ServerMetrics,
+  MonitorSnapshot,
+  MonitorTick,
   AggregateResult,
   AggregateCounts,
   ConnectionInfo,
@@ -32,7 +33,8 @@ import type {
   MetadataImportResult,
 } from '../types/explorer';
 
-export type ClientMetrics = ServerMetrics & { rttMs: number | null };
+// Monitor 화면 구독 — 처음 한 번 최근 기록(backlog), 이후 10초마다 한 칸(sample)
+export type MonitorEvent = { kind: 'backlog'; snapshot: MonitorSnapshot } | { kind: 'sample'; tick: MonitorTick };
 
 export interface DataSource {
   // ── 저장된 연결(8-4) ──
@@ -92,8 +94,14 @@ export interface DataSource {
   // 클러스터 전체 변경 기록(값 없이). 첫 호출엔 서버가 기억하는 최근 기록을 한 번에(isBacklog=true),
   // 이후엔 한 건씩. 구독자가 없으면 서버도 보내지 않는다. Mock은 기록이 없다.
   onActivityLog(listener: (entries: LiveLogEntry[], isBacklog: boolean) => void): () => void;
-  // 서버 지표 + 브라우저↔서버 왕복 시간. Mock은 null.
-  getMetrics(): Promise<ClientMetrics | null>;
+
+  // ── Monitor 화면(9단계) ──
+  // 서버 연결에서만 된다 — Mock(데모)은 잴 MongoDB 서버가 없어 false
+  supportsMonitor: boolean;
+  // 서버가 이 연결의 지표(serverStatus + ping)를 10초마다 잰 것. 구독자가 없으면 서버도 보내지 않는다. 반환값을 부르면 해제
+  onMonitor(listener: (event: MonitorEvent) => void): () => void;
+  // 브라우저 ↔ mongolive 서버 왕복(ms). 2초 안에 응답이 없거나 Mock이면 null
+  measureRtt(): Promise<number | null>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 

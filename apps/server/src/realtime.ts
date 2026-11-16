@@ -11,6 +11,7 @@
 //   c:<id>:db:<db>               그 DB를 보는 탭 — 다른 컬렉션의 문서 변경은 요약만(문서 수 갱신용)
 //   c:<id>:col:<db>.<collection> 그 컬렉션을 보는 탭 — 문서 변경을 자세히(바뀐 경로·값)
 //   c:<id>:log                   활동 패널을 연 탭 — 클러스터 전체 변경을 값 없이
+//   c:<id>:monitor               Monitor 화면을 연 탭 — 10초마다 지표 한 칸(monitor/sampler)
 //
 // 상태: 드라이버 하트비트(db.ts healthOf)가 "닿지 않음"이면 스트림과 상관없이 error.
 // 단독(standalone) MongoDB는 changeStream이 안 되므로 열지 않고 그 사실을 알린다(8-6에서 폴링).
@@ -23,18 +24,18 @@ import type { Server, Socket } from 'socket.io';
 import {
   idString,
   type EjsonValue,
-  type LagStats,
   type LiveChange,
   type LiveLogEntry,
   type LiveOperation,
   type LiveStatus,
   type LiveView,
-  type ServerMetrics,
+  type MonitorSample,
 } from '@mongolive/shared';
 import { connectionUri, onConnectionsChange } from './connections';
 import { clientFor, healthOf, onHealthChange, retainClient } from './db';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES } from './names';
 import { toWire } from './wire';
+import { createSampler, type Sampler } from './monitor/sampler';
 
 const DOCUMENT_OPS = new Set<LiveOperation>(['insert', 'update', 'replace', 'delete']);
 const STRUCTURE_OPS = new Set<LiveOperation>(['create', 'drop', 'rename', 'dropDatabase']);
@@ -44,6 +45,7 @@ const connRoom = (id: string) => `c:${id}`;
 const dbRoom = (id: string, database: string) => `c:${id}:db:${database}`;
 const colRoom = (id: string, database: string, collection: string) => `c:${id}:col:${database}.${collection}`;
 const logRoom = (id: string) => `c:${id}:log`;
+const monitorRoom = (id: string) => `c:${id}:monitor`;
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -109,8 +111,8 @@ const summarize = (change: LiveChange): LiveChange => {
 // ── 피드: 연결 하나의 실시간 ─────────────────────────────────────────────────
 
 const LOG_BACKLOG = 200;
-const LAG_SAMPLES = 200;
-const RATE_WINDOW_SEC = 60;
+// 지표 한 칸(10초) 동안 지연을 모아 두는 최대 개수 — 이벤트가 폭주해도 메모리가 늘지 않게
+const WINDOW_LAG_SAMPLES = 1000;
 // 마지막 탭이 떠난 뒤 스트림을 닫기까지
 const FEED_GRACE_MS = 60 * 1000;
 
@@ -138,10 +140,11 @@ interface Feed {
   status: LiveStatus;
   // 활동 패널용 기록(메모리에만)
   logBacklog: LiveLogEntry[];
-  lagSamples: number[];
-  // 초(epoch sec) → 그 1초 동안 받은 이벤트 수
-  perSecond: Map<number, number>;
-  eventsTotal: number;
+  // 지금 지표 칸(10초) 동안 받은 이벤트 수와 지연(DB 기록 → 서버 수신, ms) — 샘플러가 칸마다 비운다
+  windowEvents: number;
+  windowLags: number[];
+  // Monitor 화면의 지표(serverStatus + ping)
+  sampler: Sampler;
 }
 
 const feeds = new Map<string, Feed>();
@@ -161,32 +164,28 @@ const toLogEntry = (change: LiveChange): LiveLogEntry => ({
 });
 
 const record = (feed: Feed, change: LiveChange) => {
-  feed.eventsTotal += 1;
-  const second = Math.floor(change.serverTime / 1000);
-  feed.perSecond.set(second, (feed.perSecond.get(second) ?? 0) + 1);
-  for (const key of feed.perSecond.keys()) if (key < second - RATE_WINDOW_SEC) feed.perSecond.delete(key);
-  feed.lagSamples.push(Math.max(0, change.serverTime - change.clusterTime));
-  if (feed.lagSamples.length > LAG_SAMPLES) feed.lagSamples.shift();
+  feed.windowEvents += 1;
+  if (feed.windowLags.length < WINDOW_LAG_SAMPLES) feed.windowLags.push(Math.max(0, change.serverTime - change.clusterTime));
   const entry = toLogEntry(change);
   feed.logBacklog.push(entry);
   if (feed.logBacklog.length > LOG_BACKLOG) feed.logBacklog.shift();
   return entry;
 };
 
-const lagStats = (samples: number[]): LagStats | null => {
-  if (samples.length === 0) return null;
-  const sorted = [...samples].sort((a, b) => a - b);
-  const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
-  return { p50: at(0.5), p95: at(0.95), max: sorted[sorted.length - 1], samples: sorted.length };
+// 지표 한 칸을 닫는다 — 그 칸의 이벤트 수와 지연 p95를 돌려주고 비운다
+const drainWindow = (feed: Feed): MonitorSample['stream'] => {
+  const lags = feed.windowLags.sort((a, b) => a - b);
+  const lagP95Ms = lags.length ? lags[Math.min(lags.length - 1, Math.floor(0.95 * lags.length))] : null;
+  const stream = { events: feed.windowEvents, lagP95Ms };
+  feed.windowEvents = 0;
+  feed.windowLags = [];
+  return stream;
 };
 
-// 지표 탭·진단용. 그 연결의 피드가 없으면(쓰는 탭이 없음) 빈 값
-export const realtimeMetrics = (connectionId: string): ServerMetrics['realtime'] => {
-  const feed = feeds.get(connectionId);
-  const now = Math.floor(Date.now() / 1000);
-  const eventsPerSecond = Array.from({ length: RATE_WINDOW_SEC }, (_, i) => feed?.perSecond.get(now - RATE_WINDOW_SEC + 1 + i) ?? 0);
-  const { resync: _resync, ...status } = feed?.status ?? { state: 'connecting' as const };
-  return { status, eventsTotal: feed?.eventsTotal ?? 0, eventsPerSecond, lag: feed ? lagStats(feed.lagSamples) : null };
+// 진단용 — 그 연결의 실시간 상태. 피드가 없으면(쓰는 탭이 없음) connecting
+export const realtimeStatus = (connectionId: string): Omit<LiveStatus, 'resync'> => {
+  const { resync: _resync, ...status } = feeds.get(connectionId)?.status ?? { state: 'connecting' as const };
+  return status;
 };
 
 // 하트비트와 스트림 상태를 합친 '지금 상태'
@@ -317,6 +316,7 @@ export const startRealtime = (io: Server) => {
     if (feed.stopped) return;
     feed.stopped = true;
     if (feed.graceTimer) clearTimeout(feed.graceTimer);
+    feed.sampler.stop();
     closeStream(feed);
     feed.releaseClient();
     if (feeds.get(feed.id) === feed) feeds.delete(feed.id);
@@ -328,7 +328,7 @@ export const startRealtime = (io: Server) => {
     if (!uri) return null;
     let feed = feeds.get(id);
     if (!feed) {
-      feed = {
+      const created: Feed = {
         id,
         uri,
         stream: null,
@@ -342,12 +342,20 @@ export const startRealtime = (io: Server) => {
         releaseClient: retainClient(id),
         status: { state: 'connecting' },
         logBacklog: [],
-        lagSamples: [],
-        perSecond: new Map(),
-        eventsTotal: 0,
+        windowEvents: 0,
+        windowLags: [],
+        sampler: createSampler({
+          label: id,
+          client: () => clientFor(id),
+          topology: () => healthOf(id).topology,
+          drainStream: () => drainWindow(created),
+          onSample: (tick) => io.to(monitorRoom(id)).emit('monitor:sample', tick),
+        }),
       };
+      feed = created;
       feeds.set(id, feed);
       void open(feed);
+      feed.sampler.start();
     }
     feed.users += 1;
     if (feed.graceTimer) clearTimeout(feed.graceTimer);
@@ -377,9 +385,9 @@ export const startRealtime = (io: Server) => {
         feed.streamState = 'connecting';
         feed.streamError = undefined;
         feed.logBacklog = [];
-        feed.lagSamples = [];
-        feed.perSecond = new Map();
-        feed.eventsTotal = 0;
+        feed.windowEvents = 0;
+        feed.windowLags = [];
+        feed.sampler.reset();
         publish(feed);
         void open(feed);
       }
@@ -440,6 +448,15 @@ export const startRealtime = (io: Server) => {
     });
     socket.on('log:unsubscribe', () => {
       if (feed) void socket.leave(logRoom(feed.id));
+    });
+    // Monitor 화면: 열면 최근 1시간을 받고 이후 10초마다 한 칸씩
+    socket.on('monitor:subscribe', () => {
+      if (!feed) return;
+      void socket.join(monitorRoom(feed.id));
+      socket.emit('monitor:backlog', feed.sampler.snapshot());
+    });
+    socket.on('monitor:unsubscribe', () => {
+      if (feed) void socket.leave(monitorRoom(feed.id));
     });
     // 브라우저↔서버 왕복 시간 측정용 — 받자마자 응답만 한다
     socket.on('rtt', (ack: unknown) => {

@@ -2,14 +2,14 @@
 //   GET /api/diagnostics → Diagnostics
 // 실시간이 안 될 때 가장 흔한 원인 두 가지를 바로 보여 준다:
 //   1. standalone MongoDB — changeStream은 replica set(또는 sharded cluster)에서만 된다
-//   2. 권한 — changeStream 권한, 지표용 serverStatus(clusterMonitor)
+//   2. 권한 — changeStream 권한, Monitor 화면용 serverStatus(clusterMonitor)
 // 보안 설정(.env)은 '보여 주기만' 한다. 화면에서 바꿀 수 있으면 세션 하나만 탈취돼도 인증을 끌 수 있다.
 import { readFileSync } from 'node:fs';
 import { Router } from 'express';
 import type { Diagnostics } from '@mongolive/shared';
 import { config } from '../config';
 import { checkMongo, clientFor, connectionIdOf, topologyOf } from '../db';
-import { realtimeMetrics } from '../realtime';
+import { realtimeStatus } from '../realtime';
 
 export const diagnosticsRouter = Router();
 
@@ -51,7 +51,7 @@ diagnosticsRouter.get('/diagnostics', async (_req, res) => {
       replicaSet: mongo.replicaSet,
       error: mongo.error,
     },
-    realtime: realtimeMetrics(id).status,
+    realtime: realtimeStatus(id),
     serverStatus,
     security: {
       authMode: config.authMode,

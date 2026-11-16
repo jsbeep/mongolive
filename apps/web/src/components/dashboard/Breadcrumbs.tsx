@@ -234,6 +234,8 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, openDocument, onCommitFie
       const target = e.target as Element | null;
       if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
       if (document.querySelector('[aria-modal="true"]')) return;
+      // 브레드크럼이 안 보이면(Monitor 화면을 보는 중) 쉰다
+      if (!containerRef.current?.offsetParent) return;
       if (!canEdit || isEditing) return;
       e.preventDefault();
       startEditingRef.current();

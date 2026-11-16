@@ -826,7 +826,7 @@ docker exec mongo mongosh --eval "rs.initiate()"`}</code>
               {data.serverStatus === 'ok' ? (
                 <Status ok>Allowed</Status>
               ) : data.serverStatus === 'denied' ? (
-                <Status ok={false} warn>No permission — the Metrics tab needs the <span className="font-semibold">clusterMonitor</span> role</Status>
+                <Status ok={false} warn>No permission — Monitor needs the <span className="font-semibold">clusterMonitor</span> role</Status>
               ) : (
                 <Status ok={false}>Could not read serverStatus</Status>
               )}
