@@ -36,6 +36,7 @@ import { clientFor, healthOf, onHealthChange, retainClient } from './db';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES } from './names';
 import { toWire } from './wire';
 import { createSampler, type Sampler } from './monitor/sampler';
+import { createActivityStats, type ActivityStats } from './monitor/activity';
 
 const DOCUMENT_OPS = new Set<LiveOperation>(['insert', 'update', 'replace', 'delete']);
 const STRUCTURE_OPS = new Set<LiveOperation>(['create', 'drop', 'rename', 'dropDatabase']);
@@ -145,6 +146,8 @@ interface Feed {
   windowLags: number[];
   // Monitor 화면의 지표(serverStatus + ping)
   sampler: Sampler;
+  // Monitor › Collections — 받은 쓰기를 컬렉션·분·필드·문서별로 센 것(monitor/activity)
+  activity: ActivityStats;
 }
 
 const feeds = new Map<string, Feed>();
@@ -164,6 +167,7 @@ const toLogEntry = (change: LiveChange): LiveLogEntry => ({
 });
 
 const record = (feed: Feed, change: LiveChange) => {
+  feed.activity.record(change);
   feed.windowEvents += 1;
   if (feed.windowLags.length < WINDOW_LAG_SAMPLES) feed.windowLags.push(Math.max(0, change.serverTime - change.clusterTime));
   const entry = toLogEntry(change);
@@ -181,6 +185,9 @@ const drainWindow = (feed: Feed): MonitorSample['stream'] => {
   feed.windowLags = [];
   return stream;
 };
+
+// Monitor › Collections — 그 연결의 쓰기 집계. 피드가 없으면(쓰는 탭이 없음) null
+export const activityOf = (connectionId: string): ActivityStats | null => feeds.get(connectionId)?.activity ?? null;
 
 // 진단용 — 그 연결의 실시간 상태. 피드가 없으면(쓰는 탭이 없음) connecting
 export const realtimeStatus = (connectionId: string): Omit<LiveStatus, 'resync'> => {
@@ -344,6 +351,7 @@ export const startRealtime = (io: Server) => {
         logBacklog: [],
         windowEvents: 0,
         windowLags: [],
+        activity: createActivityStats(),
         sampler: createSampler({
           label: id,
           client: () => clientFor(id),
@@ -387,6 +395,7 @@ export const startRealtime = (io: Server) => {
         feed.logBacklog = [];
         feed.windowEvents = 0;
         feed.windowLags = [];
+        feed.activity = createActivityStats();
         feed.sampler.reset();
         publish(feed);
         void open(feed);

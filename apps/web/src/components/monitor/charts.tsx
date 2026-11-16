@@ -316,7 +316,8 @@ export function Sparkline({ values, label }: { values: (number | null)[]; label:
   const defined = values.filter((v): v is number => v !== null);
   const max = Math.max(1e-9, ...defined);
   const step = values.length > 1 ? (width - 6) / (values.length - 1) : 0;
-  const px = (i: number) => 3 + i * step;
+  // 값이 하나뿐이면(막 세기 시작함) '지금' 자리인 오른쪽 끝에
+  const px = (i: number) => (values.length === 1 ? width - 3 : 3 + i * step);
   const py = (v: number) => 3 + (H - 6) - (v / max) * (H - 6);
   let d = '';
   let pen = false;

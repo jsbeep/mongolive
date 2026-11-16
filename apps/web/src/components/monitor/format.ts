@@ -53,3 +53,13 @@ export const chartWindow = (firstAt: number | undefined, now: number): { ms: num
 };
 // 시간 축 눈금 간격 — 창이 짧으면 촘촘하게
 export const tickStepFor = (windowMs: number): number => (windowMs <= 15 * MINUTE ? 2 * MINUTE : windowMs <= 30 * MINUTE ? 5 * MINUTE : 15 * MINUTE);
+
+// 지난 시각 — 짧게: now / 12s / 3m / 2h / 3d
+export const fmtAgo = (at: number, now: number): string => {
+  const sec = Math.max(0, Math.round((now - at) / 1000));
+  if (sec < 10) return 'now';
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
+  return `${Math.floor(sec / 86400)}d`;
+};

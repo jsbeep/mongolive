@@ -23,6 +23,9 @@ import type {
   ReferenceInfo,
   MonitorSnapshot,
   MonitorTick,
+  ActivityRange,
+  ActivityReport,
+  LastWrites,
   AggregateResult,
   AggregateCounts,
   ConnectionInfo,
@@ -102,6 +105,10 @@ export interface DataSource {
   onMonitor(listener: (event: MonitorEvent) => void): () => void;
   // 브라우저 ↔ mongolive 서버 왕복(ms). 2초 안에 응답이 없거나 Mock이면 null
   measureRtt(): Promise<number | null>;
+  // Monitor › Collections(9-2) — changeStream으로 본 쓰기의 집계(범위: 서버 전체 / DB / 컬렉션). Mock은 null
+  getActivity(scope: { database: string | null; collection: string | null }, range: ActivityRange): Promise<ActivityReport | null>;
+  // 컬렉션별 마지막 쓰기(사이드바 트리, Monitor를 보는 동안). Mock은 null
+  getLastWrites(): Promise<LastWrites | null>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 

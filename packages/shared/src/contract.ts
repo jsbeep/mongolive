@@ -277,6 +277,58 @@ export interface MonitorTick {
   info: MonitorInfo;
 }
 
+// ── Monitor › Collections (9-2): changeStream으로 본 쓰기를 서버가 센 것 ──────────
+// 이미 열린 스트림의 이벤트를 세기만 한다(DB 부하 없음). 피드가 열린 뒤(since)부터, 메모리에만.
+//   GET /api/monitor/activity?database=&collection=&range=5m|1h → ActivityReport
+//   GET /api/monitor/last-writes → LastWrites
+
+export type ActivityRange = '5m' | '1h';
+
+export interface ActivityOps {
+  insert: number;
+  update: number;
+  replace: number;
+  delete: number;
+}
+
+export interface LastWrite {
+  at: number;
+  op: LiveOperation;
+}
+
+export interface ActivityCollection {
+  database: string;
+  collection: string;
+  // 범위(5분/1시간) 안 쓰기 수
+  total: number;
+  ops: ActivityOps;
+  // 분당 쓰기 수(오래된 것 → 최신, 범위의 분 수만큼)
+  trend: number[];
+  lastWrite: LastWrite | null;
+}
+
+export interface ActivityReport {
+  // 세기 시작한 시각(피드가 열린 때) — 이보다 앞은 모른다
+  since: number;
+  range: ActivityRange;
+  // 범위 안 1분 칸(오래된 것 → 최신) — 범위(서버 전체/DB/컬렉션) 합계
+  timeline: { at: number; ops: ActivityOps }[];
+  // 범위 안 컬렉션들(쓰기 수 많은 순). 컬렉션 범위면 그 하나
+  collections: ActivityCollection[];
+  // 컬렉션 범위일 때만 — 자주 바뀐 필드(update의 바뀐·지운 경로, 배열 번호는 []로 묶음)와 문서. 5분 칸 단위라 범위보다 조금 길 수 있다
+  fields?: { path: string; count: number }[];
+  documents?: { id: string; count: number }[];
+  // 서로 다른 필드·문서가 너무 많아 일부를 세지 못했다
+  partial?: boolean;
+}
+
+export interface LastWrites {
+  // 피드가 없으면(이 연결을 쓰는 탭이 없음) null
+  since: number | null;
+  // "db.collection" → 마지막 쓰기
+  writes: Record<string, LastWrite>;
+}
+
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 

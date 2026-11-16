@@ -9,21 +9,31 @@ import { useMonitor } from '../../hooks/useMonitor';
 import { cn } from '../../utils/cn';
 import { ScopeBar, type LiveIndicator, type MonitorScope } from './ScopeBar';
 import { OverviewTab } from './OverviewTab';
+import { CollectionsTab } from './CollectionsTab';
 import { chartWindow } from './format';
 import type { MonitorState } from '../../hooks/useMonitor';
+
+export type MonitorTab = 'overview' | 'collections';
 
 export interface MonitorViewProps {
   connectionName: string;
   scope: MonitorScope;
   onScopeChange: (scope: MonitorScope) => void;
+  // 고른 탭 — 화면을 닫았다 열어도 남게 page가 들고 있다
+  tab: MonitorTab;
+  onTabChange: (tab: MonitorTab) => void;
+  // Collections의 '자주 바뀐 문서' → Explorer에서 그 문서를 연다
+  onOpenDocument: (database: string, collection: string, documentId: string) => void;
   databases: DatabaseSummary[];
   explorerDatabase: string | null;
   explorerCollections: CollectionSummary[];
   onOpenInExplorer: (scope: MonitorScope) => void;
 }
 
-type MonitorTab = 'overview';
-const TABS: { id: MonitorTab; label: string }[] = [{ id: 'overview', label: 'Overview' }];
+const TABS: { id: MonitorTab; label: string; tip: string }[] = [
+  { id: 'overview', label: 'Overview', tip: 'Throughput, latency, connections and errors — whole server' },
+  { id: 'collections', label: 'Collections', tip: 'Writes per collection, field and document — from the change stream' },
+];
 
 const styles = {
   tabs: 'flex h-10 shrink-0 items-stretch gap-4 border-b border-slate-100 px-5',
@@ -46,9 +56,9 @@ const liveOf = (monitor: MonitorState): LiveIndicator => {
   return { tone: 'ok', label: 'Live', tip: `Measured every ${monitor.intervalMs / 1000}s by the mongolive server` };
 };
 
-export default function MonitorView({ connectionName, scope, onScopeChange, databases, explorerDatabase, explorerCollections, onOpenInExplorer }: MonitorViewProps) {
+export default function MonitorView({ connectionName, scope, onScopeChange, tab, onTabChange, onOpenDocument, databases, explorerDatabase, explorerCollections, onOpenInExplorer }: MonitorViewProps) {
+  // 범위 바의 상태 표시가 Overview 지표를 쓰므로 탭과 상관없이 받는다
   const monitor = useMonitor(api.supportsMonitor);
-  const tab: MonitorTab = 'overview';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -66,7 +76,7 @@ export default function MonitorView({ connectionName, scope, onScopeChange, data
 
       <div className={styles.tabs} role="tablist">
         {TABS.map((t) => (
-          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={cn(styles.tab, tab === t.id ? styles.tabOn : styles.tabIdle)}>
+          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={cn(styles.tab, tab === t.id ? styles.tabOn : styles.tabIdle)} onClick={() => onTabChange(t.id)} data-tt={t.tip}>
             {t.label}
             {tab === t.id && <m.span layoutId="monitor-tab" className="absolute inset-x-0 bottom-0 h-[2px] rounded-full bg-emerald-500" />}
           </button>
@@ -81,14 +91,24 @@ export default function MonitorView({ connectionName, scope, onScopeChange, data
             (<code className="font-mono">pnpm dev:web:remote</code>).
           </p>
         ) : (
-          <>
-            {scope.database !== null && (
-              <p className={styles.note}>
-                MongoDB reports these numbers for the whole server, not per database — the scope above applies to the per-collection views coming next.
-              </p>
-            )}
-            <OverviewTab monitor={monitor} />
-          </>
+          tab === 'collections' ? (
+            <CollectionsTab
+              scope={scope}
+              onScopeChange={onScopeChange}
+              explorerDatabase={explorerDatabase}
+              explorerCollections={explorerCollections}
+              onOpenDocument={onOpenDocument}
+            />
+          ) : (
+            <>
+              {scope.database !== null && (
+                <p className={styles.note}>
+                  MongoDB reports these numbers for the whole server, not per database — the scope above applies to the Collections tab.
+                </p>
+              )}
+              <OverviewTab monitor={monitor} />
+            </>
+          )
         )}
       </div>
     </div>

@@ -104,6 +104,8 @@ export const createMockDataSource = (): DataSource => {
     supportsMonitor: false,
     onMonitor: () => () => undefined,
     measureRtt: async () => null,
+    getActivity: async () => null,
+    getLastWrites: async () => null,
     getDiagnostics: async () => null,
 
     getServerSettings: async () => settings,

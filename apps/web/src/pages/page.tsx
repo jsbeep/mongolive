@@ -39,6 +39,8 @@ import { WelcomeScreen } from '../components/connections/WelcomeScreen';
 import { ConnectionModal, type ConnectionModalTarget } from '../components/connections/ConnectionModal';
 import { useConnect } from '../components/connections/useConnect';
 import type { MonitorScope } from '../components/monitor/ScopeBar';
+import type { MonitorTab } from '../components/monitor/MonitorView';
+import { useLastWrites } from '../hooks/useActivity';
 import { connectionLabel } from '../types/explorer';
 
 // Monitor 화면(9단계) — 처음 열 때만 불러온다(Explorer만 쓰면 받지 않는다)
@@ -201,7 +203,10 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
   // Monitor 화면 — 사이드바 버튼으로 Explorer와 바꿔 본다. 열 때 범위는 Explorer에서 보던 곳(DB·컬렉션)부터
   const [view, setView] = useState<'explorer' | 'monitor'>('explorer');
   const [monitorScope, setMonitorScope] = useState<MonitorScope>({ database: null, collection: null });
+  const [monitorTab, setMonitorTab] = useState<MonitorTab>('overview');
   const monitoring = view === 'monitor';
+  // Monitor를 보는 동안 사이드바 트리는 문서 수 대신 마지막 쓰기(3m)를 보여 준다
+  const lastWrites = useLastWrites(monitoring && api.supportsMonitor);
   const toggleMonitor = () => {
     setSidebarPanel(null);
     if (monitoring) return setView('explorer');
@@ -214,6 +219,11 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
     if (!scope.database) return;
     if (scope.collection) void openCollectionHere(scope.database, scope.collection, scope.collection);
     else void selectDatabase(scope.database);
+  };
+  // Collections의 '자주 바뀐 문서' → Explorer에서 그 문서
+  const openDocumentInExplorer = (database: string, collection: string, documentId: string) => {
+    setView('explorer');
+    void openLocation({ database, collection, documentId });
   };
   const connectionName = (() => {
     const current = connections.connections.find((c) => c.id === connectionId);
@@ -372,6 +382,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
             onMutate={mutate}
             onOpenSettings={() => openSettings()}
             monitor={{ active: monitoring, onToggle: toggleMonitor }}
+            lastWrites={monitoring && lastWrites.data ? { since: lastWrites.data.since, writes: lastWrites.data.writes, now: lastWrites.now } : null}
             panels={{
               open: sidebarPanel?.kind ?? null,
               onToggle: (kind, anchor) => {
@@ -401,6 +412,9 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
                   connectionName={connectionName}
                   scope={monitorScope}
                   onScopeChange={setMonitorScope}
+                  tab={monitorTab}
+                  onTabChange={setMonitorTab}
+                  onOpenDocument={openDocumentInExplorer}
                   databases={databases}
                   explorerDatabase={activeDatabase}
                   explorerCollections={collections}

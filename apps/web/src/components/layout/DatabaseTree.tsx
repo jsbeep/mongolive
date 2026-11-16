@@ -9,7 +9,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronRight, Database, Folder, FolderOpen, Loader2, Lock, Trash2, X } from 'lucide-react';
-import type { CollectionSummary, DatabaseSummary, MutationRequest } from '../../types/explorer';
+import type { CollectionSummary, DatabaseSummary, LastWrite, MutationRequest } from '../../types/explorer';
+import { fmtAgo, fmtClock } from '../monitor/format';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { DeleteConfirmModal } from '../common/DeleteConfirmModal';
@@ -28,6 +29,16 @@ interface DatabaseTreeProps {
   // 새 DB 이름 입력 줄 — 연결 줄의 + 버튼이 연다
   adding: boolean;
   onAddingChange: (adding: boolean) => void;
+  // Monitor를 보는 동안(9-2): 컬렉션 줄의 문서 수 자리에 마지막 쓰기(3m · 툴팁에 작업·시각). 그 밖엔 null
+  lastWrites: TreeLastWrites | null;
+}
+
+export interface TreeLastWrites {
+  // 세기 시작한 시각(피드가 열린 때) — 이 뒤로 쓰기가 없으면 '—'
+  since: number | null;
+  // "db.collection" → 마지막 쓰기
+  writes: Record<string, LastWrite>;
+  now: number;
 }
 
 type Loaded = CollectionSummary[] | 'loading' | 'error';
@@ -54,7 +65,7 @@ const styles = {
   empty: 'flex h-7 items-center pl-[44px] text-xs text-slate-400',
 } as const;
 
-export function DatabaseTree({ databases, activeDatabase, activeCollection, collections, onSelectDatabase, onOpenCollection, onMutate, adding, onAddingChange }: DatabaseTreeProps) {
+export function DatabaseTree({ databases, activeDatabase, activeCollection, collections, onSelectDatabase, onOpenCollection, onMutate, adding, onAddingChange, lastWrites }: DatabaseTreeProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(activeDatabase ? [activeDatabase] : []));
   const [others, setOthers] = useState<Record<string, Loaded>>({});
   const [newName, setNewName] = useState('');
@@ -241,7 +252,14 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
                           {isProtected(safety, db.name, col.name) && !isProtected(safety, db.name) && (
                             <Lock size={11} className="shrink-0 text-amber-500" aria-label="Protected" data-tt="Protected — editing is blocked (Settings › Safety)" />
                           )}
-                          <span className={styles.count}>{col.documentCount}</span>
+                          {lastWrites ? (() => {
+                            const last = lastWrites.writes[`${db.name}.${col.name}`];
+                            return last ? (
+                              <span className={styles.count} data-tt={`Last write: ${last.op}, ${fmtAgo(last.at, lastWrites.now)} ago`}>{fmtAgo(last.at, lastWrites.now)}</span>
+                            ) : (
+                              <span className={styles.count} data-tt={lastWrites.since ? `No writes seen since ${fmtClock(lastWrites.since)}` : 'Not counting yet'}>—</span>
+                            );
+                          })() : <span className={styles.count}>{col.documentCount}</span>}
                         </button>
                       );
                     })

@@ -17,7 +17,7 @@ import { connectionScoped, onConnectionSwitch } from '../../services/connectionS
 import { HeaderOverflowMenu, type HeaderMenuItem } from '../dashboard/columns/HeaderOverflowMenu';
 import { colorClasses } from '../connections/connectionColors';
 import { CONNECTION_STATUS } from './connectionStatus';
-import { DatabaseTree } from './DatabaseTree';
+import { DatabaseTree, type TreeLastWrites } from './DatabaseTree';
 import { cn } from '../../utils/cn';
 
 export interface ConnectionsTreeProps {
@@ -41,6 +41,8 @@ interface TreeData {
   onSelectDatabase: (name: string) => Promise<void>;
   onOpenCollection: (database: string, name: string, label: string) => Promise<void>;
   onMutate: (op: MutationRequest) => Promise<unknown>;
+  // Monitor를 보는 동안의 마지막 쓰기(DatabaseTree가 문서 수 대신 보여 준다)
+  lastWrites: TreeLastWrites | null;
 }
 
 const styles = {

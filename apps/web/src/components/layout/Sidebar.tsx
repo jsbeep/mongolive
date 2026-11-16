@@ -15,6 +15,7 @@ import { Activity, Bookmark, ChevronRight, ChevronsLeft, Link, LogOut, PanelLeft
 import type { CollectionSummary, DatabaseSummary, MutationRequest } from '../../types/explorer';
 import { clampFullWidth, FULL_DEFAULT, RAIL_WIDTH, snapMode, type SidebarMode, type SidebarState } from '../../hooks/useSidebar';
 import { ConnectionsTree, type ConnectionsTreeProps } from './ConnectionsTree';
+import type { TreeLastWrites } from './DatabaseTree';
 import { useAuth } from '../auth/AuthGate';
 import { cn } from '../../utils/cn';
 
@@ -41,6 +42,8 @@ interface SidebarProps {
   panels: { open: SidebarPanelKind | null; onToggle: (kind: SidebarPanelKind, anchor: DOMRect) => void };
   // Monitor 화면(9단계) — 떠 있는 패널이 아니라 컬럼 카드 자리를 Explorer ↔ Monitor로 바꾼다. 다시 누르면 Explorer
   monitor: { active: boolean; onToggle: () => void };
+  // Monitor를 보는 동안: 트리의 컬렉션 문서 수 자리에 마지막 쓰기(3m). 그 밖엔 null
+  lastWrites: TreeLastWrites | null;
   // 맨 아래(VSCode처럼 앱·계정은 사이드바 아래) — 설정 창, 로그아웃(로그인 모드일 때만)
   onOpenSettings: () => void;
 }
@@ -167,6 +170,7 @@ function FullContent({ onCollapseToRail, ...tree }: TreeProps & { onCollapseToRa
         onSelectDatabase={tree.onSelectDatabase}
         onOpenCollection={tree.onOpenCollection}
         onMutate={tree.onMutate}
+        lastWrites={tree.lastWrites}
       />
       <div className={styles.footer}>
         <button type="button" className={cn(styles.navButton, styles.navButtonIdle, 'flex-1')} onClick={tree.onOpenSettings} data-tt="Settings">

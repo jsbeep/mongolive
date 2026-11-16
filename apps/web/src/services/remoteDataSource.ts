@@ -23,6 +23,8 @@ import type {
   ReferenceInfo,
   MonitorSnapshot,
   MonitorTick,
+  ActivityReport,
+  LastWrites,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -386,6 +388,13 @@ export const createRemoteDataSource = (): DataSource => {
       };
     },
     getDiagnostics: () => request<Diagnostics>('/diagnostics'),
+    getActivity(scope, range) {
+      const params = new URLSearchParams({ range });
+      if (scope.database) params.set('database', scope.database);
+      if (scope.database && scope.collection) params.set('collection', scope.collection);
+      return request<ActivityReport>(`/monitor/activity?${params}`);
+    },
+    getLastWrites: () => request<LastWrites>('/monitor/last-writes'),
 
     getServerSettings: () => request<ServerSettings>('/settings'),
     saveServerSettings: (next) => request<ServerSettings>('/settings', { method: 'PUT', body: JSON.stringify(next) }),

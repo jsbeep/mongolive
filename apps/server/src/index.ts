@@ -16,6 +16,7 @@ import { readRouter } from './routes/read';
 import { aggregateRouter } from './routes/aggregate';
 import { refsRouter } from './routes/refs';
 import { diagnosticsRouter } from './routes/diagnostics';
+import { monitorRouter } from './routes/monitor';
 import { settingsRouter } from './routes/settings';
 import { connectionsRouter } from './routes/connections';
 import { loadConnections, onConnectionsChange } from './connections';
@@ -56,7 +57,7 @@ app.use('/api', connectionsRouter);
 // 요청도 지나가며 검사를 받는다 — express 라우터는 경로가 안 맞아도 미들웨어는 실행한다)
 const mongoApi = express.Router();
 mongoApi.use(requireConnection);
-mongoApi.use(readRouter, aggregateRouter, mutateRouter, refsRouter, diagnosticsRouter);
+mongoApi.use(readRouter, aggregateRouter, mutateRouter, refsRouter, diagnosticsRouter, monitorRouter);
 app.use('/api', mongoApi);
 
 // 위에서 처리하지 못한 /api 요청
