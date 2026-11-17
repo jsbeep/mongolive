@@ -33,6 +33,7 @@ import type {
   SizesReport,
   SlowQueriesReport,
   TopReport,
+  ReplicaReport,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -453,6 +454,9 @@ export const createRemoteDataSource = (): DataSource => {
       if (database) params.set('database', database);
       if (collection) params.set('collection', collection);
       return request<TopReport>(`/monitor/top?${params}`);
+    },
+    getReplica(range) {
+      return request<ReplicaReport>(`/monitor/replica?${new URLSearchParams({ range })}`);
     },
     onBackfill(listener) {
       const s = ensureSocket();

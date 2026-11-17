@@ -41,6 +41,7 @@ import { createActivityStats, type ActivityStats } from './monitor/activity';
 import { createRecorder, type Recorder, type ResumePoint } from './monitor/history';
 import { createSlowLog, type SlowLog } from './monitor/slowQueries';
 import { createSizes, type Sizes } from './monitor/sizes';
+import { createReplica, type Replica } from './monitor/replica';
 import { createTop, type Top } from './monitor/top';
 import { clusterNow, createBackfill, resumePointOf, toTimestamp, tokenTs, tsOf, type Backfill } from './monitor/backfill';
 import { clusterFingerprint } from './monitor/identity';
@@ -170,6 +171,8 @@ interface Feed {
   sizes: Sizes;
   // 컬렉션별 서버 시간(monitor/top, 9-6c) — 박자마다 top, 1시간 메모리
   top: Top;
+  // 레플리카 셋 멤버(monitor/replica, 9-7a) — 박자마다 replSetGetStatus, lag·상태 변화 1시간 메모리
+  replica: Replica;
   // 다음에 스트림을 새로 열 때 T0(지금 클러스터 시각)부터 열고 그 앞을 빈 구간으로 넘긴다 — 피드를 열 때·주소가 바뀔 때
   needsBoundary: boolean;
   // 실시간을 다시 받기 시작한 때(ms) — 맨 마지막 빈 구간을 다 채우면 메모리 집계의 '세기 시작'을 앞당긴다
@@ -225,6 +228,7 @@ export const backfillOf = (connectionId: string): Backfill | null => feeds.get(c
 export const slowOf = (connectionId: string): SlowLog | null => feeds.get(connectionId)?.slow ?? null;
 export const sizesOf = (connectionId: string): Sizes | null => feeds.get(connectionId)?.sizes ?? null;
 export const topOf = (connectionId: string): Top | null => feeds.get(connectionId)?.top ?? null;
+export const replicaOf = (connectionId: string): Replica | null => feeds.get(connectionId)?.replica ?? null;
 
 // 진단용 — 그 연결의 실시간 상태. 피드가 없으면(쓰는 탭이 없음) connecting
 export const realtimeStatus = (connectionId: string): Omit<LiveStatus, 'resync'> => {
@@ -429,8 +433,8 @@ export const startRealtime = (io: Server) => {
           onReading: (counters, at) => created.recorder.addCounters(counters, at),
           eachTick: async () => {
             created.sizes.tick();
-            // top은 스스로 실패를 삼킨다 — 느린 쿼리 읽기와 나란히
-            await Promise.all([created.slow.poll(), created.top.poll()]);
+            // top·replica는 스스로 실패를 삼킨다 — 느린 쿼리 읽기와 나란히
+            await Promise.all([created.slow.poll(), created.top.poll(), created.replica.poll()]);
           },
         }),
         slow: createSlowLog({
@@ -446,6 +450,7 @@ export const startRealtime = (io: Server) => {
           stored: () => getServerSettings().monitorHistory !== 'off',
         }),
         top: createTop({ client: () => clientFor(id) }),
+        replica: createReplica({ client: () => clientFor(id) }),
         backfill: createBackfill({
           connectionId: id,
           client: () => clientFor(id),
@@ -502,6 +507,7 @@ export const startRealtime = (io: Server) => {
         void feed.slow.reset();
         feed.sizes.reset();
         feed.top.reset();
+        feed.replica.reset();
         feed.sampler.reset();
         feed.needsBoundary = true;
         feed.t0At = null;

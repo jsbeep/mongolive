@@ -661,6 +661,71 @@ export interface TopReport {
   more: number;
 }
 
+// 레플리카 셋 멤버 (9-7a) — 샘플러가 10초마다 replSetGetStatus를 읽는다(lag·상태 변화는 1시간 메모리, 파일 없음)
+// replSetGetConfig에서 온 설정 — 권한이 없으면 멤버의 config가 null
+export interface ReplicaMemberConfig {
+  votes: number;
+  priority: number;
+  hidden: boolean;
+  arbiterOnly: boolean;
+  // 일부러 늦게 따라오는 멤버(secondaryDelaySecs) — 0이면 보통 멤버
+  delaySec: number;
+  buildIndexes: boolean;
+  tags: Record<string, string>;
+}
+export interface ReplicaMember {
+  id: number;
+  name: string;
+  // stateStr 그대로 — PRIMARY, SECONDARY, ARBITER, RECOVERING, STARTUP2, ROLLBACK, (not reachable/healthy) …
+  state: string;
+  healthy: boolean;
+  // mongolive가 연결한 멤버(이 답을 준 노드)
+  self: boolean;
+  uptimeSec: number | null;
+  // 이 멤버가 마지막으로 적용한 쓰기가 primary에서 쓰인 시각(ms). arbiter·닿지 않는 멤버는 null
+  appliedAt: number | null;
+  // primary(없으면 가장 앞선 멤버)보다 뒤처진 정도(ms). primary·arbiter·닿지 않는 멤버는 null
+  lagMs: number | null;
+  pingMs: number | null;
+  // 연결한 멤버가 그 멤버에게서 마지막으로 소식을 받은 때 — 자기 자신은 null
+  lastSeenAt: number | null;
+  syncSource: string | null;
+  // 하트비트 에러나 상태 설명(비면 null)
+  message: string | null;
+  // primary가 된 때
+  electedAt: number | null;
+  config: ReplicaMemberConfig | null;
+}
+// 멤버 상태가 바뀐 때 — from null = 새로 들어옴, to null = 빠짐
+export interface ReplicaChange {
+  at: number;
+  member: string;
+  from: string | null;
+  to: string | null;
+}
+export interface ReplicaReport {
+  // closed = 피드 없음, standalone = 레플리카 셋이 아님, unsupported = replSetGetStatus가 없음(mongos·일부 Atlas 등급),
+  // denied = 권한 없음(clusterMonitor)
+  status: 'ok' | 'closed' | 'standalone' | 'unsupported' | 'denied' | 'error';
+  error: string | null;
+  // 마지막으로 읽은 때
+  at: number | null;
+  set: string | null;
+  term: number | null;
+  // 'majority' 쓰기가 확인되려면 필요한 멤버 수 / 투표하는 멤버 수
+  writeMajority: number | null;
+  votingMembers: number | null;
+  members: ReplicaMember[];
+  // replSetGetConfig 권한이 없어 votes·priority 등을 모름
+  configDenied: boolean;
+  // 메모리에 있는 첫 읽기(기간 시작과 늦은 쪽) — null = 아직 못 읽음
+  since: number | null;
+  // 멤버별 lag(ms) — 10초 칸, 그때 primary였던 멤버는 null
+  lag: { times: number[]; series: { member: string; values: (number | null)[] }[] };
+  // 오래된 것부터
+  changes: ReplicaChange[];
+}
+
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 

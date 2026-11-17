@@ -36,6 +36,7 @@ import type {
   SlowQueriesReport,
   SlowThreshold,
   TopReport,
+  ReplicaReport,
   AggregateResult,
   AggregateCounts,
   ConnectionInfo,
@@ -143,6 +144,8 @@ export interface DataSource {
   getIndexes(database: string, collection: string): Promise<IndexesReport | null>;
   // Collections의 Time spent 카드(9-6c) — top으로 본 컬렉션별 서버 시간(최근 1시간 메모리). Mock은 null
   getTop(query: { database: string | null; collection: string | null; range: '5m' | '1h' }): Promise<TopReport | null>;
+  // Server 탭의 Members(9-7a) — replSetGetStatus로 본 멤버·lag·상태 변화(최근 1시간 메모리). Mock은 null
+  getReplica(range: '5m' | '1h'): Promise<ReplicaReport | null>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 

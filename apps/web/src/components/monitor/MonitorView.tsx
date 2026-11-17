@@ -12,10 +12,11 @@ import { ScopeBar, type LiveIndicator, type MonitorScope } from './ScopeBar';
 import { OverviewTab } from './OverviewTab';
 import { CollectionsTab } from './CollectionsTab';
 import { OperationsTab } from './OperationsTab';
+import { ServerTab } from './ServerTab';
 import { SlowQueries } from './SlowQueries';
 import type { MonitorState } from '../../hooks/useMonitor';
 
-export type MonitorTab = 'overview' | 'collections' | 'operations';
+export type MonitorTab = 'overview' | 'collections' | 'operations' | 'server';
 
 export interface MonitorViewProps {
   connectionName: string;
@@ -41,6 +42,7 @@ const TABS: { id: MonitorTab; label: string; tip: string }[] = [
   { id: 'overview', label: 'Overview', tip: 'Throughput, latency, connections and errors — whole server' },
   { id: 'collections', label: 'Collections', tip: 'Writes per collection, field and document — from the change stream' },
   { id: 'operations', label: 'Operations', tip: 'What MongoDB is running right now, and the slow queries it logged' },
+  { id: 'server', label: 'Server', tip: 'Replica set members and replication lag — whole server' },
 ];
 
 const styles = {
@@ -120,10 +122,14 @@ export default function MonitorView({ connectionName, scope, onScopeChange, tab,
             <>
               {scope.database !== null && (
                 <p className={styles.note}>
-                  MongoDB reports these numbers for the whole server, not per database — the scope above applies to the Collections tab.
+                  MongoDB reports these numbers for the whole server, not per database — the scope above applies to the Collections and Operations tabs.
                 </p>
               )}
-              <OverviewTab monitor={monitor} range={range} historyOff={settings.monitorHistory === 'off'} />
+              {tab === 'server' ? (
+                <ServerTab range={range} topology={monitor.info?.topology ?? null} />
+              ) : (
+                <OverviewTab monitor={monitor} range={range} historyOff={settings.monitorHistory === 'off'} />
+              )}
             </>
           )
         )}
