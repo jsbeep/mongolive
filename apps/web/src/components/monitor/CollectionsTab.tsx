@@ -7,6 +7,7 @@
 // 기간(범위 바): 5m·1h = 서버 메모리(10초마다), 24h~All = 기록 파일(1분마다). 기록은 탭이 연결을 쓰는 동안만 쌓인다.
 // 맨 위 배너(9-4): 탭이 없던 동안의 쓰기를 changeStream으로 다시 불러온다. 차트의 빈 구간 띠는 불러왔는지 툴팁에 적는다.
 // 그 아래 Alerts 카드(9-8a): 대량 삭제·쓰기 폭주·컬렉션/DB 삭제·이름 바꾸기 — 없으면 한 줄만.
+// 표·상세 아래 Transactions 카드(9-8b): 트랜잭션 분당 수·쓰기 수·같이 쓰인 컬렉션·큰 것 — 트랜잭션이 없으면 숨긴다.
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpRight, CircleAlert, Loader2 } from 'lucide-react';
 import type { ActivityCollection, ActivityOps, ActivityRange, CollectionSizeRow, CollectionSummary, LastWrite, MonitorRange } from '../../types/explorer';
@@ -22,6 +23,7 @@ import { IndexesCard } from './IndexesCard';
 import { TopCard } from './TopCard';
 import type { MonitorScope } from './ScopeBar';
 import { BackfillBanner } from './BackfillBanner';
+import { TransactionsCard } from './TransactionsCard';
 import { AlertsCard } from './AlertsCard';
 import { gapBand } from './backfill';
 
@@ -447,6 +449,7 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
         </>
       )}
 
+      <TransactionsCard scope={scope} range={range} />
       <TopCard scope={scope} range={range} onScopeChange={onScopeChange} />
       {scope.database !== null && scope.collection !== null && <IndexesCard database={scope.database} collection={scope.collection} />}
       <StorageCard sizes={sizes} range={range} scopeName={scopeName} />

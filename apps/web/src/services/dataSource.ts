@@ -36,6 +36,7 @@ import type {
   SlowQueriesReport,
   SlowThreshold,
   TopReport,
+  TransactionsReport,
   OplogReport,
   ReplicaReport,
   StartupWarningsReport,
@@ -157,6 +158,8 @@ export interface DataSource {
   getAlerts(query: { database: string | null; collection: string | null; range: MonitorRange }): Promise<AlertsReport | null>;
   // 새 실시간 알림 — 이 연결을 쓰는 모든 탭에 온다(앱 어디서나 토스트). 반환값을 부르면 해제
   onAlert(listener: (alert: MonitorAlert) => void): () => void;
+  // 트랜잭션(9-8b) — 서버가 changeStream 이벤트로 센 것, 최근 1시간 메모리만. Mock은 null
+  getTransactions(query: { database: string | null; collection: string | null; range: '5m' | '1h' }): Promise<TransactionsReport | null>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 

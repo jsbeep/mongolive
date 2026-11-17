@@ -44,6 +44,7 @@ import { createSizes, type Sizes } from './monitor/sizes';
 import { createReplica, type Replica } from './monitor/replica';
 import { createTop, type Top } from './monitor/top';
 import { createAlerts, type Alerts } from './monitor/alerts';
+import { createTransactions, txnOf, type Transactions } from './monitor/transactions';
 import { clusterNow, createBackfill, resumePointOf, toTimestamp, tokenTs, tsOf, type Backfill } from './monitor/backfill';
 import { clusterFingerprint } from './monitor/identity';
 import { SAMPLE_INTERVAL_MS } from './monitor/sampler';
@@ -114,6 +115,8 @@ const toLiveChange = (change: ChangeStreamDocument): LiveChange | null => {
   if (change.operationType === 'rename' && change.to) {
     live.to = { database: change.to.db, collection: change.to.coll };
   }
+  const txn = txnOf(change);
+  if (txn) live.txn = txn;
   return live;
 };
 
@@ -176,6 +179,8 @@ interface Feed {
   replica: Replica;
   // 알림(monitor/alerts, 9-8a) — 받은 이벤트로 대량 삭제·폭주·삭제를 찾는다. 끝난 건은 기록 파일에
   alerts: Alerts;
+  // 트랜잭션(monitor/transactions, 9-8b) — 받은 이벤트를 트랜잭션별로 센다. 1시간 메모리
+  transactions: Transactions;
   // 다음에 스트림을 새로 열 때 T0(지금 클러스터 시각)부터 열고 그 앞을 빈 구간으로 넘긴다 — 피드를 열 때·주소가 바뀔 때
   needsBoundary: boolean;
   // 실시간을 다시 받기 시작한 때(ms) — 맨 마지막 빈 구간을 다 채우면 메모리 집계의 '세기 시작'을 앞당긴다
@@ -193,6 +198,7 @@ const toLogEntry = (change: LiveChange): LiveLogEntry => ({
   paths: change.updatedFields ? Object.keys(change.updatedFields) : undefined,
   removed: change.removedFields?.length ? change.removedFields : undefined,
   to: change.to,
+  txn: change.txn,
   clusterTime: change.clusterTime,
   serverTime: change.serverTime,
   opTime: change.opTime,
@@ -201,6 +207,7 @@ const toLogEntry = (change: LiveChange): LiveLogEntry => ({
 const record = (feed: Feed, change: LiveChange) => {
   feed.activity.record(change);
   feed.alerts.record(change);
+  feed.transactions.record(change);
   feed.windowEvents += 1;
   if (feed.windowLags.length < WINDOW_LAG_SAMPLES) feed.windowLags.push(Math.max(0, change.serverTime - change.clusterTime));
   const entry = toLogEntry(change);
@@ -234,6 +241,7 @@ export const sizesOf = (connectionId: string): Sizes | null => feeds.get(connect
 export const topOf = (connectionId: string): Top | null => feeds.get(connectionId)?.top ?? null;
 export const replicaOf = (connectionId: string): Replica | null => feeds.get(connectionId)?.replica ?? null;
 export const alertsOf = (connectionId: string): Alerts | null => feeds.get(connectionId)?.alerts ?? null;
+export const transactionsOf = (connectionId: string): Transactions | null => feeds.get(connectionId)?.transactions ?? null;
 
 // 진단용 — 그 연결의 실시간 상태. 피드가 없으면(쓰는 탭이 없음) connecting
 export const realtimeStatus = (connectionId: string): Omit<LiveStatus, 'resync'> => {
@@ -439,6 +447,7 @@ export const startRealtime = (io: Server) => {
           eachTick: async () => {
             created.sizes.tick();
             created.alerts.tick();
+            created.transactions.tick();
             // top·replica는 스스로 실패를 삼킨다 — 느린 쿼리 읽기와 나란히
             await Promise.all([created.slow.poll(), created.top.poll(), created.replica.poll()]);
           },
@@ -468,6 +477,7 @@ export const startRealtime = (io: Server) => {
           // 앱 어디서나 토스트 — 그 연결을 쓰는 모든 탭에
           onAlert: (alert) => io.to(connRoom(id)).emit('monitor:alert', alert),
         }),
+        transactions: createTransactions({ since: () => created.activity.since }),
         backfill: createBackfill({
           connectionId: id,
           client: () => clientFor(id),
@@ -477,6 +487,7 @@ export const startRealtime = (io: Server) => {
           record: (change) => {
             created.activity.record(change, true);
             created.alerts.record(change, true);
+            created.transactions.record(change, true);
           },
           filledUpTo: (from, to) => {
             if (created.t0At !== null && to >= created.t0At) created.activity.extendSince(from);
@@ -526,6 +537,7 @@ export const startRealtime = (io: Server) => {
         // 느린 쿼리를 옛 서버 폴더에 먼저 적는다(기록기 reset보다 앞서 줄에 선다)
         void feed.slow.reset();
         void feed.alerts.reset();
+        feed.transactions.reset();
         feed.sizes.reset();
         feed.top.reset();
         feed.replica.reset();

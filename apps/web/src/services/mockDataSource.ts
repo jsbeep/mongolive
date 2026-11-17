@@ -125,6 +125,7 @@ export const createMockDataSource = (): DataSource => {
     getStartupWarnings: async () => null,
     getAlerts: async () => null,
     onAlert: () => () => undefined,
+    getTransactions: async () => null,
     getDiagnostics: async () => null,
 
     getServerSettings: async () => settings,

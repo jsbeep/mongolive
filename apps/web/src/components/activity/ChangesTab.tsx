@@ -5,10 +5,12 @@
 //   INSERT·DELETE — 같은 컬렉션이면(일괄 추가·삭제가 문서마다 한 줄씩 쌓이지 않게)
 //   UPDATE·REPLACE — 같은 문서면
 // 묶음을 누르면 가장 최근 것으로 이동, ×n을 누르면 펼쳐서 하나씩 본다.
+// 트랜잭션(9-8b): 같은 트랜잭션의 연속 쓰기는 TXN 한 줄로 접는다 — 누르면 펼쳐서 안의 묶음을 본다(규칙은 grouping.ts)
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { CheckCheck, ChevronDown, Pause, Play, Trash2 } from 'lucide-react';
 import type { LiveLogEntry, LiveOperation } from '../../types/explorer';
 import { cn } from '../../utils/cn';
+import { buildItems, txnSummary, txnTotals, type EntryGroup, type TxnGroup } from './grouping';
 
 type Scope = 'all' | 'database' | 'collection' | 'document';
 type OpGroup = 'insert' | 'update' | 'delete' | 'structure';
@@ -23,6 +25,7 @@ const OP_BADGE: Record<OpGroup, string> = {
   delete: 'bg-rose-100 text-rose-700',
   structure: 'bg-slate-200/80 text-slate-700',
 };
+const TXN_BADGE = 'bg-violet-100 text-violet-700';
 
 const OP_LABEL: Record<LiveOperation, string> = {
   insert: 'INSERT', update: 'UPDATE', replace: 'REPLACE', delete: 'DELETE',
@@ -63,6 +66,8 @@ const styles = {
   ns: 'min-w-0 truncate text-xs font-mono text-slate-700',
   // 이 탭에서 한 저장 표시
   youTag: 'shrink-0 px-1.5 rounded-md bg-emerald-50 text-[10px] font-semibold leading-4 text-emerald-600',
+  // 트랜잭션 안의 쓰기(묶음 밖에 따로 보일 때)
+  txTag: 'shrink-0 px-1.5 rounded-md bg-violet-50 text-[10px] font-semibold leading-4 text-violet-600',
   // 묶음 펼치기(×n)
   // 안 읽은 행(하늘색 배경) 위에서도 보이게 진하게
   countBtn: 'inline-flex shrink-0 items-center gap-0.5 rounded-md bg-slate-200 px-1.5 text-[10px] font-semibold leading-4 text-slate-700 transition-colors hover:bg-slate-300',
@@ -79,13 +84,9 @@ const styles = {
 
 const shortId = (id: string) => (id.length > 12 ? `…${id.slice(-8)}` : id);
 
-// 묶음 기준 — 같은 값이면 연달아 온 기록을 한 줄로. null = 묶지 않음(구조 변경 등)
-const groupMatch = (e: LiveLogEntry): string | null => {
-  const who = e.own ? 'own' : 'ext';
-  if (e.op === 'insert' || e.op === 'delete') return e.collection ? `${e.op}\u0000${e.database}\u0000${e.collection}\u0000${who}` : null;
-  if (e.documentId) return `doc\u0000${e.database}\u0000${e.collection}\u0000${e.documentId}\u0000${who}`;
-  return null;
-};
+// 목록 맨 처음/맨 마지막 행이면 그쪽 모서리만 둥글게
+const roundOf = (first: boolean, last: boolean) =>
+  first && last ? styles.roundBoth : first ? styles.roundTop : last ? styles.roundBottom : undefined;
 // 문서 여러 개를 묶은 줄(INSERT·DELETE)인가 — 문서 id 대신 개수를 보여 준다
 const isMultiDocument = (entries: LiveLogEntry[]) => entries.length > 1 && (entries[0].op === 'insert' || entries[0].op === 'delete');
 
@@ -120,9 +121,11 @@ interface LogRowProps {
   // 목록 맨 처음/맨 마지막 행이면 그쪽 모서리만 둥글게
   first?: boolean;
   last?: boolean;
+  // 트랜잭션 안의 쓰기인데 TXN 묶음 밖에 보일 때 — tx 표시의 설명
+  txnNote?: string;
 }
 
-function LogRow({ entry: e, unread, detail, onNavigate, extra, compact = false, showDocId = !compact, first = false, last = false }: LogRowProps) {
+function LogRow({ entry: e, unread, detail, onNavigate, extra, compact = false, showDocId = !compact, first = false, last = false, txnNote }: LogRowProps) {
   const canOpen = e.op !== 'drop' && e.op !== 'dropDatabase';
   const ns = e.collection ? `${e.database}.${e.collection}` : e.database;
   const lag = e.serverTime - e.clusterTime;
@@ -130,7 +133,7 @@ function LogRow({ entry: e, unread, detail, onNavigate, extra, compact = false, 
     <div
       className={cn(
         styles.row,
-        first && last ? styles.roundBoth : first ? styles.roundTop : last ? styles.roundBottom : undefined,
+        roundOf(first, last),
         canOpen ? styles.rowClickable : styles.rowStatic,
         unread ? styles.rowUnread : styles.rowRead,
       )}
@@ -158,6 +161,7 @@ function LogRow({ entry: e, unread, detail, onNavigate, extra, compact = false, 
             <div className={styles.nsLine}>
               <span className={styles.ns} title={ns}>{ns}</span>
               {e.own && <span className={styles.youTag} data-tt="Saved from this tab">you</span>}
+              {txnNote && <span className={styles.txTag} data-tt={txnNote}>tx</span>}
               {extra}
             </div>
             {detail && <div className={styles.detail} title={detail}>{detail}</div>}
@@ -167,6 +171,58 @@ function LogRow({ entry: e, unread, detail, onNavigate, extra, compact = false, 
       <div className={styles.side}>
         <span className={styles.time} data-tt={`DB → server ${lag} ms`}>{clock(e.serverTime)}</span>
         {showDocId && e.documentId && <span className={styles.docId} title={e.documentId}>{shortId(e.documentId)}</span>}
+      </div>
+    </div>
+  );
+}
+
+interface TxnRowProps {
+  item: TxnGroup;
+  // 이 트랜잭션의 쓰기 수(거르기 전) — 일부만 보이면 '3 of 5'
+  total: number;
+  unread: boolean;
+  open: boolean;
+  onToggle: () => void;
+  first: boolean;
+  last: boolean;
+}
+
+// 트랜잭션 한 줄 — 누르면 펼친다(컬렉션이 여럿이라 이동할 곳을 하나로 못 정한다)
+function TxnRow({ item, total, unread, open, onToggle, first, last }: TxnRowProps) {
+  const latest = item.entries[0];
+  const n = item.entries.length;
+  const { where, ops } = txnSummary(item.entries);
+  const lag = latest.serverTime - latest.clusterTime;
+  return (
+    <div
+      className={cn(styles.row, roundOf(first, last), styles.rowClickable, unread ? styles.rowUnread : styles.rowRead)}
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
+      onClick={onToggle}
+      onKeyDown={(ev: KeyboardEvent) => {
+        if (ev.target !== ev.currentTarget) return;
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          onToggle();
+        }
+      }}
+    >
+      <span className={cn(styles.badge, TXN_BADGE)} data-tt="Written in one transaction — committed together">TXN</span>
+      <div className={styles.main}>
+        <div className={styles.nsLine}>
+          <span className={styles.ns} title={where}>{where}</span>
+          <span className={styles.countBtn} data-tt={open ? 'Collapse' : 'Click to list the writes in this transaction'}>
+            ×{n}
+            <ChevronDown size={10} className={cn('transition-transform', open && 'rotate-180')} />
+          </span>
+        </div>
+        <div className={styles.detail} title={ops}>
+          Transaction · {n}{total > n ? ` of ${total}` : ''} write{total === 1 ? '' : 's'}{ops ? ` · ${ops}` : ''}
+        </div>
+      </div>
+      <div className={styles.side}>
+        <span className={styles.time} data-tt={`DB → server ${lag} ms`}>{clock(latest.serverTime)}</span>
       </div>
     </div>
   );
@@ -242,22 +298,9 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
   // 배지로 끈 연산 종류는 목록에서 뺀다
   const visible = useMemo(() => (hiddenOps.size ? inScope.filter((e) => !hiddenOps.has(opGroup(e.op))) : inScope), [inScope, hiddenOps]);
 
-  // 연속으로 생긴 기록을 묶는다(groupMatch). 최신이 앞.
-  // key = 묶음의 가장 오래된 기록 id — 새 기록은 위(최신 쪽)에 붙으므로 펼침 상태가 유지된다.
-  const groups = useMemo(() => {
-    const out: { key: string; match: string | null; entries: LiveLogEntry[] }[] = [];
-    for (const e of visible) {
-      const match = groupMatch(e);
-      const last = out[out.length - 1];
-      if (match && last && last.match === match) {
-        last.entries.push(e);
-        last.key = e.id;
-      } else {
-        out.push({ key: e.id, match, entries: [e] });
-      }
-    }
-    return out;
-  }, [visible]);
+  // 연속으로 생긴 기록을 묶는다(grouping.ts — 트랜잭션, 같은 컬렉션 insert·delete, 같은 문서 update). 최신이 앞.
+  const items = useMemo(() => buildItems(visible), [visible]);
+  const totals = useMemo(() => txnTotals(entries), [entries]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const toggleGroup = (key: string) =>
     setExpanded((prev) => {
@@ -266,6 +309,70 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
       else next.add(key);
       return next;
     });
+
+  const isUnread = (e: LiveLogEntry) => seenAt !== null && e.serverTime > seenAt && !e.own;
+  // tx 표시 — 트랜잭션 안의 쓰기가 TXN 묶음 밖에 보일 때(쓰기 하나짜리 트랜잭션, 또는 나머지가 걸러짐)
+  const txnNoteOf = (group: EntryGroup): string | undefined => {
+    const inTxn = group.entries.filter((e) => e.txn).length;
+    if (inTxn === 0) return undefined;
+    if (group.entries.length > 1) return `${inTxn === group.entries.length ? 'All' : `${inTxn} of ${group.entries.length}`} written in transactions`;
+    const total = totals.get(group.entries[0].txn as string) ?? 1;
+    return total > 1 ? `One of ${total} writes in a transaction — the others are filtered out` : 'Written in a transaction on its own';
+  };
+
+  // 묶음 하나 — 첫 줄 + ×n으로 펼친 항목들. inTxn = TXN 묶음 안(tx 표시를 하지 않는다)
+  const renderGroup = (group: EntryGroup, first: boolean, lastRow: boolean, inTxn = false) => {
+    const latest = group.entries[0];
+    const isGroup = group.entries.length > 1;
+    const multiDoc = isMultiDocument(group.entries);
+    const isOpen = isGroup && expanded.has(group.key);
+    return (
+      <div key={group.key} className="flex flex-col gap-px">
+        <LogRow
+          entry={latest}
+          unread={group.entries.some(isUnread)}
+          detail={multiDoc ? `${group.entries.length} documents` : isGroup ? mergedDetail(group.entries) : entryDetail(latest)}
+          showDocId={!multiDoc}
+          onNavigate={onNavigate}
+          first={first}
+          // 펼친 묶음이면 마지막 행은 그 안의 마지막 항목
+          last={lastRow && !isOpen}
+          txnNote={inTxn ? undefined : txnNoteOf(group)}
+          extra={isGroup && (
+            <button
+              type="button"
+              className={styles.countBtn}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                toggleGroup(group.key);
+              }}
+              aria-expanded={isOpen}
+              data-tt={isOpen ? 'Collapse' : multiDoc ? `${group.entries.length} documents in a row — click to list them` : `${group.entries.length} changes to this document in a row — click to list them`}
+            >
+              ×{group.entries.length}
+              <ChevronDown size={10} className={cn('transition-transform', isOpen && 'rotate-180')} />
+            </button>
+          )}
+        />
+        {isOpen && (
+          <div className={styles.children}>
+            {group.entries.map((e, ci) => (
+              <LogRow
+                key={e.id}
+                entry={e}
+                unread={isUnread(e)}
+                detail={entryDetail(e)}
+                onNavigate={onNavigate}
+                compact
+                showDocId={multiDoc}
+                last={lastRow && ci === group.entries.length - 1}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const counts = useMemo(() => {
     const c: Record<OpGroup, number> = { insert: 0, update: 0, delete: 0, structure: 0 };
@@ -325,54 +432,24 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
             <span>Edit something in mongosh or Compass — it shows up here.</span>
           </div>
         ) : (
-          groups.map((group, gi) => {
-            const latest = group.entries[0];
-            const isLastGroup = gi === groups.length - 1;
-            const isGroup = group.entries.length > 1;
-            const multiDoc = isMultiDocument(group.entries);
-            const isOpen = isGroup && expanded.has(group.key);
-            const isUnread = (e: LiveLogEntry) => seenAt !== null && e.serverTime > seenAt && !e.own;
+          items.map((item, gi) => {
+            const lastItem = gi === items.length - 1;
+            if (item.kind === 'group') return renderGroup(item, gi === 0, lastItem);
+            const isOpen = expanded.has(item.key);
             return (
-              <div key={group.key} className="flex flex-col gap-px">
-                <LogRow
-                  entry={latest}
-                  unread={group.entries.some(isUnread)}
-                  detail={multiDoc ? `${group.entries.length} documents` : isGroup ? mergedDetail(group.entries) : entryDetail(latest)}
-                  showDocId={!multiDoc}
-                  onNavigate={onNavigate}
+              <div key={item.key} className="flex flex-col gap-px">
+                <TxnRow
+                  item={item}
+                  total={totals.get(item.txn) ?? item.entries.length}
+                  unread={item.entries.some(isUnread)}
+                  open={isOpen}
+                  onToggle={() => toggleGroup(item.key)}
                   first={gi === 0}
-                  // 펼친 묶음이면 마지막 행은 그 안의 마지막 항목
-                  last={isLastGroup && !isOpen}
-                  extra={isGroup && (
-                    <button
-                      type="button"
-                      className={styles.countBtn}
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        toggleGroup(group.key);
-                      }}
-                      aria-expanded={isOpen}
-                      data-tt={isOpen ? 'Collapse' : multiDoc ? `${group.entries.length} documents in a row — click to list them` : `${group.entries.length} changes to this document in a row — click to list them`}
-                    >
-                      ×{group.entries.length}
-                      <ChevronDown size={10} className={cn('transition-transform', isOpen && 'rotate-180')} />
-                    </button>
-                  )}
+                  last={lastItem && !isOpen}
                 />
                 {isOpen && (
                   <div className={styles.children}>
-                    {group.entries.map((e, ci) => (
-                      <LogRow
-                        key={e.id}
-                        entry={e}
-                        unread={isUnread(e)}
-                        detail={entryDetail(e)}
-                        onNavigate={onNavigate}
-                        compact
-                        showDocId={multiDoc}
-                        last={isLastGroup && ci === group.entries.length - 1}
-                      />
-                    ))}
+                    {item.groups.map((g, ci) => renderGroup(g, false, lastItem && ci === item.groups.length - 1, true))}
                   </div>
                 )}
               </div>

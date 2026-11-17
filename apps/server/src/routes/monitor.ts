@@ -18,9 +18,10 @@
 //   GET /api/monitor/oplog → OplogReport (연결한 멤버의 oplog 창·크기, 9-7b — 그때그때)
 //   GET /api/monitor/startup-warnings → StartupWarningsReport (getLog 'startupWarnings', 9-7b — 그때그때)
 //   GET /api/monitor/alerts?range=&database=&collection= → AlertsReport (대량 삭제·폭주·삭제 알림, 9-8a — DB에 묻지 않는다)
+//   GET /api/monitor/transactions?range=5m|1h&database=&collection= → TransactionsReport (트랜잭션, 9-8b — 메모리 1시간, DB에 묻지 않는다)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
-import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type AlertsReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type OplogReport, type ReplicaReport, type SlowThreshold, type TopReport } from '@mongolive/shared';
+import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type AlertsReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type OplogReport, type ReplicaReport, type SlowThreshold, type TopReport, type TransactionsReport } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
@@ -31,7 +32,7 @@ import { readStartupWarnings } from '../monitor/startupWarnings';
 import { connectionUri } from '../connections';
 import { clientFor, connectionIdOf } from '../db';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
-import { activityOf, alertsOf, backfillOf, recorderOf, replicaOf, sizesOf, slowOf, topOf } from '../realtime';
+import { activityOf, alertsOf, backfillOf, recorderOf, replicaOf, sizesOf, slowOf, topOf, transactionsOf } from '../realtime';
 import { getServerSettings } from '../settings';
 
 export const monitorRouter = Router();
@@ -272,4 +273,15 @@ monitorRouter.post('/monitor/sizes/measure', (_req, res) => {
   const sizes = sizesOf(connectionIdOf(res));
   if (!sizes) throw new HttpError(409, 'No tab is using this connection');
   res.json({ started: sizes.measureNow() });
+});
+
+// 트랜잭션 — 피드가 받은 이벤트 중 트랜잭션 안의 쓰기를 센 것(최근 1시간만 메모리에). 피드가 없으면 closed
+monitorRouter.get('/monitor/transactions', (req, res) => {
+  const range = req.query.range === '5m' ? '5m' : req.query.range === '1h' || req.query.range === undefined ? '1h' : null;
+  if (!range) throw new HttpError(400, 'range must be 5m or 1h — transactions are kept in memory for the last hour only');
+  const transactions = transactionsOf(connectionIdOf(res));
+  const closed: TransactionsReport = {
+    status: 'closed', at: Date.now(), since: null, count: 0, writes: 0, perMinute: 0, maxWrites: 0, combos: [], largest: [], partial: false,
+  };
+  res.json(transactions ? transactions.report({ range, scope: scopeOf(req.query) }) : closed);
 });

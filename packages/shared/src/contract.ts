@@ -168,6 +168,8 @@ export interface LiveChange {
   truncatedArrays?: { field: string; newSize: number }[];
   // rename 이벤트: 바뀐 이름
   to?: { database: string; collection: string };
+  // 트랜잭션 안의 쓰기: 세션 id(lsid, 16진수) + ':' + 그 세션의 트랜잭션 번호(txnNumber) — 같은 값이면 한 트랜잭션(9-8b)
+  txn?: string;
   // false = 요약본(updatedFields 등 생략) — 보고 있지 않은 컬렉션의 변경
   detailed: boolean;
   // MongoDB에 기록된 시각 / 서버가 받은 시각(ms) — 지연 측정(PerformanceMetrics)용
@@ -204,6 +206,8 @@ export interface LiveLogEntry {
   paths?: string[];
   removed?: string[];
   to?: { database: string; collection: string };
+  // 트랜잭션 안의 쓰기 — LiveChange.txn과 같다
+  txn?: string;
   clusterTime: number;
   serverTime: number;
   opTime: string;
@@ -809,6 +813,51 @@ export interface AlertsReport {
   // 최근 것부터(최대 200)
   alerts: MonitorAlert[];
   more: number;
+}
+
+// ── Monitor › Collections › Transactions (9-8b) ─────────────────────────────
+// 피드가 받은 변경 중 트랜잭션 안의 쓰기(lsid + txnNumber가 붙은 것)를 트랜잭션별로 센 것. DB에 묻지 않는다 — 최근 1시간 메모리만.
+// 범위(DB·컬렉션)는 '그 범위를 건드린 트랜잭션' — 개수·쓰기 수는 트랜잭션 전체(다른 컬렉션 쓰기 포함)
+
+export interface TransactionOps {
+  insert: number;
+  update: number; // replace 포함
+  delete: number;
+}
+
+// 같이 쓰인 컬렉션 조합 — namespaces는 "db.coll" 정렬, 10개가 넘으면 more
+export interface TransactionCombo {
+  namespaces: string[];
+  more: number;
+  count: number;
+  writes: number;
+}
+
+// 큰 트랜잭션 하나 — at = 커밋 시각(clusterTime)
+export interface TransactionSample {
+  at: number;
+  writes: number;
+  ops: TransactionOps;
+  namespaces: { ns: string; writes: number }[];
+  more: number;
+}
+
+export interface TransactionsReport {
+  // closed = 피드 없음(이 연결을 쓰는 탭이 없음)
+  status: 'ok' | 'closed';
+  at: number;
+  // 세기 시작한 때(빈 구간을 불러오면 앞당겨진다)
+  since: number | null;
+  count: number;
+  writes: number;
+  // 트랜잭션 수 ÷ 센 분(범위와 since 중 짧은 쪽, 최소 1분)
+  perMinute: number;
+  maxWrites: number;
+  // 자주 같이 쓰인 조합(개수순 5개) / 큰 것(쓰기 수순, 같으면 최근 것 5개)
+  combos: TransactionCombo[];
+  largest: TransactionSample[];
+  // 한 분에 조합이 너무 많아 일부를 '기타'로 셌다 — 범위로 좁힌 숫자가 모자랄 수 있다
+  partial: boolean;
 }
 
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────

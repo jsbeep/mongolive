@@ -33,6 +33,7 @@ import type {
   SizesReport,
   SlowQueriesReport,
   TopReport,
+  TransactionsReport,
   OplogReport,
   ReplicaReport,
   StartupWarningsReport,
@@ -476,6 +477,12 @@ export const createRemoteDataSource = (): DataSource => {
       if (database) params.set('database', database);
       if (database && collection) params.set('collection', collection);
       return request<AlertsReport>(`/monitor/alerts?${params}`);
+    },
+    getTransactions({ database, collection, range }) {
+      const params = new URLSearchParams({ range });
+      if (database) params.set('database', database);
+      if (database && collection) params.set('collection', collection);
+      return request<TransactionsReport>(`/monitor/transactions?${params}`);
     },
     onAlert(listener) {
       ensureSocket();
