@@ -1,18 +1,20 @@
 // Monitor › Collections (9-2, 긴 기간 9-3b) — changeStream으로 본 쓰기를 컬렉션별로.
 //   범위 = 서버 전체 / DB:  쓰기 차트 + 컬렉션 표(쓰기 수 · 작업 비율 · 추세 · 마지막 쓰기). 행을 누르면 그 컬렉션으로 좁힌다
 //   범위 = 컬렉션:        쓰기 차트 + 자주 바뀐 필드 · 자주 바뀐 문서(누르면 Explorer에서 연다 — 최근 1시간만 있다)
+//   크기(9-6a): 표의 Docs·Size·Index·Growth 칸 + 맨 아래 Storage 카드·크기 추이(StorageCard). 서버가 1시간마다 잰다
 // 기간(범위 바): 5m·1h = 서버 메모리(10초마다), 24h~All = 기록 파일(1분마다). 기록은 탭이 연결을 쓰는 동안만 쌓인다.
 // 맨 위 배너(9-4): 탭이 없던 동안의 쓰기를 changeStream으로 다시 불러온다. 차트의 빈 구간 띠는 불러왔는지 툴팁에 적는다.
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpRight, CircleAlert, Loader2 } from 'lucide-react';
-import type { ActivityCollection, ActivityOps, ActivityRange, CollectionSummary, LastWrite, MonitorRange } from '../../types/explorer';
+import type { ActivityCollection, ActivityOps, ActivityRange, CollectionSizeRow, CollectionSummary, LastWrite, MonitorRange } from '../../types/explorer';
 import { LIVE_RANGES } from '../../types/explorer';
 import { api } from '../../services/api';
 import { useActivity, useHistory } from '../../hooks/useActivity';
 import { useBackfill } from '../../hooks/useBackfill';
 import { cn } from '../../utils/cn';
 import { TimeChart, Sparkline, type ChartSeries } from './charts';
-import { chartWindow, fmtAgo, fmtClock, fmtDateTime, fmtNumber, fmtSpan, RANGE_LABEL } from './format';
+import { chartWindow, fmtAgo, fmtBytes, fmtBytesDelta, fmtClock, fmtDateTime, fmtNumber, fmtSpan, RANGE_LABEL } from './format';
+import { StorageCard, useSizes } from './StorageCard';
 import type { MonitorScope } from './ScopeBar';
 import { BackfillBanner } from './BackfillBanner';
 import { gapBand } from './backfill';
@@ -112,7 +114,7 @@ function RankList({ items, color, onOpen }: { items: { key: string; label: strin
   );
 }
 
-type SortKey = 'name' | 'writes' | 'last';
+type SortKey = 'name' | 'writes' | 'last' | 'docs' | 'size' | 'index' | 'growth';
 
 interface CollectionsTabProps {
   scope: MonitorScope;
@@ -150,6 +152,9 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
   // 탭이 없던 동안의 쓰기 불러오기(9-4) — 범위와 상관없이 이 연결 전체
   const backfill = useBackfill(true);
   const backfillGaps = backfill.report?.gaps;
+  // 컬렉션 크기(9-6a) — 표 칸과 Storage 카드
+  const sizes = useSizes(range, scope);
+  const sizeReport = sizes.report;
   const atCollection = scope.database !== null && scope.collection !== null;
   const scopeName = scope.collection ?? scope.database ?? 'All databases';
 
@@ -223,29 +228,57 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
     };
   }, [live, activity.report, activity.now, history.report, lastWrites, range, scopeName, atCollection, backfillGaps]);
 
+  const sizeByKey = useMemo(() => new Map((sizeReport?.rows ?? []).map((r) => [`${r.database}.${r.collection}`, r])), [sizeReport]);
+  // Growth 칸 — 기간 안에 두 번 넘게 쟀을 때만(실시간 기간·기록 꺼짐이면 기준이 없다)
+  const showGrowth = sizeReport !== null && sizeReport.baseAt !== null && sizeReport.at !== null && sizeReport.baseAt < sizeReport.at;
+  const showSizes = (sizeReport?.rows.length ?? 0) > 0;
+
   const rows = useMemo((): ActivityCollection[] => {
     if (!view || atCollection) return [];
     const list = scope.database === null ? [] : scope.database === explorerDatabase ? explorerCollections : dbCollections?.database === scope.database ? dbCollections.list : [];
-    const seen = new Set(view.rows.map((c) => c.collection));
-    const idle = list
-      .filter((c) => !seen.has(c.name))
-      .map((c): ActivityCollection => ({
-        database: scope.database as string,
-        collection: c.name,
+    // 쓰기가 없던 컬렉션 — DB 범위는 컬렉션 목록, 둘 다 크기를 잰 목록에서도(서버 범위는 이것뿐)
+    const idleNames: { database: string; collection: string }[] = [
+      ...list.map((c) => ({ database: scope.database as string, collection: c.name })),
+      ...(sizeReport?.rows ?? []),
+    ];
+    const seen = new Set(view.rows.map((c) => `${c.database}.${c.collection}`));
+    const idle: ActivityCollection[] = [];
+    for (const c of idleNames) {
+      const key = `${c.database}.${c.collection}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      idle.push({
+        database: c.database,
+        collection: c.collection,
         total: 0,
         ops: { insert: 0, update: 0, replace: 0, delete: 0 },
         trend: Array(view.trendLength).fill(0),
-        lastWrite: lastWrites?.[`${scope.database}.${c.name}`] ?? null,
-      }));
+        lastWrite: lastWrites?.[key] ?? null,
+      });
+    }
     const all = [...view.rows, ...idle];
     const dir = sort.desc ? -1 : 1;
     const nameOf = (c: ActivityCollection) => (scope.database ? c.collection : `${c.database}.${c.collection}`);
+    const size = (c: ActivityCollection) => sizeByKey.get(`${c.database}.${c.collection}`);
+    // 크기를 모르는 행은 방향과 상관없이 맨 아래
+    const bySize = (a: ActivityCollection, b: ActivityCollection, value: (r: CollectionSizeRow) => number | null) => {
+      const ra = size(a);
+      const rb = size(b);
+      const va = ra ? value(ra) : null;
+      const vb = rb ? value(rb) : null;
+      if (va === null || vb === null) return va === null ? (vb === null ? 0 : 1) : -1;
+      return dir * (va - vb);
+    };
     return all.sort((a, b) => {
       if (sort.key === 'name') return dir * nameOf(a).localeCompare(nameOf(b));
       if (sort.key === 'last') return dir * ((a.lastWrite?.at ?? 0) - (b.lastWrite?.at ?? 0));
+      if (sort.key === 'docs') return bySize(a, b, (r) => r.count) || nameOf(a).localeCompare(nameOf(b));
+      if (sort.key === 'size') return bySize(a, b, (r) => r.size) || nameOf(a).localeCompare(nameOf(b));
+      if (sort.key === 'index') return bySize(a, b, (r) => r.index) || nameOf(a).localeCompare(nameOf(b));
+      if (sort.key === 'growth') return bySize(a, b, (r) => r.size - (r.base?.size ?? 0)) || nameOf(a).localeCompare(nameOf(b));
       return dir * (a.total - b.total) || (b.lastWrite?.at ?? 0) - (a.lastWrite?.at ?? 0);
     });
-  }, [view, atCollection, scope.database, explorerDatabase, explorerCollections, dbCollections, sort, lastWrites]);
+  }, [view, atCollection, scope.database, explorerDatabase, explorerCollections, dbCollections, sort, lastWrites, sizeReport, sizeByKey]);
 
   const loading = live ? activity.loading : history.loading;
   const error = live ? activity.error : history.error;
@@ -309,10 +342,10 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
         <section className={styles.card} aria-label="Collections by writes">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <div>
-              <h3 className={styles.cardTitle}>{scope.database ? `Collections in ${scope.database}` : 'Collections written to'}</h3>
+              <h3 className={styles.cardTitle}>{scope.database ? `Collections in ${scope.database}` : showSizes ? 'Collections' : 'Collections written to'}</h3>
               <p className={styles.cardSub}>
-                {scope.database
-                  ? `Writes in ${inRange} — click a row to focus on it`
+                {scope.database || showSizes
+                  ? `Writes in ${inRange}${sizeReport?.at ? ` · sizes measured ${fmtClock(sizeReport.at)}` : ''} — click a row to focus on it`
                   : `Only collections with writes ${live ? `since ${fmtClock(view.since)}` : `in ${inRange}`} are listed — click a row to focus on it`}
               </p>
             </div>
@@ -327,9 +360,13 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
                   <tr>
                     {sortHeader('name', 'Collection')}
                     {sortHeader('writes', 'Writes', 'right')}
-                    <th className={cn(styles.th, 'w-[28%]')}>Mix</th>
-                    <th className={cn(styles.th, 'w-[16%]')}>Trend</th>
+                    <th className={cn(styles.th, showSizes ? 'w-[18%]' : 'w-[28%]')}>Mix</th>
+                    <th className={cn(styles.th, showSizes ? 'w-[12%]' : 'w-[16%]')}>Trend</th>
                     {sortHeader('last', 'Last write', 'right')}
+                    {showSizes && sortHeader('docs', 'Docs', 'right')}
+                    {showSizes && sortHeader('size', 'Size', 'right')}
+                    {showSizes && sortHeader('index', 'Index', 'right')}
+                    {showGrowth && sortHeader('growth', 'Growth', 'right')}
                   </tr>
                 </thead>
                 <tbody>
@@ -352,6 +389,7 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
                           ? <span data-tt={`${row.lastWrite.op} at ${fmtDateTime(row.lastWrite.at)}`}>{fmtAgo(row.lastWrite.at, Date.now())} <span className={styles.muted}>· {row.lastWrite.op}</span></span>
                           : <span className={styles.muted} data-tt="No write seen while this connection was open">—</span>}
                       </td>
+                      {showSizes && <SizeCells row={sizeByKey.get(`${row.database}.${row.collection}`)} growth={showGrowth} baseAt={sizeReport?.baseAt ?? null} />}
                     </tr>
                   ))}
                 </tbody>
@@ -401,6 +439,35 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
           )}
         </>
       )}
+
+      <StorageCard sizes={sizes} range={range} scopeName={scopeName} />
     </div>
+  );
+}
+
+// 표의 크기 칸 — 잰 적이 없는 컬렉션(방금 생김)은 —
+function SizeCells({ row, growth, baseAt }: { row: CollectionSizeRow | undefined; growth: boolean; baseAt: number | null }) {
+  const cell = cn(styles.td, styles.num);
+  if (!row) {
+    const dash = <span className={styles.muted} data-tt="Not measured yet — sizes are measured hourly">—</span>;
+    return <>{[0, 1, 2, ...(growth ? [3] : [])].map((i) => <td key={i} className={cell}>{dash}</td>)}</>;
+  }
+  const avg = row.count > 0 ? row.size / row.count : 0;
+  const diff = row.size - (row.base?.size ?? 0);
+  return (
+    <>
+      <td className={cell}>{fmtNumber(row.count)}</td>
+      <td className={cell}>
+        <span data-tt={`Data ${fmtBytes(row.size)} · on disk ${fmtBytes(row.storage)}${row.count > 0 ? ` · avg document ${fmtBytes(avg)}` : ''}`}>{fmtBytes(row.size)}</span>
+      </td>
+      <td className={cell}>{fmtBytes(row.index)}</td>
+      {growth && (
+        <td className={cell}>
+          {row.base === null
+            ? <span className={styles.muted} data-tt="Created after the first measurement in this range">new</span>
+            : <span className={diff === 0 ? styles.muted : diff > 0 ? 'text-amber-600' : 'text-emerald-600'} data-tt={`Data size since ${fmtDateTime(baseAt as number)}`}>{fmtBytesDelta(diff)}</span>}
+        </td>
+      )}
+    </>
   );
 }

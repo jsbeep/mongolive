@@ -10,9 +10,11 @@
 //   GET /api/monitor/operations?database=&collection= → OperationsReport ($currentOp, 9-5a)
 //   POST /api/monitor/operations/kill {opid} → 204 (killOp — 다른 클라이언트의 작업만)
 //   GET /api/monitor/slow?range=&database=&collection=&min=100|500|1000|5000 → SlowQueriesReport (서버 로그의 느린 쿼리, 9-5b)
+//   GET /api/monitor/sizes?range=&database=&collection= → SizesReport (컬렉션 크기, 9-6a)
+//   POST /api/monitor/sizes/measure → { started } (false = 이미 재는 중이거나 30초 안에 잼)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
-import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type BackfillReport, type LastWrites, type MonitorRange, type SlowQueriesReport, type SlowThreshold } from '@mongolive/shared';
+import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type SlowThreshold } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
@@ -20,7 +22,7 @@ import { killOperation, listOperations } from '../monitor/operations';
 import { connectionUri } from '../connections';
 import { clientFor, connectionIdOf } from '../db';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
-import { activityOf, backfillOf, recorderOf, slowOf } from '../realtime';
+import { activityOf, backfillOf, recorderOf, sizesOf, slowOf } from '../realtime';
 import { getServerSettings } from '../settings';
 
 export const monitorRouter = Router();
@@ -160,4 +162,41 @@ monitorRouter.get('/monitor/slow', async (req, res) => {
     return;
   }
   res.json(await slow.report({ range, scope, min }));
+});
+
+const scopeOf = (query: Record<string, unknown>) => {
+  const database = text(query.database);
+  const collection = text(query.collection);
+  if (collection && !database) throw new HttpError(400, 'collection needs a database');
+  return {
+    database: database ? checkDatabaseName(database) : null,
+    collection: collection ? checkCollectionName(collection) : null,
+  };
+};
+
+const closedSizes = (): SizesReport => ({
+  status: 'closed',
+  error: null,
+  measuring: false,
+  at: null,
+  stored: getServerSettings().monitorHistory !== 'off',
+  rows: [],
+  total: { count: 0, size: 0, storage: 0, index: 0 },
+  baseAt: null,
+  baseTotal: null,
+  trend: [],
+});
+
+// 컬렉션 크기 — 피드가 열려 있는 동안 1시간마다 잰 것(기록 파일 + 마지막 측정)
+monitorRouter.get('/monitor/sizes', async (req, res) => {
+  const range = String(req.query.range ?? '1h') as MonitorRange;
+  if (!RANGES.includes(range)) throw new HttpError(400, `range must be one of ${RANGES.join(', ')}`);
+  const sizes = sizesOf(connectionIdOf(res));
+  res.json(sizes ? await sizes.report({ range, scope: scopeOf(req.query) }) : closedSizes());
+});
+
+monitorRouter.post('/monitor/sizes/measure', (_req, res) => {
+  const sizes = sizesOf(connectionIdOf(res));
+  if (!sizes) throw new HttpError(409, 'No tab is using this connection');
+  res.json({ started: sizes.measureNow() });
 });

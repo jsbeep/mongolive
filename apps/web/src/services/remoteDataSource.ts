@@ -29,6 +29,7 @@ import type {
   HistoryReport,
   BackfillReport,
   OperationsReport,
+  SizesReport,
   SlowQueriesReport,
   Diagnostics,
   ServerSettings,
@@ -432,6 +433,15 @@ export const createRemoteDataSource = (): DataSource => {
       if (query.database) params.set('database', query.database);
       if (query.database && query.collection) params.set('collection', query.collection);
       return request<SlowQueriesReport>(`/monitor/slow?${params}`);
+    },
+    getSizes(query) {
+      const params = new URLSearchParams({ range: query.range });
+      if (query.database) params.set('database', query.database);
+      if (query.database && query.collection) params.set('collection', query.collection);
+      return request<SizesReport>(`/monitor/sizes?${params}`);
+    },
+    async measureSizes() {
+      return (await request<{ started: boolean }>('/monitor/sizes/measure', { method: 'POST' })).started;
     },
     onBackfill(listener) {
       const s = ensureSocket();

@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { fmtDuration, fmtSpan, timeTicks } from './format';
+import { fmtBytes, fmtBytesDelta, fmtDuration, fmtSpan, timeTicks } from './format';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 // 이 컴퓨터 시간대의 2026-11-16 12:34
 const NOW = new Date(2026, 10, 16, 12, 34).getTime();
+
+describe('fmtBytes', () => {
+  it('단위를 올리고 소수는 짧게', () => {
+    expect(fmtBytes(0)).toBe('0 B');
+    expect(fmtBytes(1536)).toBe('1.5 KB');
+    expect(fmtBytes(20 * 1024 * 1024)).toBe('20 MB');
+    expect(fmtBytesDelta(-2048)).toBe('-2 KB');
+    expect(fmtBytesDelta(4096)).toBe('+4 KB');
+  });
+});
 
 describe('timeTicks', () => {
   it('1시간 창 = 15분 간격, 시각 글자', () => {

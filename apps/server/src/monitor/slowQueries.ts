@@ -10,8 +10,6 @@
 // 기록: 끝난 분만 slow-날짜.jsonl에 덧붙인다(monitor/history의 기록기 줄에 서서). 기록이 꺼져 있으면 메모리에 1시간만.
 // 같은 수정·삭제는 로그에 두 번 남는다(문장마다 WRITE 줄 + 명령 전체 COMMAND 줄) — WRITE 줄이 있었으면 COMMAND 줄은 뺀다.
 import { createHash } from 'node:crypto';
-import { readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
 import { BSON, type Document as BsonDocument, type MongoClient } from 'mongodb';
 import {
   SLOW_THRESHOLDS,
@@ -27,9 +25,9 @@ import {
   type SlowThreshold,
 } from '@mongolive/shared';
 import { toWire } from '../wire';
-import { readJsonl, serverHistoryDir, type Recorder } from './history';
+import { readDayFiles, serverHistoryDir, type Recorder } from './history';
 import { APP_NAME, cleanCommand, describeCommand, inScope, isUnauthorized, shortSummary, type OperationsScope } from './operations';
-import { dateKey, minuteStart } from './rollup';
+import { minuteStart } from './rollup';
 import { SAMPLE_INTERVAL_MS, withTimeout } from './sampler';
 
 const SLOW_QUERY_ID = 51803;
@@ -45,7 +43,7 @@ const SLOWMS_TTL_MS = 5 * 60 * 1000;
 // 권한 없음·옛 버전이면 이만큼 뒤에 다시 물어본다(역할을 고쳤을 수 있다)
 const RETRY_MS = 10 * 60 * 1000;
 
-const RANGE_MS: Record<MonitorRange, number | null> = {
+export const RANGE_MS: Record<MonitorRange, number | null> = {
   '5m': 5 * 60_000,
   '1h': 60 * 60_000,
   '24h': 24 * 3_600_000,
@@ -335,39 +333,8 @@ export const summarize = (
   return { groups: list, hidden, missed: merged };
 };
 
-// 파싱한 파일 — 오늘·어제처럼 자꾸 다시 읽는 몇 개만(크기·수정 시각이 같으면 그대로)
-const fileCache = new Map<string, { size: number; mtime: number; lines: SlowLine[] }>();
-const FILE_CACHE_MAX = 4;
-
-export const readSlowFiles = async (dir: string, from: number | null): Promise<SlowLine[]> => {
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return [];
-  }
-  const fromKey = from === null ? null : dateKey(from);
-  const out: SlowLine[] = [];
-  for (const name of names.sort()) {
-    const m = /^slow-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
-    if (!m || (fromKey !== null && m[1] < fromKey)) continue;
-    const file = join(dir, name);
-    const info = await stat(file).catch(() => null);
-    if (!info) continue;
-    const hit = fileCache.get(file);
-    let lines: SlowLine[];
-    if (hit && hit.size === info.size && hit.mtime === info.mtimeMs) {
-      lines = hit.lines;
-    } else {
-      lines = await readJsonl<SlowLine>(file);
-      fileCache.delete(file);
-      fileCache.set(file, { size: info.size, mtime: info.mtimeMs, lines });
-      while (fileCache.size > FILE_CACHE_MAX) fileCache.delete(fileCache.keys().next().value as string);
-    }
-    for (const line of lines) out.push(line);
-  }
-  return out;
-};
+// 날짜 파일 읽기는 크기 기록(9-6a)과 같이 쓴다(monitor/history readDayFiles)
+export const readSlowFiles = (dir: string, from: number | null): Promise<SlowLine[]> => readDayFiles<SlowLine>(dir, 'slow', from);
 
 export interface SlowLogHooks {
   connectionId: string;

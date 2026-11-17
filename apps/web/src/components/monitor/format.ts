@@ -28,6 +28,22 @@ export const fmtBytesRate = (value: number): string => {
   return `${trim((value / 1024 / 1024).toFixed(1))} MB/s`;
 };
 
+// 크기: 512 B / 12.3 KB / 4.5 MB / 1.2 GB / 2 TB
+export const fmtBytes = (value: number): string => {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = Math.abs(value);
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  const text = i === 0 ? String(Math.round(v)) : trim(v.toFixed(v < 10 ? 2 : 1));
+  return `${value < 0 ? '-' : ''}${text} ${units[i]}`;
+};
+
+// 늘고 준 크기: +1.2 MB / -340 KB / 0 B
+export const fmtBytesDelta = (value: number): string => (value > 0 ? `+${fmtBytes(value)}` : fmtBytes(value));
+
 export const fmtUptime = (sec: number): string => {
   const d = Math.floor(sec / 86400);
   const h = Math.floor((sec % 86400) / 3600);

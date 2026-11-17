@@ -8,6 +8,7 @@
 //                              + changeStream 위치와 아직 안 불러온 빈 구간 목록(9-4)
 //   fills.jsonl                빈 구간 중 쓰기를 다시 불러온 부분(9-4)
 //   slow-YYYY-MM-DD.jsonl      느린 쿼리(9-5b) — 분·모양·걸린 시간 구간마다 한 줄. 시 기록과 같은 보관 기간이 지나면 통째로 지운다
+//   sizes-YYYY-MM-DD.jsonl     컬렉션 크기(9-6a) — 측정마다 한 줄. 파일 첫 줄은 전부(full), 그다음은 바뀐 컬렉션만. 보관은 slow와 같다
 //
 // 파일은 다시 쓰지 않는다 — 덧붙이기와 통째 삭제만(SD카드 쓰기를 줄이려고). state.json만 임시 파일 → 이름 바꾸기로 교체.
 // 파일 작업은 한 줄로 세운다(queue) — 덧붙이기·합치기·지우기가 서로 끼어들지 않게.
@@ -33,6 +34,7 @@ import {
   type Rollup,
 } from './rollup';
 import type { StatusCounters } from './serverStatus';
+import type { SizesLine, SizeTuple } from './sizes';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -126,6 +128,43 @@ export const readJsonl = async <T>(file: string): Promise<T[]> => {
   return out;
 };
 
+// 파싱한 날짜 파일 — 오늘·어제처럼 자꾸 다시 읽는 몇 개만(크기·수정 시각이 같으면 그대로)
+const dayFileCache = new Map<string, { size: number; mtime: number; lines: unknown[] }>();
+const DAY_FILE_CACHE_MAX = 6;
+
+// <prefix>-YYYY-MM-DD.jsonl 중 from이 든 날짜부터(null = 전부) 날짜 순서대로 모든 줄
+export const readDayFiles = async <T>(dir: string, prefix: 'slow' | 'sizes', from: number | null): Promise<T[]> => {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const pattern = new RegExp(`^${prefix}-(\\d{4}-\\d{2}-\\d{2})\\.jsonl$`);
+  const fromKey = from === null ? null : dateKey(from);
+  const out: T[] = [];
+  for (const name of names.sort()) {
+    const m = pattern.exec(name);
+    if (!m || (fromKey !== null && m[1] < fromKey)) continue;
+    const file = join(dir, name);
+    const info = await stat(file).catch(() => null);
+    if (!info) continue;
+    const hit = dayFileCache.get(file);
+    let lines: unknown[];
+    if (hit && hit.size === info.size && hit.mtime === info.mtimeMs) {
+      lines = hit.lines;
+    } else {
+      lines = await readJsonl<unknown>(file);
+      dayFileCache.delete(file);
+      dayFileCache.set(file, { size: info.size, mtime: info.mtimeMs, lines });
+      while (dayFileCache.size > DAY_FILE_CACHE_MAX) dayFileCache.delete(dayFileCache.keys().next().value as string);
+    }
+    // 큰 배열은 펼쳐 넣지 않는다(인자 수 한도)
+    for (const line of lines) out.push(line as T);
+  }
+  return out;
+};
+
 const appendLine = (file: string, value: unknown) => appendFile(file, `${JSON.stringify(value)}\n`, 'utf8');
 
 const loadState = async (dir: string): Promise<StateFile> => {
@@ -203,6 +242,9 @@ export interface Recorder {
   slowCursor: () => Promise<number | null>;
   // 줄을 그 날짜의 slow 파일에 덧붙이고 커서를 남긴다
   appendSlow: (lines: { t: number }[], cursor: number | null) => Promise<void>;
+  // ── 컬렉션 크기(9-6a) ──
+  // 측정 한 번을 그 날짜의 sizes 파일에 — 파일이 새로 생기면 full, 아니면 changes(null = 처음이라 full)
+  appendSizes: (t: number, full: Record<string, SizeTuple>, changes: Record<string, SizeTuple | null> | null) => Promise<void>;
   // 줄 서 있는 파일 작업이 끝날 때까지(테스트)
   idle: () => Promise<void>;
 }
@@ -300,7 +342,7 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
     for (const name of await readdir(dir)) {
       const minute = /^minutes-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
       if (minute && minute[1] < oldestMinuteKey) await rm(join(dir, name), { force: true });
-      const slow = /^slow-(\d{4})-(\d{2})-(\d{2})\.jsonl$/.exec(name);
+      const slow = /^(?:slow|sizes)-(\d{4})-(\d{2})-(\d{2})\.jsonl$/.exec(name);
       if (slow) {
         // 그날의 마지막 순간(다음 날 0시)이 보관 기간보다 오래됐으면
         const dayEnd = new Date(Number(slow[1]), Number(slow[2]) - 1, Number(slow[3]) + 1).getTime();
@@ -521,6 +563,18 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
           state.slowCursor = cursor;
           await saveState(target, state);
         }
+      });
+    },
+    appendSizes(t, full, changes) {
+      return enqueue(async () => {
+        if (!enabled() || !hooks.alive()) return;
+        const target = await resolveDir();
+        if (!target) return;
+        const file = join(target, `sizes-${dateKey(t)}.jsonl`);
+        // 날짜가 바뀌었거나 기록을 지웠으면 새 파일 — 첫 줄은 전부 적어 그 파일만 읽어도 되게
+        const fresh = changes === null || !(await stat(file).then(() => true, () => false));
+        const line: SizesLine = fresh ? { t, full: true, c: full } : { t, c: changes };
+        await appendFile(file, `${JSON.stringify(line)}\n`, 'utf8');
       });
     },
     latestCounters: () => latest,

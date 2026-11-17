@@ -563,6 +563,41 @@ export interface SlowQueriesReport {
   stored: boolean;
 }
 
+// ── Monitor › Collections의 크기 (9-6a, GET /api/monitor/sizes) ─────────────────
+// 서버가 피드를 여는 때와 그 뒤 1시간마다 컬렉션마다 $collStats(storageStats)를 읽는다. 기록이 켜져 있으면 파일에도.
+// 바이트 단위. size = 압축 전 데이터, storage = 디스크(압축 후·빈 칸 포함), index = 인덱스 전부
+export interface SizeStats {
+  count: number;
+  size: number;
+  storage: number;
+  index: number;
+}
+
+export interface CollectionSizeRow extends SizeStats {
+  database: string;
+  collection: string;
+  // 기간 안 첫 측정 때 값(Δ의 기준). 그때 없던 컬렉션이면 null, 실시간 기간(5m·1h)도 null
+  base: SizeStats | null;
+}
+
+export interface SizesReport {
+  // closed = 이 연결을 쓰는 탭이 없어 안 잼, error = 마지막 측정이 실패(권한 등)
+  status: 'ok' | 'closed' | 'error';
+  error: string | null;
+  measuring: boolean;
+  // rows를 잰 때. 아직 한 번도 못 쟀으면 null
+  at: number | null;
+  stored: boolean;
+  // 범위 안 컬렉션(서버 전체 / DB / 컬렉션 하나)
+  rows: CollectionSizeRow[];
+  total: SizeStats;
+  // Δ의 기준 시각과 그때 합계(기간 안 첫 측정). 기록이 없거나 실시간 기간이면 null
+  baseAt: number | null;
+  baseTotal: SizeStats | null;
+  // 범위 합계의 추이(측정마다 한 점, 많으면 솎음)
+  trend: ({ t: number } & SizeStats)[];
+}
+
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 
