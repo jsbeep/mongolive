@@ -36,6 +36,8 @@ import type {
   OplogReport,
   ReplicaReport,
   StartupWarningsReport,
+  AlertsReport,
+  MonitorAlert,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -151,6 +153,8 @@ export const createRemoteDataSource = (): DataSource => {
   // 'monitor:backfill'도 Monitor 방으로 온다 — 둘 중 하나라도 듣고 있으면 구독한다
   const backfillListeners = new Set<(report: BackfillReport) => void>();
   const monitorWanted = () => monitorListeners.size + backfillListeners.size;
+  // 'monitor:alert'은 연결 방으로 온다(구독 없이 — 연결을 쓰는 탭이면 다 받는다)
+  const alertListeners = new Set<(alert: MonitorAlert) => void>();
 
   // ── 내 저장의 메아리 알아보기 ──
   // 내가 저장하면 서버 changeStream이 같은 변경을 알림으로 다시 보낸다(메아리). 저장 응답의 opTime과
@@ -255,6 +259,7 @@ export const createRemoteDataSource = (): DataSource => {
     next.on('monitor:backlog', (snapshot: MonitorSnapshot) => monitorListeners.forEach((listener) => listener({ kind: 'backlog', snapshot })));
     next.on('monitor:sample', (tick: MonitorTick) => monitorListeners.forEach((listener) => listener({ kind: 'sample', tick })));
     next.on('monitor:backfill', (report: BackfillReport) => backfillListeners.forEach((listener) => listener(report)));
+    next.on('monitor:alert', (alert: MonitorAlert) => alertListeners.forEach((listener) => listener(alert)));
     next.on('log', (entry: LiveLogEntry) =>
       deliver(() => {
         const marked = { ...entry, own: isOwn(entry.opTime) };
@@ -465,6 +470,19 @@ export const createRemoteDataSource = (): DataSource => {
     },
     getStartupWarnings() {
       return request<StartupWarningsReport>('/monitor/startup-warnings');
+    },
+    getAlerts({ database, collection, range }) {
+      const params = new URLSearchParams({ range });
+      if (database) params.set('database', database);
+      if (database && collection) params.set('collection', collection);
+      return request<AlertsReport>(`/monitor/alerts?${params}`);
+    },
+    onAlert(listener) {
+      ensureSocket();
+      alertListeners.add(listener);
+      return () => {
+        alertListeners.delete(listener);
+      };
     },
     onBackfill(listener) {
       const s = ensureSocket();

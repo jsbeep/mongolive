@@ -7,7 +7,7 @@
 // 마지막 탭이 떠나면 잠시(FEED_GRACE_MS) 뒤 닫는다 — 새로고침 정도로는 끊기지 않게.
 //
 // 채널(room) — 모두 연결 id(c:<id>)로 시작한다:
-//   c:<id>                       그 연결을 쓰는 모든 탭 — 상태, 컬렉션/DB 생성·삭제·이름변경
+//   c:<id>                       그 연결을 쓰는 모든 탭 — 상태, 컬렉션/DB 생성·삭제·이름변경, 알림(monitor:alert, 9-8a)
 //   c:<id>:db:<db>               그 DB를 보는 탭 — 다른 컬렉션의 문서 변경은 요약만(문서 수 갱신용)
 //   c:<id>:col:<db>.<collection> 그 컬렉션을 보는 탭 — 문서 변경을 자세히(바뀐 경로·값)
 //   c:<id>:log                   활동 패널을 연 탭 — 클러스터 전체 변경을 값 없이
@@ -43,6 +43,7 @@ import { createSlowLog, type SlowLog } from './monitor/slowQueries';
 import { createSizes, type Sizes } from './monitor/sizes';
 import { createReplica, type Replica } from './monitor/replica';
 import { createTop, type Top } from './monitor/top';
+import { createAlerts, type Alerts } from './monitor/alerts';
 import { clusterNow, createBackfill, resumePointOf, toTimestamp, tokenTs, tsOf, type Backfill } from './monitor/backfill';
 import { clusterFingerprint } from './monitor/identity';
 import { SAMPLE_INTERVAL_MS } from './monitor/sampler';
@@ -173,6 +174,8 @@ interface Feed {
   top: Top;
   // 레플리카 셋 멤버(monitor/replica, 9-7a) — 박자마다 replSetGetStatus, lag·상태 변화 1시간 메모리
   replica: Replica;
+  // 알림(monitor/alerts, 9-8a) — 받은 이벤트로 대량 삭제·폭주·삭제를 찾는다. 끝난 건은 기록 파일에
+  alerts: Alerts;
   // 다음에 스트림을 새로 열 때 T0(지금 클러스터 시각)부터 열고 그 앞을 빈 구간으로 넘긴다 — 피드를 열 때·주소가 바뀔 때
   needsBoundary: boolean;
   // 실시간을 다시 받기 시작한 때(ms) — 맨 마지막 빈 구간을 다 채우면 메모리 집계의 '세기 시작'을 앞당긴다
@@ -197,6 +200,7 @@ const toLogEntry = (change: LiveChange): LiveLogEntry => ({
 
 const record = (feed: Feed, change: LiveChange) => {
   feed.activity.record(change);
+  feed.alerts.record(change);
   feed.windowEvents += 1;
   if (feed.windowLags.length < WINDOW_LAG_SAMPLES) feed.windowLags.push(Math.max(0, change.serverTime - change.clusterTime));
   const entry = toLogEntry(change);
@@ -229,6 +233,7 @@ export const slowOf = (connectionId: string): SlowLog | null => feeds.get(connec
 export const sizesOf = (connectionId: string): Sizes | null => feeds.get(connectionId)?.sizes ?? null;
 export const topOf = (connectionId: string): Top | null => feeds.get(connectionId)?.top ?? null;
 export const replicaOf = (connectionId: string): Replica | null => feeds.get(connectionId)?.replica ?? null;
+export const alertsOf = (connectionId: string): Alerts | null => feeds.get(connectionId)?.alerts ?? null;
 
 // 진단용 — 그 연결의 실시간 상태. 피드가 없으면(쓰는 탭이 없음) connecting
 export const realtimeStatus = (connectionId: string): Omit<LiveStatus, 'resync'> => {
@@ -385,7 +390,7 @@ export const startRealtime = (io: Server) => {
     // 불러오기가 위치를 적고 멈춘 뒤 기록기를 닫는다(같은 파일 줄에 선다). 클라이언트는 그다음에 놓는다
     return feed.backfill
       .stop()
-      .then(() => feed.slow.stop())
+      .then(() => Promise.all([feed.slow.stop(), feed.alerts.stop()]))
       .then(() => feed.recorder.stop())
       .finally(() => feed.releaseClient());
   };
@@ -433,6 +438,7 @@ export const startRealtime = (io: Server) => {
           onReading: (counters, at) => created.recorder.addCounters(counters, at),
           eachTick: async () => {
             created.sizes.tick();
+            created.alerts.tick();
             // top·replica는 스스로 실패를 삼킨다 — 느린 쿼리 읽기와 나란히
             await Promise.all([created.slow.poll(), created.top.poll(), created.replica.poll()]);
           },
@@ -451,13 +457,27 @@ export const startRealtime = (io: Server) => {
         }),
         top: createTop({ client: () => clientFor(id) }),
         replica: createReplica({ client: () => clientFor(id) }),
+        alerts: createAlerts({
+          connectionId: id,
+          recorder: () => created.recorder,
+          stored: () => getServerSettings().monitorHistory !== 'off',
+          rules: () => {
+            const settings = getServerSettings();
+            return { deletes: settings.alertDeletes, burst: settings.alertBurst, drops: settings.alertDrops };
+          },
+          // 앱 어디서나 토스트 — 그 연결을 쓰는 모든 탭에
+          onAlert: (alert) => io.to(connRoom(id)).emit('monitor:alert', alert),
+        }),
         backfill: createBackfill({
           connectionId: id,
           client: () => clientFor(id),
           recorder: () => created.recorder,
           pipeline: STREAM_PIPELINE,
           convert: toLiveChange,
-          record: (change) => created.activity.record(change, true),
+          record: (change) => {
+            created.activity.record(change, true);
+            created.alerts.record(change, true);
+          },
           filledUpTo: (from, to) => {
             if (created.t0At !== null && to >= created.t0At) created.activity.extendSince(from);
           },
@@ -505,6 +525,7 @@ export const startRealtime = (io: Server) => {
         feed.activity = createActivityStats();
         // 느린 쿼리를 옛 서버 폴더에 먼저 적는다(기록기 reset보다 앞서 줄에 선다)
         void feed.slow.reset();
+        void feed.alerts.reset();
         feed.sizes.reset();
         feed.top.reset();
         feed.replica.reset();

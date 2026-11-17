@@ -39,6 +39,8 @@ import type {
   OplogReport,
   ReplicaReport,
   StartupWarningsReport,
+  AlertsReport,
+  MonitorAlert,
   AggregateResult,
   AggregateCounts,
   ConnectionInfo,
@@ -151,6 +153,10 @@ export interface DataSource {
   // Server 탭의 Oplog·Startup warnings(9-7b) — 연결한 멤버에게 그때그때 묻는다. Mock은 null
   getOplog(): Promise<OplogReport | null>;
   getStartupWarnings(): Promise<StartupWarningsReport | null>;
+  // 알림(9-8a) — 서버가 changeStream 이벤트로 찾은 대량 삭제·쓰기 폭주·삭제. Mock은 null / 아무것도 안 함
+  getAlerts(query: { database: string | null; collection: string | null; range: MonitorRange }): Promise<AlertsReport | null>;
+  // 새 실시간 알림 — 이 연결을 쓰는 모든 탭에 온다(앱 어디서나 토스트). 반환값을 부르면 해제
+  onAlert(listener: (alert: MonitorAlert) => void): () => void;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 

@@ -241,6 +241,23 @@ describe('createRecorder', () => {
     expect(await readJsonl(join(dir(), 'slow-2026-11-16.jsonl'))).toHaveLength(1); // 꺼져 있으면 안 적는다
   });
 
+  it('알림: 끝난 날짜의 alerts 파일에 덧붙이고, 보관 기간은 slow와 같다', async () => {
+    const r = make();
+    const alert = (start: number, end: number) => ({
+      id: `l:mass-delete:shop.orders:${start}`, kind: 'mass-delete' as const, database: 'shop', collections: ['orders'], start, end,
+      count: 1000, peak: 1000, usual: null, limit: 1000, ongoing: false, filled: false,
+    });
+    // 전날 시작해 오늘 끝난 건은 오늘 파일에
+    await r.appendAlerts([alert(T0 - 24 * 60 * MIN, T0), alert(T0 - 24 * 60 * MIN, T0 - 24 * 60 * MIN)]);
+    expect(await readJsonl(join(dir(), 'alerts-2026-11-16.jsonl'))).toHaveLength(1);
+    expect(await readJsonl(join(dir(), 'alerts-2026-11-15.jsonl'))).toHaveLength(1);
+    await writeFile(join(dir(), 'alerts-2026-08-01.jsonl'), '{}\n');
+    feed(r, T0 + 60 * MIN);
+    feed(r, T0 + 61 * MIN);
+    await r.idle();
+    expect(await readdir(dir())).not.toContain('alerts-2026-08-01.jsonl');
+  });
+
   it('기록 끄기면 아무 파일도, 지운 연결이면 폴더를 만들지 않는다', async () => {
     retention = 'off';
     const r = make();

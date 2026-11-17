@@ -763,6 +763,54 @@ export interface StartupWarningsReport {
   warnings: StartupWarning[];
 }
 
+// 알림 (9-8a) — 피드가 받는 changeStream 이벤트만 센다(MongoDB에 묻지 않는다)
+//   mass-delete    한 컬렉션에서 60초 안에 삭제가 한도 이상
+//   burst          한 컬렉션의 60초 쓰기가 한도 이상이면서 평소(최근 1시간 분당 평균)의 10배 이상 — 실시간만
+//   drop           컬렉션 삭제 — 같은 DB에서 이어지면 하나로 묶는다
+//   drop-database  DB 삭제(그 안 컬렉션들의 drop을 흡수)
+//   rename         컬렉션 이름 바꾸기
+// 이어지면(5분 안에 다시 넘으면) 한 건으로 늘린다. 끝난 건은 alerts-YYYY-MM-DD.jsonl(기록이 꺼져 있으면 메모리 1시간)
+//   GET /api/monitor/alerts?range=&database=&collection= → AlertsReport,  소켓 'monitor:alert' → MonitorAlert(실시간만)
+export type AlertKind = 'mass-delete' | 'burst' | 'drop' | 'drop-database' | 'rename';
+export interface MonitorAlert {
+  id: string;
+  kind: AlertKind;
+  database: string;
+  // 그 컬렉션 — drop·drop-database는 지워진 컬렉션들(앞 20개)
+  collections: string[];
+  // rename의 새 이름
+  to?: { database: string; collection: string };
+  // 처음·마지막 이벤트의 시각(ms, MongoDB에 기록된 시각)
+  start: number;
+  end: number;
+  // 삭제 수 / 쓰기 수 / 지운 컬렉션 수 / 1
+  count: number;
+  // 60초 창에서 가장 많았던 수(mass-delete·burst), 나머지는 count
+  peak: number;
+  // burst: 넘을 때의 평소 분당 쓰기
+  usual: number | null;
+  // 그때의 한도(mass-delete·burst)
+  limit: number | null;
+  // 아직 이어지는 중(5분 안에 다시 넘으면 같은 건)
+  ongoing: boolean;
+  // 빈 구간 불러오기(9-4)로 다시 읽다가 찾음 — 탭이 없던 동안 일어난 일
+  filled: boolean;
+}
+export interface AlertsReport {
+  // closed = 피드 없음(이 연결을 쓰는 탭이 없음)
+  status: 'ok' | 'closed';
+  at: number;
+  // 기록 파일에서도 읽었나(설정 › Monitor 기록이 꺼져 있으면 최근 1시간 메모리만)
+  stored: boolean;
+  // 이번에 지켜보기 시작한 때 — 이 앞은 기록 파일에 있는 것만
+  since: number | null;
+  // 지금 규칙(설정 › Monitor › Alerts)
+  rules: { deletes: number; burst: number; drops: boolean };
+  // 최근 것부터(최대 200)
+  alerts: MonitorAlert[];
+  more: number;
+}
+
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 

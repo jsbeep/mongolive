@@ -6,6 +6,7 @@
 //   서버 시간(9-6c): Time spent 카드(TopCard) — top으로 본 컬렉션별 읽기·쓰기 시간(5m·1h, 서버 메모리)
 // 기간(범위 바): 5m·1h = 서버 메모리(10초마다), 24h~All = 기록 파일(1분마다). 기록은 탭이 연결을 쓰는 동안만 쌓인다.
 // 맨 위 배너(9-4): 탭이 없던 동안의 쓰기를 changeStream으로 다시 불러온다. 차트의 빈 구간 띠는 불러왔는지 툴팁에 적는다.
+// 그 아래 Alerts 카드(9-8a): 대량 삭제·쓰기 폭주·컬렉션/DB 삭제·이름 바꾸기 — 없으면 한 줄만.
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpRight, CircleAlert, Loader2 } from 'lucide-react';
 import type { ActivityCollection, ActivityOps, ActivityRange, CollectionSizeRow, CollectionSummary, LastWrite, MonitorRange } from '../../types/explorer';
@@ -21,6 +22,7 @@ import { IndexesCard } from './IndexesCard';
 import { TopCard } from './TopCard';
 import type { MonitorScope } from './ScopeBar';
 import { BackfillBanner } from './BackfillBanner';
+import { AlertsCard } from './AlertsCard';
 import { gapBand } from './backfill';
 
 const MINUTE = 60_000;
@@ -310,6 +312,7 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
   return (
     <div className={styles.body}>
       <BackfillBanner state={backfill} />
+      <AlertsCard scope={scope} range={range} onScopeChange={onScopeChange} />
       <div className={styles.toolbar}>
         {live ? (
           <>

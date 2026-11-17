@@ -9,13 +9,14 @@
 //   fills.jsonl                빈 구간 중 쓰기를 다시 불러온 부분(9-4)
 //   slow-YYYY-MM-DD.jsonl      느린 쿼리(9-5b) — 분·모양·걸린 시간 구간마다 한 줄. 시 기록과 같은 보관 기간이 지나면 통째로 지운다
 //   sizes-YYYY-MM-DD.jsonl     컬렉션 크기(9-6a) — 측정마다 한 줄. 파일 첫 줄은 전부(full), 그다음은 바뀐 컬렉션만. 보관은 slow와 같다
+//   alerts-YYYY-MM-DD.jsonl    끝난 알림(9-8a) — 한 건에 한 줄, 끝난 날짜의 파일에. 보관은 slow와 같다
 //
 // 파일은 다시 쓰지 않는다 — 덧붙이기와 통째 삭제만(SD카드 쓰기를 줄이려고). state.json만 임시 파일 → 이름 바꾸기로 교체.
 // 파일 작업은 한 줄로 세운다(queue) — 덧붙이기·합치기·지우기가 서로 끼어들지 않게.
 // 시·일 경계는 서버의 시간대 기준. 피드가 닫혀 있던 동안 끝난 시·일은 다음에 피드가 열릴 때 따라잡아 합친다.
 import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { MONITOR_HISTORY_DAYS, type ActivityOps, type HistoryFill, type HistoryInfo, type MonitorHistory, type MonitorOp, type MonitorSample } from '@mongolive/shared';
+import { MONITOR_HISTORY_DAYS, type ActivityOps, type HistoryFill, type HistoryInfo, type MonitorAlert, type MonitorHistory, type MonitorOp, type MonitorSample } from '@mongolive/shared';
 import { metricsDirPath } from '../paths';
 import {
   addSample,
@@ -133,7 +134,7 @@ const dayFileCache = new Map<string, { size: number; mtime: number; lines: unkno
 const DAY_FILE_CACHE_MAX = 6;
 
 // <prefix>-YYYY-MM-DD.jsonl 중 from이 든 날짜부터(null = 전부) 날짜 순서대로 모든 줄
-export const readDayFiles = async <T>(dir: string, prefix: 'slow' | 'sizes', from: number | null): Promise<T[]> => {
+export const readDayFiles = async <T>(dir: string, prefix: 'slow' | 'sizes' | 'alerts', from: number | null): Promise<T[]> => {
   let names: string[];
   try {
     names = await readdir(dir);
@@ -245,6 +246,9 @@ export interface Recorder {
   // ── 컬렉션 크기(9-6a) ──
   // 측정 한 번을 그 날짜의 sizes 파일에 — 파일이 새로 생기면 full, 아니면 changes(null = 처음이라 full)
   appendSizes: (t: number, full: Record<string, SizeTuple>, changes: Record<string, SizeTuple | null> | null) => Promise<void>;
+  // ── 알림(9-8a) ──
+  // 끝난 알림을 끝난 날짜의 alerts 파일에(범위 읽기가 끝난 시각으로 날짜 파일을 고르므로)
+  appendAlerts: (alerts: MonitorAlert[]) => Promise<void>;
   // 줄 서 있는 파일 작업이 끝날 때까지(테스트)
   idle: () => Promise<void>;
 }
@@ -342,7 +346,7 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
     for (const name of await readdir(dir)) {
       const minute = /^minutes-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
       if (minute && minute[1] < oldestMinuteKey) await rm(join(dir, name), { force: true });
-      const slow = /^(?:slow|sizes)-(\d{4})-(\d{2})-(\d{2})\.jsonl$/.exec(name);
+      const slow = /^(?:slow|sizes|alerts)-(\d{4})-(\d{2})-(\d{2})\.jsonl$/.exec(name);
       if (slow) {
         // 그날의 마지막 순간(다음 날 0시)이 보관 기간보다 오래됐으면
         const dayEnd = new Date(Number(slow[1]), Number(slow[2]) - 1, Number(slow[3]) + 1).getTime();
@@ -575,6 +579,21 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
         const fresh = changes === null || !(await stat(file).then(() => true, () => false));
         const line: SizesLine = fresh ? { t, full: true, c: full } : { t, c: changes };
         await appendFile(file, `${JSON.stringify(line)}\n`, 'utf8');
+      });
+    },
+    appendAlerts(alerts) {
+      return enqueue(async () => {
+        if (!enabled() || !hooks.alive()) return;
+        const target = await resolveDir();
+        if (!target) return;
+        const byDay = new Map<string, MonitorAlert[]>();
+        for (const alert of alerts) {
+          const key = dateKey(alert.end);
+          byDay.set(key, [...(byDay.get(key) ?? []), alert]);
+        }
+        for (const [key, dayAlerts] of byDay) {
+          await appendFile(join(target, `alerts-${key}.jsonl`), dayAlerts.map((a) => `${JSON.stringify(a)}\n`).join(''), 'utf8');
+        }
       });
     },
     latestCounters: () => latest,

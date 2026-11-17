@@ -17,6 +17,11 @@ export const MONITOR_HISTORY_DAYS: Record<Exclude<MonitorHistory, 'off'>, number
 // 빈 구간 자동 불러오기 한도(이벤트 수, 9-4) — 추정이 이 이하면 피드가 열릴 때 바로 불러온다. 0 = 끔(늘 버튼으로)
 export const BACKFILL_AUTO_LIMITS = [0, 1_000, 10_000, 100_000] as const;
 export type BackfillAutoLimit = (typeof BACKFILL_AUTO_LIMITS)[number];
+// 알림(9-8a) 한도 — 한 컬렉션의 60초 안 삭제 수 / 쓰기 수. 0 = 끔
+export const ALERT_DELETE_LIMITS = [0, 100, 1_000, 10_000] as const;
+export type AlertDeleteLimit = (typeof ALERT_DELETE_LIMITS)[number];
+export const ALERT_BURST_LIMITS = [0, 1_000, 10_000, 100_000] as const;
+export type AlertBurstLimit = (typeof ALERT_BURST_LIMITS)[number];
 
 // 서버 쪽 설정(~/.mongolive/settings.json). 모든 브라우저에 똑같이 적용된다
 export interface ServerSettings {
@@ -28,9 +33,21 @@ export interface ServerSettings {
   monitorHistory: MonitorHistory;
   // 빈 구간 자동 불러오기 한도(설정 › Monitor)
   backfillAuto: BackfillAutoLimit;
+  // 알림(설정 › Monitor › Alerts) — 대량 삭제 한도, 쓰기 폭주 한도, 컬렉션·DB 삭제와 이름 바꾸기
+  alertDeletes: AlertDeleteLimit;
+  alertBurst: AlertBurstLimit;
+  alertDrops: boolean;
 }
 
-export const DEFAULT_SERVER_SETTINGS: ServerSettings = { readOnly: false, protected: [], monitorHistory: '90d', backfillAuto: 10_000 };
+export const DEFAULT_SERVER_SETTINGS: ServerSettings = {
+  readOnly: false,
+  protected: [],
+  monitorHistory: '90d',
+  backfillAuto: 10_000,
+  alertDeletes: 1_000,
+  alertBurst: 1_000,
+  alertDrops: true,
+};
 
 // 이 쓰기가 건드리는 곳. null = MongoDB를 건드리지 않는 연산(메타데이터)
 export const mutationTarget = (op: MutationRequest): { database: string; collections: string[] } | null => {
@@ -93,5 +110,8 @@ export const normalizeServerSettings = (raw: unknown): ServerSettings => {
   const monitorHistory: MonitorHistory = history === 'off' || history === '30d' || history === '90d' || history === '1y' ? history : DEFAULT_SERVER_SETTINGS.monitorHistory;
   const auto = BACKFILL_AUTO_LIMITS.find((n) => n === obj.backfillAuto);
   const backfillAuto: BackfillAutoLimit = auto ?? DEFAULT_SERVER_SETTINGS.backfillAuto;
-  return { readOnly: obj.readOnly === true, protected: protectedTargets, monitorHistory, backfillAuto };
+  const alertDeletes = ALERT_DELETE_LIMITS.find((n) => n === obj.alertDeletes) ?? DEFAULT_SERVER_SETTINGS.alertDeletes;
+  const alertBurst = ALERT_BURST_LIMITS.find((n) => n === obj.alertBurst) ?? DEFAULT_SERVER_SETTINGS.alertBurst;
+  const alertDrops = typeof obj.alertDrops === 'boolean' ? obj.alertDrops : DEFAULT_SERVER_SETTINGS.alertDrops;
+  return { readOnly: obj.readOnly === true, protected: protectedTargets, monitorHistory, backfillAuto, alertDeletes, alertBurst, alertDrops };
 };

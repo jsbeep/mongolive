@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../services/api';
 import { recordQuery } from '../services/queryHistory';
 import { getPipelineStages, INPUT_STAGE_ID, stageLabel, usePipelineStages } from '../services/pipelines';
-import { useToast, type ToastMessage } from './useToast';
+import { useToast, type ToastAction, type ToastMessage } from './useToast';
 import { useUniqueOidRegistry } from './useUniqueOidRegistry';
 import { CHANGE_FLASH_MS, type ChangeTone } from '../components/common/ChangeFlash';
 import type { ConflictInfo, ExpectedValue } from '../types/explorer';
@@ -242,8 +242,8 @@ export interface UseExplorerStateResult {
   setEditingId: (id: string | null) => void;
   clearChangedPaths: () => void;
   dismissToast: () => void;
-  // 탐색 밖에서 알림을 띄울 때(파이프라인에 모으기 등) — undoable이 함수면 Undo가 그것을 부른다
-  showToast: (message: string, type: 'success' | 'error', undoable?: boolean | (() => void)) => void;
+  // 탐색 밖에서 알림을 띄울 때(파이프라인에 모으기, Monitor 알림 등) — undoable이 함수면 Undo가 그것을 부른다, action = 버튼 하나
+  showToast: (message: string, type: ToastMessage['type'], undoable?: boolean | (() => void), action?: ToastAction) => void;
   undo: () => Promise<void>;
   // quiet = 주기적 다시 받기(단독 DB) — 실패해도 토스트를 띄우지 않고, 첫 연결 전이면 하지 않는다
   refresh: (options?: { quiet?: boolean }) => Promise<void>;

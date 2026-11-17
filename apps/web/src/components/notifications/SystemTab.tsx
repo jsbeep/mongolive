@@ -1,4 +1,4 @@
-// 알림 센터의 System 탭 — 에러 토스트와 실시간 연결 끊김/복구 기록(services/systemLog). 최신이 위.
+// 알림 센터의 System 탭 — 에러 토스트, Monitor 알림(9-8a), 실시간 연결 끊김/복구 기록(services/systemLog). 최신이 위.
 import { CircleAlert, CircleCheck, Info, Trash2, TriangleAlert, type LucideIcon } from 'lucide-react';
 import type { SystemEntry, SystemLevel } from '../../services/systemLog';
 
@@ -30,7 +30,7 @@ export function SystemTab({ entries, onClear }: { entries: SystemEntry[]; onClea
   return (
     <>
       <div className={styles.toolbar}>
-        <span className={styles.hint}>Errors and connection changes in this tab — not saved</span>
+        <span className={styles.hint}>Errors, alerts and connection changes in this tab — not saved</span>
         <button type="button" className={styles.iconBtn} onClick={onClear} disabled={entries.length === 0} data-tt="Clear">
           <Trash2 size={14} />
         </button>
@@ -39,7 +39,7 @@ export function SystemTab({ entries, onClear }: { entries: SystemEntry[]; onClea
         {entries.length === 0 ? (
           <div className={styles.empty}>
             <span>Nothing here</span>
-            <span>Errors and connection drops show up here.</span>
+            <span>Errors, Monitor alerts and connection drops show up here.</span>
           </div>
         ) : (
           entries.map((e) => {

@@ -78,6 +78,16 @@ export const downloadBackup = (backup: SettingsBackup) => {
 };
 
 // 파일 내용 → 백업. 모양이 틀리면 이유를 담아 던진다. 목록에 없는 키·문자열이 아닌 값은 버린다
+// 백업 파일에 없는 키는 기본값이 아니라 지금 서버 값으로
+const LATER_SERVER_KEYS = ['monitorHistory', 'backfillAuto', 'alertDeletes', 'alertBurst', 'alertDrops'] as const;
+const withCurrentDefaults = (raw: unknown): ServerSettings => {
+  const parsed = normalizeServerSettings(raw);
+  const current = getServerSettingsSnapshot();
+  const given = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const kept = Object.fromEntries(LATER_SERVER_KEYS.filter((key) => given[key] === undefined).map((key) => [key, current[key]]));
+  return { ...parsed, ...kept };
+};
+
 export const parseBackup = (text: string): SettingsBackup => {
   let raw: unknown;
   try {
@@ -99,21 +109,8 @@ export const parseBackup = (text: string): SettingsBackup => {
     version: 1,
     exportedAt: typeof obj.exportedAt === 'string' ? obj.exportedAt : '',
     local,
-    // 9-3 전에 만든 백업엔 monitorHistory가 없다 — 그때는 지금 서버 값을 그대로 둔다(기본값으로 덮지 않게)
-    ...(obj.server !== undefined
-      ? {
-          server: {
-            ...normalizeServerSettings(obj.server),
-            monitorHistory: (obj.server as { monitorHistory?: unknown }).monitorHistory === undefined
-              ? getServerSettingsSnapshot().monitorHistory
-              : normalizeServerSettings(obj.server).monitorHistory,
-            // 9-4 전 백업엔 backfillAuto가 없다 — 마찬가지로 지금 값을 둔다
-            backfillAuto: (obj.server as { backfillAuto?: unknown }).backfillAuto === undefined
-              ? getServerSettingsSnapshot().backfillAuto
-              : normalizeServerSettings(obj.server).backfillAuto,
-          },
-        }
-      : {}),
+    // 나중에 생긴 서버 설정(9-3 monitorHistory, 9-4 backfillAuto, 9-8a 알림)이 없는 옛 백업 — 그 값은 지금 서버 값을 그대로 둔다(기본값으로 덮지 않게)
+    ...(obj.server !== undefined ? { server: withCurrentDefaults(obj.server) } : {}),
     ...(meta && Object.keys(meta).length > 0 ? { meta } : {}),
   };
 };

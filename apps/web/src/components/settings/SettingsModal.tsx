@@ -10,8 +10,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom';
 import { AnimatePresence, m } from 'framer-motion';
 import { Activity, CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import type { BackfillAutoLimit, CollectionSummary, DatabaseSummary, Diagnostics, HistoryInfo, MonitorHistory, MutationRequest, ServerSettings } from '../../types/explorer';
-import { BACKFILL_AUTO_LIMITS } from '../../types/explorer';
+import type { AlertBurstLimit, AlertDeleteLimit, BackfillAutoLimit, CollectionSummary, DatabaseSummary, Diagnostics, HistoryInfo, MonitorHistory, MutationRequest, ServerSettings } from '../../types/explorer';
+import { ALERT_BURST_LIMITS, ALERT_DELETE_LIMITS, BACKFILL_AUTO_LIMITS } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
 import { useActiveConnection } from '../../services/activeConnection';
 import { sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type Theme, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type StandaloneRefresh, type UndoDepth } from '../../services/preferences';
@@ -539,6 +539,35 @@ function MonitorSection() {
             : settings.backfillAuto === 0
               ? 'Off: every gap with writes waits for you to load it.'
               : 'Big gaps take a while and read the oplog — load them when the server is quiet.'}
+        </p>
+      </div>
+
+      <div className={styles.group}>
+        <p className={styles.groupTitle}>Alerts</p>
+        <p className={styles.groupHint}>
+          mongolive watches the writes it already receives — nothing extra is asked of MongoDB — and shows a toast in any tab using the connection,
+          plus a list in Monitor › Collections. Counts are per collection within one minute. Saved on the server, for every browser.
+        </p>
+        <p className="mb-1 mt-2 text-[11px] font-medium text-slate-600">Mass delete — deletes in a minute</p>
+        <Segment<string>
+          value={String(settings.alertDeletes)}
+          onChange={(v) => void save({ alertDeletes: Number(v) as AlertDeleteLimit })}
+          options={ALERT_DELETE_LIMITS.map((n) => ({ value: String(n), label: n === 0 ? 'Off' : n >= 1000 ? `${n / 1000}K` : String(n) }))}
+        />
+        <p className="mb-1 mt-3 text-[11px] font-medium text-slate-600">Write burst — writes in a minute, and 10× the usual</p>
+        <Segment<string>
+          value={String(settings.alertBurst)}
+          onChange={(v) => void save({ alertBurst: Number(v) as AlertBurstLimit })}
+          options={ALERT_BURST_LIMITS.map((n) => ({ value: String(n), label: n === 0 ? 'Off' : `${n / 1000}K` }))}
+        />
+        <div className="mt-3 flex items-center justify-between gap-4">
+          <span className="text-[11px] font-medium text-slate-600">Dropped or renamed — collections and databases</span>
+          <Switch label="Dropped or renamed collections and databases" checked={settings.alertDrops} onChange={(v) => void save({ alertDrops: v })} />
+        </div>
+        <p className="mt-2 text-[11px] text-slate-500">
+          {settings.monitorHistory === 'off'
+            ? 'History is off — alerts are kept for the last hour only.'
+            : 'The usual rate is the average of the last hour this connection was watched (at least 5 minutes). TTL indexes that delete in bulk show up as mass deletes too.'}
         </p>
       </div>
 

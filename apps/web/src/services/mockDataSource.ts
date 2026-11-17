@@ -123,6 +123,8 @@ export const createMockDataSource = (): DataSource => {
     getReplica: async () => null,
     getOplog: async () => null,
     getStartupWarnings: async () => null,
+    getAlerts: async () => null,
+    onAlert: () => () => undefined,
     getDiagnostics: async () => null,
 
     getServerSettings: async () => settings,

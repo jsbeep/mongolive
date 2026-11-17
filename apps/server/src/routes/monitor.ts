@@ -17,9 +17,10 @@
 //   GET /api/monitor/replica?range=5m|1h → ReplicaReport (레플리카 셋 멤버·lag·상태 변화, 9-7a — 메모리 1시간)
 //   GET /api/monitor/oplog → OplogReport (연결한 멤버의 oplog 창·크기, 9-7b — 그때그때)
 //   GET /api/monitor/startup-warnings → StartupWarningsReport (getLog 'startupWarnings', 9-7b — 그때그때)
+//   GET /api/monitor/alerts?range=&database=&collection= → AlertsReport (대량 삭제·폭주·삭제 알림, 9-8a — DB에 묻지 않는다)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
-import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type OplogReport, type ReplicaReport, type SlowThreshold, type TopReport } from '@mongolive/shared';
+import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type AlertsReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type OplogReport, type ReplicaReport, type SlowThreshold, type TopReport } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
@@ -30,7 +31,7 @@ import { readStartupWarnings } from '../monitor/startupWarnings';
 import { connectionUri } from '../connections';
 import { clientFor, connectionIdOf } from '../db';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
-import { activityOf, backfillOf, recorderOf, replicaOf, sizesOf, slowOf, topOf } from '../realtime';
+import { activityOf, alertsOf, backfillOf, recorderOf, replicaOf, sizesOf, slowOf, topOf } from '../realtime';
 import { getServerSettings } from '../settings';
 
 export const monitorRouter = Router();
@@ -247,6 +248,24 @@ monitorRouter.get('/monitor/oplog', async (_req, res) => {
 monitorRouter.get('/monitor/startup-warnings', async (_req, res) => {
   const id = connectionIdOf(res);
   res.json(await readStartupWarnings(() => clientFor(id)));
+});
+
+// 알림 — 피드가 받은 이벤트로 찾은 것(기록 파일 + 아직 이어지는 건). 피드가 없으면 closed
+monitorRouter.get('/monitor/alerts', async (req, res) => {
+  const range = String(req.query.range ?? '1h') as MonitorRange;
+  if (!RANGES.includes(range)) throw new HttpError(400, `range must be one of ${RANGES.join(', ')}`);
+  const scope = scopeOf(req.query);
+  const alerts = alertsOf(connectionIdOf(res));
+  if (!alerts) {
+    const settings = getServerSettings();
+    const closed: AlertsReport = {
+      status: 'closed', at: Date.now(), stored: settings.monitorHistory !== 'off', since: null,
+      rules: { deletes: settings.alertDeletes, burst: settings.alertBurst, drops: settings.alertDrops }, alerts: [], more: 0,
+    };
+    res.json(closed);
+    return;
+  }
+  res.json(await alerts.report({ range, scope }));
 });
 
 monitorRouter.post('/monitor/sizes/measure', (_req, res) => {

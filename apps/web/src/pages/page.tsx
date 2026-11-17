@@ -41,6 +41,8 @@ import { useConnect } from '../components/connections/useConnect';
 import type { MonitorScope } from '../components/monitor/ScopeBar';
 import type { MonitorTab } from '../components/monitor/MonitorView';
 import { useLastWrites } from '../hooks/useActivity';
+import { alertFocus, alertMessage } from '../components/monitor/alerts';
+import { pushSystemEvent } from '../services/systemLog';
 import { connectionLabel, type MonitorRange } from '../types/explorer';
 
 // Monitor 화면(9단계) — 처음 열 때만 불러온다(Explorer만 쓰면 받지 않는다)
@@ -228,6 +230,25 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
     setView('explorer');
     void openLocation({ database, collection, documentId });
   };
+  // 알림(9-8a) — 이 연결의 새 실시간 알림을 어느 화면에서든 토스트로, System 탭에도 남긴다.
+  // 'Show' = Monitor › Collections에서 그 컬렉션(지워졌으면 DB)
+  useEffect(() => {
+    if (!api.supportsMonitor) return;
+    return api.onAlert((alert) => {
+      const message = alertMessage(alert);
+      pushSystemEvent('warning', message);
+      showToast(message, 'warning', false, {
+        label: 'Show',
+        run: () => {
+          setSidebarPanel(null);
+          setMonitorScope(alertFocus(alert));
+          setMonitorTab('collections');
+          setView('monitor');
+        },
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 패널 닫기·토스트는 바뀌지 않는 함수
+  }, []);
   const connectionName = (() => {
     const current = connections.connections.find((c) => c.id === connectionId);
     return current ? connectionLabel(current) : 'Server';
