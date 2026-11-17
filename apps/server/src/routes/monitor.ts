@@ -15,14 +15,18 @@
 //   GET /api/monitor/indexes?database=&collection= → IndexesReport (인덱스 정의·쓰인 횟수·크기, 9-6b — 기록 없음)
 //   GET /api/monitor/top?range=5m|1h&database=&collection= → TopReport (컬렉션별 서버 시간, 9-6c — 메모리 1시간)
 //   GET /api/monitor/replica?range=5m|1h → ReplicaReport (레플리카 셋 멤버·lag·상태 변화, 9-7a — 메모리 1시간)
+//   GET /api/monitor/oplog → OplogReport (연결한 멤버의 oplog 창·크기, 9-7b — 그때그때)
+//   GET /api/monitor/startup-warnings → StartupWarningsReport (getLog 'startupWarnings', 9-7b — 그때그때)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
-import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type ReplicaReport, type SlowThreshold, type TopReport } from '@mongolive/shared';
+import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type OplogReport, type ReplicaReport, type SlowThreshold, type TopReport } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
 import { listIndexUsage } from '../monitor/indexes';
 import { killOperation, listOperations } from '../monitor/operations';
+import { readOplog } from '../monitor/oplog';
+import { readStartupWarnings } from '../monitor/startupWarnings';
 import { connectionUri } from '../connections';
 import { clientFor, connectionIdOf } from '../db';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
@@ -226,6 +230,23 @@ monitorRouter.get('/monitor/replica', (req, res) => {
     configDenied: false, since: null, lag: { times: [], series: [] }, changes: [],
   };
   res.json(replica ? replica.report({ range }) : closed);
+});
+
+monitorRouter.get('/monitor/oplog', async (_req, res) => {
+  const id = connectionIdOf(res);
+  // standalone·mongos는 replSetGetStatus로 이미 안다 — local.oplog.rs를 묻지 않는다
+  const kind = replicaOf(id)?.status();
+  if (kind === 'standalone' || kind === 'unsupported') {
+    const none: OplogReport = { status: 'none', error: null, at: Date.now(), first: null, last: null, usedBytes: null, maxBytes: null, full: null, fillsInMs: null };
+    res.json(none);
+    return;
+  }
+  res.json(await readOplog(() => clientFor(id)));
+});
+
+monitorRouter.get('/monitor/startup-warnings', async (_req, res) => {
+  const id = connectionIdOf(res);
+  res.json(await readStartupWarnings(() => clientFor(id)));
 });
 
 monitorRouter.post('/monitor/sizes/measure', (_req, res) => {

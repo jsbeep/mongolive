@@ -33,7 +33,9 @@ import type {
   SizesReport,
   SlowQueriesReport,
   TopReport,
+  OplogReport,
   ReplicaReport,
+  StartupWarningsReport,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -457,6 +459,12 @@ export const createRemoteDataSource = (): DataSource => {
     },
     getReplica(range) {
       return request<ReplicaReport>(`/monitor/replica?${new URLSearchParams({ range })}`);
+    },
+    getOplog() {
+      return request<OplogReport>('/monitor/oplog');
+    },
+    getStartupWarnings() {
+      return request<StartupWarningsReport>('/monitor/startup-warnings');
     },
     onBackfill(listener) {
       const s = ensureSocket();

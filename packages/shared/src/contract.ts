@@ -726,6 +726,43 @@ export interface ReplicaReport {
   changes: ReplicaChange[];
 }
 
+// ── Monitor › Server의 Oplog·Startup warnings (9-7b) ─────────────────────────
+// 연결한 멤버의 oplog(local.oplog.rs) — 화면이 열 때·60초마다 묻는다(기록하지 않는다)
+export interface OplogReport {
+  // none = oplog가 없음(standalone·mongos), denied = local DB를 읽을 권한이 없음
+  status: 'ok' | 'none' | 'denied' | 'error';
+  error: string | null;
+  at: number;
+  // 가장 오래된·최근 항목의 시각 — 둘의 차이가 oplog 창(이만큼 뒤까지 이어 받을 수 있다)
+  first: number | null;
+  last: number | null;
+  // 쓰는 크기(압축 전) / 최대 크기
+  usedBytes: number | null;
+  maxBytes: number | null;
+  // 최대 크기에 거의 닿아(90%) 가장 오래된 항목부터 지워지는 중
+  full: boolean | null;
+  // 아직 안 찼으면: 지금까지의 평균 속도로 찰 때까지 남은 시간. 찼거나 모르면 null
+  fillsInMs: number | null;
+}
+// getLog 'startupWarnings'의 한 줄 — 4.4+는 JSON(구조화 로그), 그 전엔 글자 그대로(message만)
+export interface StartupWarning {
+  at: number | null;
+  // F·E·W·I·D1~5
+  severity: string | null;
+  component: string | null;
+  id: number | null;
+  message: string;
+  // 덧붙은 값(현재 값·권장 값 등) — 객체는 JSON 글자로
+  attr: Record<string, string>;
+}
+export interface StartupWarningsReport {
+  // unsupported = getLog가 막힘(일부 Atlas 등급)
+  status: 'ok' | 'denied' | 'unsupported' | 'error';
+  error: string | null;
+  at: number;
+  warnings: StartupWarning[];
+}
+
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 

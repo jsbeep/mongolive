@@ -42,7 +42,7 @@ const TABS: { id: MonitorTab; label: string; tip: string }[] = [
   { id: 'overview', label: 'Overview', tip: 'Throughput, latency, connections and errors — whole server' },
   { id: 'collections', label: 'Collections', tip: 'Writes per collection, field and document — from the change stream' },
   { id: 'operations', label: 'Operations', tip: 'What MongoDB is running right now, and the slow queries it logged' },
-  { id: 'server', label: 'Server', tip: 'Replica set members and replication lag — whole server' },
+  { id: 'server', label: 'Server', tip: 'Replica set members and lag, plus the connected node’s oplog and startup warnings' },
 ];
 
 const styles = {

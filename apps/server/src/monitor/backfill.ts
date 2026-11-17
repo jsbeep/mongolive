@@ -16,6 +16,7 @@
 import { Timestamp, type ChangeStream, type ChangeStreamDocument, type Document as BsonDocument, type MongoClient } from 'mongodb';
 import type { ActivityOps, BackfillEstimate, BackfillReport, HistoryFill, LiveChange, LiveOperation } from '@mongolive/shared';
 import { gapBetween, type Recorder, type ResumePoint, type StoredGap } from './history';
+import { isFull, oplogEdge, oplogStorage } from './oplog';
 import { withTimeout } from './sampler';
 
 type Ts = { t: number; i: number };
@@ -78,28 +79,20 @@ interface OplogInfo {
   full: boolean | null;
 }
 
-// oplog의 가장 오래된 항목과 평균 크기 — local 읽기 권한이 없으면 null
+// oplog의 가장 오래된 항목과 평균 크기 — local 읽기 권한이 없으면 null (읽는 법은 monitor/oplog와 같다)
 const oplogInfo = async (client: MongoClient): Promise<OplogInfo> => {
-  const oplog = client.db('local').collection('oplog.rs');
   let oldest: Ts | null = null;
   let avgBytes: number | null = null;
   let full: boolean | null = null;
   try {
-    const [first] = await withTimeout(oplog.find({}, { projection: { _id: 0, ts: 1 }, sort: { $natural: 1 }, limit: 1, maxTimeMS: 5000 }).toArray());
-    oldest = tsOf(first?.ts);
+    oldest = tsOf((await oplogEdge(client, 1))?.ts);
   } catch {
     // 권한 없음 등
   }
   try {
-    const [stats] = await withTimeout(oplog.aggregate([{ $collStats: { storageStats: {} } }], { maxTimeMS: 5000 }).toArray());
-    const storage = (stats as { storageStats?: { avgObjSize?: unknown; size?: unknown; maxSize?: unknown } } | undefined)?.storageStats;
-    const avg = storage?.avgObjSize;
-    avgBytes = typeof avg === 'number' && avg > 0 ? avg : null;
-    // 큰 값은 Long으로 올 수 있다
-    const num = (v: unknown): number | null => (typeof v === 'number' ? v : v && typeof v === 'object' && 'toNumber' in v ? (v as { toNumber: () => number }).toNumber() : null);
-    const size = num(storage?.size);
-    const maxSize = num(storage?.maxSize);
-    if (size !== null && maxSize !== null && maxSize > 0) full = size >= maxSize * 0.9;
+    const storage = await oplogStorage(client);
+    avgBytes = storage.avgBytes;
+    full = isFull(storage);
   } catch {
     // 권한 없음 등
   }

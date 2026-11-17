@@ -121,6 +121,8 @@ export interface Replica {
   // 주소가 바뀜(다른 서버일 수 있다) — 지난 값을 버리고 처음부터
   reset: () => void;
   report: (query: { range: ActivityRange }) => ReplicaReport;
+  // 레플리카 셋인지 — Oplog 카드가 standalone·mongos면 묻지 않으려고
+  status: () => ReplicaReport['status'];
 }
 
 interface LagPoint {
@@ -227,6 +229,7 @@ export const createReplica = (hooks: ReplicaHooks): Replica => {
       configDenied = false;
       configRetryAt = 0;
     },
+    status: () => status,
     report({ range }) {
       const from = clock() - (RANGE_MS[range] ?? KEEP_MS);
       const kept = points.filter((p) => p.at >= from);
