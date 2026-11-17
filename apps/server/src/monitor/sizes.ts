@@ -39,8 +39,8 @@ const addInto = (into: SizeStats, t: SizeTuple) => {
   into.index += t[3];
 };
 
-const dbOf = (key: string) => key.slice(0, key.indexOf('.'));
-const inScope = (key: string, scope: OperationsScope) =>
+export const dbOf = (key: string) => key.slice(0, key.indexOf('.'));
+export const inScope = (key: string, scope: OperationsScope) =>
   scope.database === null || (scope.collection === null ? dbOf(key) === scope.database : key === `${scope.database}.${scope.collection}`);
 
 // 컬렉션 하나 — 샤드 클러스터면 샤드마다 한 문서가 와서 더한다. WiredTiger 세부(수십 KB)는 서버에서 잘라 보낸다

@@ -32,6 +32,7 @@ import type {
   IndexesReport,
   SizesReport,
   SlowQueriesReport,
+  TopReport,
   Diagnostics,
   ServerSettings,
   AggregateResult,
@@ -446,6 +447,12 @@ export const createRemoteDataSource = (): DataSource => {
     },
     getIndexes(database, collection) {
       return request<IndexesReport>(`/monitor/indexes?${new URLSearchParams({ database, collection })}`);
+    },
+    getTop({ database, collection, range }) {
+      const params = new URLSearchParams({ range });
+      if (database) params.set('database', database);
+      if (collection) params.set('collection', collection);
+      return request<TopReport>(`/monitor/top?${params}`);
     },
     onBackfill(listener) {
       const s = ensureSocket();

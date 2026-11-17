@@ -3,6 +3,7 @@
 //   범위 = 컬렉션:        쓰기 차트 + 자주 바뀐 필드 · 자주 바뀐 문서(누르면 Explorer에서 연다 — 최근 1시간만 있다)
 //   크기(9-6a): 표의 Docs·Size·Index·Growth 칸 + 맨 아래 Storage 카드·크기 추이(StorageCard). 서버가 1시간마다 잰다
 //   인덱스(9-6b): 컬렉션 범위면 Storage 위에 Indexes 카드(IndexesCard) — 쓰인 횟수·크기·Unused. 열 때만 묻는다
+//   서버 시간(9-6c): Time spent 카드(TopCard) — top으로 본 컬렉션별 읽기·쓰기 시간(5m·1h, 서버 메모리)
 // 기간(범위 바): 5m·1h = 서버 메모리(10초마다), 24h~All = 기록 파일(1분마다). 기록은 탭이 연결을 쓰는 동안만 쌓인다.
 // 맨 위 배너(9-4): 탭이 없던 동안의 쓰기를 changeStream으로 다시 불러온다. 차트의 빈 구간 띠는 불러왔는지 툴팁에 적는다.
 import { useEffect, useMemo, useState } from 'react';
@@ -17,6 +18,7 @@ import { TimeChart, Sparkline, type ChartSeries } from './charts';
 import { chartWindow, fmtAgo, fmtBytes, fmtBytesDelta, fmtClock, fmtDateTime, fmtNumber, fmtSpan, RANGE_LABEL } from './format';
 import { StorageCard, useSizes } from './StorageCard';
 import { IndexesCard } from './IndexesCard';
+import { TopCard } from './TopCard';
 import type { MonitorScope } from './ScopeBar';
 import { BackfillBanner } from './BackfillBanner';
 import { gapBand } from './backfill';
@@ -442,6 +444,7 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
         </>
       )}
 
+      <TopCard scope={scope} range={range} onScopeChange={onScopeChange} />
       {scope.database !== null && scope.collection !== null && <IndexesCard database={scope.database} collection={scope.collection} />}
       <StorageCard sizes={sizes} range={range} scopeName={scopeName} />
     </div>

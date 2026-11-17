@@ -629,6 +629,38 @@ export interface IndexesReport {
   rows: IndexUsageRow[];
 }
 
+// 컬렉션별 서버 시간 (9-6c) — admin `top`의 누적값을 10초마다 읽어 차이를 1시간 메모리에 둔다(파일 없음)
+// queries = find, getmore, insert·update·remove, commands = aggregate·count·distinct·findAndModify·인덱스 만들기 …
+export const TOP_OPS = ['queries', 'getmore', 'insert', 'update', 'remove', 'commands'] as const;
+export type TopOp = (typeof TOP_OPS)[number];
+// time = 서버가 쓴 시간(µs), count = 작업 수(명령 하나 = 1, 문서가 몇 개든)
+export interface TopUsage {
+  time: number;
+  count: number;
+}
+export interface CollectionTopRow {
+  database: string;
+  collection: string;
+  total: TopUsage;
+  // readLock(find·getMore·aggregate·count …) / writeLock(insert·update·delete·findAndModify …) — 둘을 더하면 total
+  read: TopUsage;
+  write: TopUsage;
+  ops: Record<TopOp, TopUsage>;
+}
+export interface TopReport {
+  // closed = 피드 없음, unsupported = top이 없음(mongos·일부 Atlas 등급), denied = top 권한 없음(clusterMonitor) — 둘 다 카드를 숨긴다
+  status: 'ok' | 'closed' | 'unsupported' | 'denied' | 'error';
+  error: string | null;
+  // 숫자가 덮는 구간의 시작(첫 읽기 또는 기간 시작 중 늦은 쪽). null = 아직 한 번도 못 읽음
+  since: number | null;
+  // 마지막으로 읽은 때
+  at: number | null;
+  // 시간이 많은 순(최대 100개)
+  rows: CollectionTopRow[];
+  // 100개 밖이라 뺀 컬렉션 수
+  more: number;
+}
+
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 

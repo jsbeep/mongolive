@@ -13,9 +13,10 @@
 //   GET /api/monitor/sizes?range=&database=&collection= → SizesReport (컬렉션 크기, 9-6a)
 //   POST /api/monitor/sizes/measure → { started } (false = 이미 재는 중이거나 30초 안에 잼)
 //   GET /api/monitor/indexes?database=&collection= → IndexesReport (인덱스 정의·쓰인 횟수·크기, 9-6b — 기록 없음)
+//   GET /api/monitor/top?range=5m|1h&database=&collection= → TopReport (컬렉션별 서버 시간, 9-6c — 메모리 1시간)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
-import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type SlowThreshold } from '@mongolive/shared';
+import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type SlowThreshold, type TopReport } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
@@ -24,7 +25,7 @@ import { killOperation, listOperations } from '../monitor/operations';
 import { connectionUri } from '../connections';
 import { clientFor, connectionIdOf } from '../db';
 import { checkCollectionName, checkDatabaseName, HttpError } from '../names';
-import { activityOf, backfillOf, recorderOf, sizesOf, slowOf } from '../realtime';
+import { activityOf, backfillOf, recorderOf, sizesOf, slowOf, topOf } from '../realtime';
 import { getServerSettings } from '../settings';
 
 export const monitorRouter = Router();
@@ -203,6 +204,15 @@ monitorRouter.get('/monitor/indexes', async (req, res) => {
   if (!database || !collection) throw new HttpError(400, 'database and collection are required');
   const id = connectionIdOf(res);
   res.json(await listIndexUsage(() => clientFor(id), database, collection));
+});
+
+// 컬렉션별 서버 시간 — 피드가 열려 있는 동안 10초마다 읽은 top의 차이(최근 1시간만 메모리에)
+monitorRouter.get('/monitor/top', (req, res) => {
+  const range = req.query.range === '5m' ? '5m' : req.query.range === '1h' || req.query.range === undefined ? '1h' : null;
+  if (!range) throw new HttpError(400, 'range must be 5m or 1h — time spent is kept in memory for the last hour only');
+  const top = topOf(connectionIdOf(res));
+  const closed: TopReport = { status: 'closed', error: null, since: null, at: null, rows: [], more: 0 };
+  res.json(top ? top.report({ range, scope: scopeOf(req.query) }) : closed);
 });
 
 monitorRouter.post('/monitor/sizes/measure', (_req, res) => {
