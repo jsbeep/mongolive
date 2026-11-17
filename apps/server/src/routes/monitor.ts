@@ -12,12 +12,14 @@
 //   GET /api/monitor/slow?range=&database=&collection=&min=100|500|1000|5000 → SlowQueriesReport (서버 로그의 느린 쿼리, 9-5b)
 //   GET /api/monitor/sizes?range=&database=&collection= → SizesReport (컬렉션 크기, 9-6a)
 //   POST /api/monitor/sizes/measure → { started } (false = 이미 재는 중이거나 30초 안에 잼)
+//   GET /api/monitor/indexes?database=&collection= → IndexesReport (인덱스 정의·쓰인 횟수·크기, 9-6b — 기록 없음)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
 import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type SlowThreshold } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
+import { listIndexUsage } from '../monitor/indexes';
 import { killOperation, listOperations } from '../monitor/operations';
 import { connectionUri } from '../connections';
 import { clientFor, connectionIdOf } from '../db';
@@ -193,6 +195,14 @@ monitorRouter.get('/monitor/sizes', async (req, res) => {
   if (!RANGES.includes(range)) throw new HttpError(400, `range must be one of ${RANGES.join(', ')}`);
   const sizes = sizesOf(connectionIdOf(res));
   res.json(sizes ? await sizes.report({ range, scope: scopeOf(req.query) }) : closedSizes());
+});
+
+// 인덱스 사용량 — 피드와 상관없이 그때그때 묻는다(컬렉션 범위의 Indexes 카드가 열 때·새로고침 때)
+monitorRouter.get('/monitor/indexes', async (req, res) => {
+  const { database, collection } = scopeOf(req.query);
+  if (!database || !collection) throw new HttpError(400, 'database and collection are required');
+  const id = connectionIdOf(res);
+  res.json(await listIndexUsage(() => clientFor(id), database, collection));
 });
 
 monitorRouter.post('/monitor/sizes/measure', (_req, res) => {

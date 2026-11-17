@@ -29,6 +29,7 @@ import type {
   HistoryReport,
   BackfillReport,
   OperationsReport,
+  IndexesReport,
   SizesReport,
   SlowQueriesReport,
   Diagnostics,
@@ -442,6 +443,9 @@ export const createRemoteDataSource = (): DataSource => {
     },
     async measureSizes() {
       return (await request<{ started: boolean }>('/monitor/sizes/measure', { method: 'POST' })).started;
+    },
+    getIndexes(database, collection) {
+      return request<IndexesReport>(`/monitor/indexes?${new URLSearchParams({ database, collection })}`);
     },
     onBackfill(listener) {
       const s = ensureSocket();

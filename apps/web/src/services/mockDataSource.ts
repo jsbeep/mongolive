@@ -118,6 +118,7 @@ export const createMockDataSource = (): DataSource => {
     getSlowQueries: async () => null,
     getSizes: async () => null,
     measureSizes: async () => false,
+    getIndexes: async () => null,
     getDiagnostics: async () => null,
 
     getServerSettings: async () => settings,

@@ -598,6 +598,37 @@ export interface SizesReport {
   trend: ({ t: number } & SizeStats)[];
 }
 
+// ── Monitor › Collections › Indexes (GET /api/monitor/indexes, 9-6b) ─────────
+// 컬렉션 하나의 인덱스 — 정의(listIndexes) + 쓰인 횟수($indexStats) + 디스크 크기($collStats indexSizes).
+// 화면이 열 때·새로고침 때만 묻는다(기록하지 않는다)
+export interface IndexUsageRow {
+  name: string;
+  // 키 패턴 { a: 1, b: -1 } · { loc: '2dsphere' } · 텍스트 인덱스는 { title: 'text' }
+  key: Record<string, number | string>;
+  // since부터 쓰인 횟수(이 멤버에서만, 재시작하면 0부터). 권한이 없으면 null
+  ops: number | null;
+  since: number | null;
+  size: number | null;
+  unique: boolean;
+  sparse: boolean;
+  // 부분 인덱스의 조건(보여 주기용 한 줄). 아니면 null
+  partial: string | null;
+  hidden: boolean;
+  // TTL 초. 아니면 null
+  ttl: number | null;
+  // 아직 만드는 중
+  building: boolean;
+}
+
+export interface IndexesReport {
+  at: number;
+  // 목록 자체를 못 읽음(컬렉션 없음·뷰·권한)
+  error: string | null;
+  // 쓰인 횟수만 못 읽음(indexStats 권한 등) — rows는 있고 ops·since가 null
+  usageError: string | null;
+  rows: IndexUsageRow[];
+}
+
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 

@@ -31,6 +31,7 @@ import type {
   MonitorRange,
   BackfillReport,
   OperationsReport,
+  IndexesReport,
   SizesReport,
   SlowQueriesReport,
   SlowThreshold,
@@ -137,6 +138,8 @@ export interface DataSource {
   // Monitor › Collections의 크기(9-6a) — 서버가 1시간마다 잰 것 / 지금 재기(true = 시작함). Mock은 null / false
   getSizes(query: { database: string | null; collection: string | null; range: MonitorRange }): Promise<SizesReport | null>;
   measureSizes(): Promise<boolean>;
+  // 컬렉션 범위의 Indexes 카드(9-6b) — 인덱스 정의·쓰인 횟수·크기를 그때그때. Mock은 null
+  getIndexes(database: string, collection: string): Promise<IndexesReport | null>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 
