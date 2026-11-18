@@ -69,6 +69,9 @@ export const createMockDataSource = (): DataSource => {
     getFullDocumentById: mock.getFullDocumentById,
     getFullDocumentByIdInCollection: mock.getFullDocumentByIdInCollection,
     // aggregation — mingo로 흉내 낸다(services/mockMongo)
+    explainQuery: async () => {
+      throw new Error('Explain needs a real MongoDB connection');
+    },
     aggregate: mock.aggregateData,
     aggregateCounts: mock.aggregateCountsData,
     exportCollection: mock.exportCollection,

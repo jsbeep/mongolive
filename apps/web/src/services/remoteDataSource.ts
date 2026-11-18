@@ -4,6 +4,7 @@ import { projectDocument, summarizeDocument } from '@mongolive/shared';
 import { io, type Socket } from 'socket.io-client';
 import type {
   CollectionExport,
+  ExplainSummary,
   CollectionSummary,
   ConnectionConfig,
   ConnectionResult,
@@ -317,6 +318,9 @@ export const createRemoteDataSource = (): DataSource => {
     async getFullDocumentById(oid) {
       return (await requireOid(oid)).document;
     },
+    // 쿼리 바의 Explain(9-9) — 쿼리는 Run처럼 POST 본문으로
+    explainQuery: (database, collection, mongoFilter) =>
+      request<ExplainSummary>(`${collectionPath(database, collection)}/explain`, { method: 'POST', body: JSON.stringify({ mongoFilter }) }),
     aggregate: (database, collection, pipeline) =>
       request<AggregateResult>(`${collectionPath(database, collection)}/aggregate`, { method: 'POST', body: JSON.stringify({ pipeline }) }),
     aggregateCounts: (database, collection, pipeline, signal) =>

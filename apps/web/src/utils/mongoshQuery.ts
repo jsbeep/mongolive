@@ -7,6 +7,10 @@ import { formatPipelineText, formatQueryText, type JsonObject } from '../types/e
 export const mongoshFindCommand = (database: string, collection: string, filter: JsonObject): string =>
   `db.getSiblingDB(${JSON.stringify(database)}).getCollection(${JSON.stringify(collection)}).find(${formatQueryText(filter)})`;
 
+// 쿼리 바의 Explain 칸(9-9) — 앱이 돌린 것과 같은 explain
+export const mongoshExplainCommand = (database: string, collection: string, filter: JsonObject): string =>
+  `${mongoshFindCommand(database, collection, filter)}.explain("executionStats")`;
+
 // Pipeline 컬럼 ⋯ 메뉴 — 지금 돌리는 파이프라인(켜진·붙인 스테이지)을 mongosh aggregate 한 덩어리로
 export const mongoshAggregateCommand = (database: string, collection: string, pipeline: JsonObject[]): string =>
   `db.getSiblingDB(${JSON.stringify(database)}).getCollection(${JSON.stringify(collection)}).aggregate(${formatPipelineText(pipeline)})`;

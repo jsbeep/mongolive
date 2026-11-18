@@ -4,6 +4,7 @@
 //   GET /api/databases/:db/collections/:col/documents
 //   POST /api/databases/:db/collections/:col/documents   (본문 = DocumentQuery + mongoFilter, 사용자 쿼리)
 //   GET /api/databases/:db/collections/:col/documents/:id
+//   POST /api/databases/:db/collections/:col/explain     (본문 = { mongoFilter }, 쿼리 바의 Explain — 9-9)
 import { Router } from 'express';
 import {
   idLookupCandidates,
@@ -25,6 +26,7 @@ import { emptyDatabasesOf } from '../emptyDatabases';
 import { getCollectionMeta } from '../meta';
 import { toQueryHttpError, toValueHttpError } from '../queryErrors';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES, HttpError, isHiddenCollection } from '../names';
+import { summarizeExplain } from '../explain';
 import { fromWire, READ_OPTIONS, toWire } from '../wire';
 
 // FK 후보 목록(find-by-field, field-values) 상한 — 실수로 거대한 컬렉션을 대상으로 잡아도 버티게
@@ -145,22 +147,40 @@ readRouter.get('/databases/:db/collections/:col/documents', async (req, res) => 
   res.json(await listDocuments(await connOf(res), req.params.db, req.params.col, parseDocumentQuery(req.query as Record<string, unknown>)));
 });
 
-// 사용자 쿼리 — 쿼리가 길 수 있고(주소 길이 제한) 값이 접속 기록에 남지 않게 POST 본문으로 받는다
-readRouter.post('/databases/:db/collections/:col/documents', async (req, res) => {
-  const body: Record<string, unknown> = isPlainObject(req.body) ? req.body : {};
+// 본문의 사용자 쿼리(mongoFilter) — 허용 연산자 검사 → BSON 변환. 틀리면 400
+//   검사 → 변환 순서 — 검사는 Canonical EJSON 그대로 봐야 연산자와 값({ $oid })을 가린다
+const userFilterOf = (body: Record<string, unknown>): Filter<BsonDocument> => {
   const mongoFilter = body.mongoFilter ?? {};
   const invalid = validateQueryFilter(mongoFilter);
   if (invalid) throw new HttpError(400, `Invalid query: ${invalid.message}`, { path: invalid.path });
-
-  // 검사(위) → 변환 순서 — 검사는 Canonical EJSON 그대로 봐야 연산자와 값({ $oid })을 가린다
-  let filter: Filter<BsonDocument>;
   try {
-    filter = fromWire(mongoFilter as never) as Filter<BsonDocument>;
+    return fromWire(mongoFilter as never) as Filter<BsonDocument>;
   } catch (e) {
     throw toValueHttpError(e);
   }
+};
+
+// 사용자 쿼리 — 쿼리가 길 수 있고(주소 길이 제한) 값이 접속 기록에 남지 않게 POST 본문으로 받는다
+readRouter.post('/databases/:db/collections/:col/documents', async (req, res) => {
+  const body: Record<string, unknown> = isPlainObject(req.body) ? req.body : {};
+  const filter = userFilterOf(body);
   try {
     res.json(await listDocuments(await connOf(res), req.params.db, req.params.col, parseDocumentQuery(body), filter));
+  } catch (e) {
+    throw toQueryHttpError(e, QUERY_MAX_TIME_MS);
+  }
+});
+
+// 쿼리 바의 Explain(9-9) — 앱이 실제로 돌리는 find(쿼리)(정렬·limit 없음)를 executionStats로.
+// 쿼리를 한 번 돌려 보지만 문서는 돌려받지 않는다. 시간 제한은 Run과 같다
+readRouter.post('/databases/:db/collections/:col/explain', async (req, res) => {
+  const body: Record<string, unknown> = isPlainObject(req.body) ? req.body : {};
+  const filter = userFilterOf(body);
+  const { client } = await connOf(res);
+  const collection = client.db(checkDatabaseName(req.params.db)).collection(checkCollectionName(req.params.col));
+  try {
+    const explain = await collection.find(filter).explain({ verbosity: 'executionStats', maxTimeMS: QUERY_MAX_TIME_MS });
+    res.json(summarizeExplain(explain));
   } catch (e) {
     throw toQueryHttpError(e, QUERY_MAX_TIME_MS);
   }

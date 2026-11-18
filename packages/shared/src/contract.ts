@@ -860,6 +860,36 @@ export interface TransactionsReport {
   partial: boolean;
 }
 
+// ── 쿼리 바의 Explain (POST /api/databases/:db/collections/:col/explain, 9-9) ──
+// find(쿼리).explain('executionStats')를 줄인 것. 숫자는 실제로 한 번 돌려 본 값이다.
+
+// 계획의 한 단계 — inputs가 먼저 돈다(갈래가 여럿이면 OR·AND_SORTED 등)
+export interface ExplainPlanNode {
+  stage: string;
+  // IXSCAN 등 인덱스를 쓰는 단계
+  index?: string;
+  keyPattern?: Record<string, number | string>;
+  // 샤드 클러스터 — 그 샤드의 계획
+  shard?: string;
+  inputs: ExplainPlanNode[];
+}
+
+export interface ExplainSummary {
+  plan: ExplainPlanNode;
+  // 돌려준 문서 / 인덱스에서 읽은 키 / 열어 본 문서 / 걸린 시간 — 서버가 안 주면 null
+  returned: number | null;
+  keysExamined: number | null;
+  docsExamined: number | null;
+  timeMs: number | null;
+  // 견줘 보고 버린 다른 계획 수
+  rejectedPlans: number;
+  // 계획에 쓰인 인덱스 이름(중복 없이) / 어딘가에서 컬렉션 전체를 읽었다
+  indexes: string[];
+  collectionScan: boolean;
+  // 복사용 날것(Relaxed EJSON, 들여쓰기) — 너무 크면 null
+  raw: string | null;
+}
+
 // ── 설정 창의 진단 (GET /api/diagnostics) ─────────────────────────────────────
 // 실시간이 안 될 때 원인(standalone·권한)을 바로 보여 주기 위한 것. 보안 설정은 보여 주기만 한다(.env에서만 바꾼다).
 

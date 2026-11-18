@@ -11,7 +11,9 @@ import type {
   DocumentQuery,
   FieldReferenceCandidate,
   FieldValueCandidate,
+  JsonObject,
   JsonValue,
+  ExplainSummary,
   LiveChange,
   LiveLogEntry,
   LiveStatus,
@@ -90,6 +92,8 @@ export interface DataSource {
 
   // ── Aggregation(읽기만, 서버 연결에서만 — Mock은 거절) ──
   // pipeline은 Canonical EJSON. counts = 스테이지 카드의 개수(들어오는 문서 + 스테이지마다 지난 문서)
+  // 쿼리 바의 Explain(9-9) — find(쿼리).explain('executionStats') 요약. Mock은 실패(실제 연결에서만)
+  explainQuery(database: string, collection: string, mongoFilter: JsonObject): Promise<ExplainSummary>;
   aggregate(database: string, collection: string, pipeline: JsonValue[]): Promise<AggregateResult>;
   // signal — 화면의 Cancel(요청을 끊으면 서버도 다음 스테이지부터 세지 않는다)
   aggregateCounts(database: string, collection: string, pipeline: JsonValue[], signal?: AbortSignal): Promise<AggregateCounts>;
