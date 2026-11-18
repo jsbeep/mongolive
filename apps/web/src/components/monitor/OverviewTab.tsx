@@ -4,6 +4,7 @@
 //   5m · 1h  = 실시간 — 서버 샘플러가 10초마다 잰 칸(9-1). 타일은 '지금' 값
 //   24h ~ All = 기록 파일(9-3) — 칸 평균을 그리고, 타일은 기간 평균 + 가장 높았던 값. 기록하지 않던 구간은 회색 띠
 // MongoDB가 서버 전체로만 알려 주므로 범위 바의 DB·컬렉션과는 상관없다.
+import { RefreshSpinner } from '../common/Skeleton';
 import { useMemo, type ReactNode } from 'react';
 import { CircleAlert, Loader2 } from 'lucide-react';
 import type { HistoryGap, HistoryPoint, MonitorMetricKey, MonitorRange, MonitorRates, MonitorSample } from '../../types/explorer';
@@ -259,7 +260,7 @@ const gapLabel = (g: HistoryGap) => {
 };
 
 function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState; range: Exclude<MonitorRange, '5m' | '1h'>; historyOff: boolean }) {
-  const { report, loading, error } = useHistory(true, range);
+  const { report, loading, refreshing, error } = useHistory(true, range);
   const points = report?.points ?? [];
 
   const charts = useMemo((): Charts => {
@@ -302,7 +303,14 @@ function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState
   if (!report) {
     return error
       ? <p className={cn(styles.note, 'm-4')}><CircleAlert size={14} className="mt-0.5 shrink-0" /> Could not load history: {error}</p>
-      : <p className={styles.waiting}><Loader2 size={15} className="animate-spin" /> {loading ? 'Loading history…' : 'No data'}</p>;
+      : loading
+        ? (
+            // 처음 한 번 — 차트 자리를 미리 잡는다
+            <div className="grid gap-3 sm:grid-cols-2" role="status" aria-label="Loading history">
+              {[0, 1, 2, 3].map((i) => <div key={i} className="h-40 animate-pulse rounded-xl bg-slate-100" />)}
+            </div>
+          )
+        : <p className={styles.waiting}>No data</p>;
   }
 
   const bucket = fmtSpan(report.bucketMs);
@@ -367,7 +375,7 @@ function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState
         </>
       )}
 
-      <h2 className={styles.sectionTitle}>{RANGE_LABEL[range]} · whole server · per {bucket}</h2>
+      <h2 className={styles.sectionTitle}>{RANGE_LABEL[range]} · whole server · per {bucket}<RefreshSpinner show={refreshing} /></h2>
       <ChartGrid
         charts={charts}
         chartProps={{

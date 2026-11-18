@@ -2,6 +2,8 @@
 //   범위(서버·DB·컬렉션)와 기간에 든 것, 최근 것부터. 행을 누르면 그 컬렉션(지워졌으면 DB)으로 좁힌다
 //   없으면 한 줄만, 규칙이 다 꺼져 있으면 설정 안내, 피드가 없으면(closed) 숨긴다
 //   5m·1h는 10초마다, 긴 기간은 60초마다 묻는다(탭이 안 보이면 쉼). 새 알림이 오면(소켓) 바로 다시 묻는다 — 서버 메모리·기록 파일만 읽는다
+import { useCachedReport } from '../../hooks/useCachedReport';
+import { RefreshSpinner, SkeletonLine } from '../common/Skeleton';
 import { useEffect, useRef, useState } from 'react';
 import { BellRing, CircleAlert, ShieldCheck } from 'lucide-react';
 import type { AlertKind, AlertsReport, MonitorAlert, MonitorRange } from '../../types/explorer';
@@ -77,14 +79,13 @@ const timeOf = (a: MonitorAlert, withDate: boolean): string => {
 };
 
 function useAlerts(range: MonitorRange, scope: MonitorScope) {
-  const [report, setReport] = useState<AlertsReport | null>(null);
+  const key = `${range}\u0000${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
+  const { report, loaded, refreshing, setReport } = useCachedReport<AlertsReport>('alerts', key);
   const [failed, setFailed] = useState<string | null>(null);
   const query = useRef({ range, scope });
   query.current = { range, scope };
-  const key = `${range}\u0000${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
 
   useEffect(() => {
-    setReport(null);
     setFailed(null);
   }, [key]);
 
@@ -121,9 +122,9 @@ function useAlerts(range: MonitorRange, scope: MonitorScope) {
       document.removeEventListener('visibilitychange', onVisible);
       off();
     };
-  }, [key, range]);
+  }, [key, range, setReport]);
 
-  return { report, failed };
+  return { report, loaded, failed, refreshing };
 }
 
 interface AlertsCardProps {
@@ -133,7 +134,7 @@ interface AlertsCardProps {
 }
 
 export function AlertsCard({ scope, range, onScopeChange }: AlertsCardProps) {
-  const { report, failed } = useAlerts(range, scope);
+  const { report, loaded, failed, refreshing } = useAlerts(range, scope);
   const [expanded, setExpanded] = useState(false);
   useEffect(() => setExpanded(false), [range, scope.database, scope.collection]);
 
@@ -141,6 +142,15 @@ export function AlertsCard({ scope, range, onScopeChange }: AlertsCardProps) {
     return (
       <p className={styles.quiet}>
         <CircleAlert size={14} className="shrink-0 text-slate-400" /> Could not load alerts: {failed}
+      </p>
+    );
+  }
+  // 처음 한 번 — 한 줄 자리를 미리 잡아 아래가 밀리지 않게
+  if (!loaded) {
+    return (
+      <p className={styles.quiet} aria-label="Alerts">
+        <SkeletonLine className="h-3.5 w-3.5 shrink-0 rounded-full" />
+        <SkeletonLine className="w-2/3" />
       </p>
     );
   }
@@ -161,6 +171,7 @@ export function AlertsCard({ scope, range, onScopeChange }: AlertsCardProps) {
               No alerts in {inRange}
               <span className={styles.muted}> · watching for {rules}{memoryOnly}</span>
             </span>
+            <RefreshSpinner show={refreshing} />
           </>
         ) : (
           <>
@@ -178,7 +189,7 @@ export function AlertsCard({ scope, range, onScopeChange }: AlertsCardProps) {
   return (
     <section className={styles.card} aria-label="Alerts">
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <h3 className={styles.title}>Alerts</h3>
+        <h3 className={styles.title}>Alerts<RefreshSpinner show={refreshing} /></h3>
         <span className={styles.sub}>
           {count(report.alerts.length + report.more)} in {inRange}
           {rules ? ` · watching for ${rules}` : ' · new alerts are off'}

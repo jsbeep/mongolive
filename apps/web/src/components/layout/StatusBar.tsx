@@ -4,7 +4,9 @@
 //   연결 전(웰컴 화면): 'No connection'만 — 새로고침·컬럼 조절은 볼 것이 없으니 숨긴다
 //   오른쪽: Tree/Columns · 컬럼 수 − n + · 설정 · 로그아웃 · 알림 센터(종)
 // 바는 예전 헤더처럼 둥근 카드, 항목은 테두리 없이 hover 배경만 있는 덜 둥근 네모.
-import { Bell, BellDot, Circle, Columns3, ListTree, Lock, Minus, Plus, RefreshCw, Search } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Bell, Circle, Columns3, ListTree, Lock, Minus, Plus, RefreshCw, Search } from 'lucide-react';
+import { SYSTEM_TONE_BG, systemToneOf, unseenTotal, type UnseenSystem } from '../../hooks/useSystemLog';
 import { useServerSettings } from '../../services/serverSettings';
 import type { StandaloneRefresh } from '../../services/preferences';
 import { m } from 'framer-motion';
@@ -34,7 +36,8 @@ interface StatusBarProps {
   // Tree/Columns·컬럼 수 조절을 보일지 — Monitor 화면에선 컬럼이 없으니 숨긴다
   showColumnControls: boolean;
   unreadChanges: number;
-  unseenErrors: number;
+  // 안 본 시스템 기록(수준별) — 종의 점 색
+  unseenSystem: UnseenSystem;
   isCenterOpen: boolean;
   onToggleCenter: () => void;
   onOpenSystem: () => void;
@@ -72,7 +75,7 @@ export function StatusBar({
   defaultColumns,
   columnCountFixed,
   unreadChanges,
-  unseenErrors,
+  unseenSystem,
   isCenterOpen,
   onToggleCenter,
   onOpenSystem,
@@ -81,8 +84,11 @@ export function StatusBar({
 }: StatusBarProps) {
   const safety = useServerSettings();
   const status = CONNECTION_STATUS[connectionStatus];
-  const hasNews = unreadChanges > 0 || unseenErrors > 0;
-  const BellIcon = hasNews ? BellDot : Bell;
+  const systemTone = systemToneOf(unseenSystem);
+  const systemCount = unseenTotal(unseenSystem);
+  const ring = useBellRing(systemCount, unreadChanges);
+  const SYSTEM_WORD = { error: 'error', warning: 'warning', success: 'message' } as const;
+  const systemTip = systemTone ? `${systemCount} new system ${SYSTEM_WORD[systemTone]}${systemCount > 1 ? 's' : ''}` : '';
 
   return (
     <footer className={styles.bar} aria-label="Status bar">
@@ -200,15 +206,58 @@ export function StatusBar({
           className={cn(styles.item, isCenterOpen ? styles.itemOn : styles.itemIdle, unreadChanges > 0 ? '' : styles.square)}
           onClick={onToggleCenter}
           aria-pressed={isCenterOpen}
-          aria-label={`Notifications${unreadChanges ? ` — ${unreadChanges} unread changes` : ''}${unseenErrors ? `, ${unseenErrors} new errors` : ''}`}
+          aria-label={`Notifications${unreadChanges ? ` — ${unreadChanges} unread changes` : ''}${systemTip ? `, ${systemTip}` : ''}`}
           data-keeps-notifications
-          data-tt={unseenErrors ? `${unseenErrors} new error${unseenErrors > 1 ? 's' : ''}` : unreadChanges ? `${unreadChanges} unread change${unreadChanges > 1 ? 's' : ''}` : 'Notifications'}
+          data-tt={[unreadChanges ? `${unreadChanges} unread change${unreadChanges > 1 ? 's' : ''}` : '', systemTip].filter(Boolean).join(' · ') || 'Notifications'}
         >
-          {/* 안 본 에러가 있으면 종의 점을 빨갛게 */}
-          <BellIcon size={16} className={unseenErrors > 0 ? 'text-rose-500' : hasNews ? 'text-sky-600' : undefined} />
-          {unreadChanges > 0 && <span className={styles.count}>{unreadChanges > 99 ? '99+' : unreadChanges}</span>}
+          {/* 변경은 파랑(종·숫자), 시스템은 점 — 안 본 것 중 가장 심각한 색(빨강 > 주황 > 초록). 새로 오면 띠롱 */}
+          <span className="relative inline-flex">
+            <m.span
+              key={ring}
+              className="inline-flex"
+              style={{ transformOrigin: '50% 15%' }}
+              animate={ring ? { rotate: [0, -18, 14, -9, 5, 0] } : undefined}
+              transition={{ duration: 0.6, ease: 'easeInOut' }}
+            >
+              <Bell size={16} className={unreadChanges > 0 ? 'text-sky-600' : undefined} />
+            </m.span>
+            {systemTone && (
+              <m.span
+                key={`dot-${ring}`}
+                className={cn('absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ring-2 ring-white', SYSTEM_TONE_BG[systemTone])}
+                initial={ring ? { scale: 0.3 } : false}
+                animate={{ scale: 1 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 14 }}
+              />
+            )}
+          </span>
+          {unreadChanges > 0 && (
+            <m.span
+              key={`count-${ring}`}
+              className={cn(styles.count, 'text-sky-600')}
+              animate={ring ? { scale: [1, 1.3, 1] } : undefined}
+              transition={{ duration: 0.4 }}
+            >
+              {unreadChanges > 99 ? '99+' : unreadChanges}
+            </m.span>
+          )}
         </button>
       </div>
     </footer>
   );
+}
+
+// 띠롱 신호 — 시스템 기록이 늘 때마다, 변경은 안 읽음이 0에서 생길 때만(대량 쓰기 중 계속 울리지 않게).
+// 화면을 연 직후 3초는 울리지 않는다(연결됨·쌓여 있던 변경이 한꺼번에 들어오는 때). 0 = 아직 안 울림
+function useBellRing(systemCount: number, unreadChanges: number): number {
+  const [ring, setRing] = useState(0);
+  const prev = useRef({ system: systemCount, changes: unreadChanges });
+  const mountedAt = useRef(Date.now());
+  useEffect(() => {
+    const p = prev.current;
+    const fresh = systemCount > p.system || (p.changes === 0 && unreadChanges > 0);
+    prev.current = { system: systemCount, changes: unreadChanges };
+    if (fresh && Date.now() - mountedAt.current > 3000) setRing((n) => n + 1);
+  }, [systemCount, unreadChanges]);
+  return ring;
 }

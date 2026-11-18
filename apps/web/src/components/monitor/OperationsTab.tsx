@@ -1,6 +1,8 @@
 // Monitor › Operations (9-5a) — 지금 실행 중인 작업($currentOp). 이 탭이 보이는 동안만 2초마다 묻는다(브라우저 탭이 숨겨지면 쉰다).
 // 기록하지 않는 스냅샷이라 범위 바의 기간은 여기엔 안 쓰인다(아래 느린 쿼리에만). 스코프(DB/컬렉션)는 ns로 거른다.
 // mongolive 자신(changeStream getMore 등)과 내부 작업은 기본으로 숨긴다. 멈추기(killOp)는 다른 클라이언트의 작업에만.
+import { useCachedReport } from '../../hooks/useCachedReport';
+import { RefreshSpinner, SkeletonRows } from '../common/Skeleton';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, ChevronRight, Loader2, Pause, Play } from 'lucide-react';
 import type { OperationsReport, RunningOp } from '../../types/explorer';
@@ -95,7 +97,6 @@ const KIND_TIPS: Record<OpKind, string> = {
 };
 
 export function OperationsTab({ scope }: { scope: MonitorScope }) {
-  const [report, setReport] = useState<OperationsReport | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const kindFilter = useKindFilter();
@@ -103,11 +104,11 @@ export function OperationsTab({ scope }: { scope: MonitorScope }) {
   const [open, setOpen] = useState<{ op: RunningOp; finished: boolean } | null>(null);
   const [nudge, setNudge] = useState(0);
   const scopeKey = `${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
+  const { report, refreshing, setReport } = useCachedReport<OperationsReport>('operations', scopeKey);
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
 
   useEffect(() => {
-    setReport(null);
     setOpen(null);
   }, [scopeKey]);
 
@@ -162,7 +163,10 @@ export function OperationsTab({ scope }: { scope: MonitorScope }) {
     <div className={styles.body}>
       <div className={styles.toolbar}>
         <div className="flex min-w-0 flex-col">
-          <h2 className={styles.title}>Running now{report ? ` · ${shown.length} operation${shown.length === 1 ? '' : 's'}` : ''}</h2>
+          <h2 className={styles.title}>
+            Running now{report ? ` · ${shown.length} operation${shown.length === 1 ? '' : 's'}` : ''}
+            <RefreshSpinner show={refreshing} />
+          </h2>
           <span className={styles.sub}>
             {paused ? 'Paused' : `Every ${POLL_MS / 1000}s`} · {report ? fmtClock(report.at, true) : 'loading…'} · live snapshot — the range above applies to slow queries below
           </span>
@@ -196,8 +200,8 @@ export function OperationsTab({ scope }: { scope: MonitorScope }) {
       )}
 
       {!report && !failed ? (
-        <div className="flex items-center gap-2 px-1 py-10 text-[13px] text-slate-400">
-          <Loader2 className="h-4 w-4 animate-spin" /> Asking MongoDB…
+        <div className={styles.card}>
+          <SkeletonRows rows={3} className="px-4" label="Asking MongoDB" />
         </div>
       ) : report && !report.error && (
         <div className={styles.card}>

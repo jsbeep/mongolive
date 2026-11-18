@@ -526,7 +526,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
           columnCountFixed={columnCountFixed}
           showColumnControls={!monitoring}
           unreadChanges={activityLog.unread}
-          unseenErrors={systemLog.unseenErrors}
+          unseenSystem={systemLog.unseen}
           isCenterOpen={centerOpen}
           onToggleCenter={() => setCenterOpen((v) => !v)}
           onOpenSafety={() => openSettings('safety')}

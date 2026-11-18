@@ -1,8 +1,10 @@
 // Monitor › Operations › 느린 쿼리 (9-5b) — MongoDB가 스스로 로그에 남긴 "Slow query"를 서버가 10초마다 모은 것.
 // 같은 모양의 쿼리끼리 묶어 합계·횟수·평균·최대를 보여 주고, 펼치면 분마다 가장 느린 실행과 그 명령을 본다.
 // 범위 바의 기간과 스코프(DB/컬렉션)가 적용된다. 칩은 화면 필터 — 서버 기준(slowms)보다 낮게는 의미가 없어 막는다.
+import { useCachedReport } from '../../hooks/useCachedReport';
+import { RefreshSpinner, SkeletonRows } from '../common/Skeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronRight, Loader2 } from 'lucide-react';
+import { AlertTriangle, ChevronRight } from 'lucide-react';
 import { LIVE_RANGES, SLOW_THRESHOLDS, type MonitorRange, type SlowGroup, type SlowQueriesReport, type SlowRun, type SlowThreshold } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
@@ -114,13 +116,13 @@ function SlowDetail({ group }: { group: SlowGroup }) {
 }
 
 export function SlowQueries({ scope, range }: { scope: MonitorScope; range: MonitorRange }) {
-  const [report, setReport] = useState<SlowQueriesReport | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [min, setMin] = useState<SlowThreshold>(SLOW_THRESHOLDS[0]);
   const kindFilter = useKindFilter();
   const [sort, setSort] = useState<SortKey>('total');
   const [open, setOpen] = useState<string | null>(null);
   const scopeKey = `${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
+  const { report, refreshing, setReport } = useCachedReport<SlowQueriesReport>('slow', `${range}\u0000${scopeKey}`);
   const queryRef = useRef({ scope, range, min, open });
   queryRef.current = { scope, range, min, open };
 
@@ -128,7 +130,6 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
   useEffect(() => api.watchSlowCard(), []);
 
   useEffect(() => {
-    setReport(null);
     setOpen(null);
   }, [scopeKey, range]);
 
@@ -195,7 +196,10 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
     <div className={cn(styles.body, 'border-t border-slate-100 pt-4')}>
       <div className={styles.toolbar}>
         <div className="flex min-w-0 flex-col">
-          <h2 className={styles.title}>Slow queries{report && status === 'ok' ? ` · ${shown.length} shape${shown.length === 1 ? '' : 's'}` : ''}</h2>
+          <h2 className={styles.title}>
+            Slow queries{report && status === 'ok' ? ` · ${shown.length} shape${shown.length === 1 ? '' : 's'}` : ''}
+            <RefreshSpinner show={refreshing} />
+          </h2>
           <span className={styles.sub} data-tt="Read from MongoDB’s own log on the node mongolive is connected to (usually the primary) — every 10 s while this card is open, 30 s otherwise, 60 s when no tab is visible. mongolive never changes slowms.">
             Finished operations MongoDB logged as slower than {slowms ?? DEFAULT_SLOWMS} ms{slowms === null && report ? ' (default)' : ''} · {RANGE_LABEL[range]}
             {report ? ` · ${fmtClock(report.at, true)}` : ''}
@@ -261,8 +265,8 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
       )}
 
       {!report && !failed ? (
-        <div className="flex items-center gap-2 px-1 py-6 text-[13px] text-slate-400">
-          <Loader2 className="h-4 w-4 animate-spin" /> Reading…
+        <div className={styles.card}>
+          <SkeletonRows rows={3} className="px-4" label="Reading the log" />
         </div>
       ) : report && (status === 'ok' || status === 'closed' || status === 'off') && (
         <div className={styles.card}>

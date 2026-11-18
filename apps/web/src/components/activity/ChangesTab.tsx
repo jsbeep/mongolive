@@ -233,8 +233,11 @@ interface ChangesTabProps {
   entries: LiveLogEntry[];
   seenAt: number | null;
   unread: number;
+  // 하나씩 읽은 기록(바로가기로 누른 것)
+  readIds: ReadonlySet<string>;
   onClear: () => void;
   onMarkAllRead: () => void;
+  onMarkRead: (ids: string[]) => void;
   onNavigate: (entry: LiveLogEntry) => void;
   activeDatabase: string | null;
   activeCollection: string | null;
@@ -254,7 +257,19 @@ const loadHiddenOps = (): Set<OpGroup> => {
   }
 };
 
-export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMarkAllRead, onNavigate, activeDatabase, activeCollection, activeDocumentId }: ChangesTabProps) {
+export function ChangesTab({
+  entries: liveEntries,
+  seenAt,
+  unread,
+  readIds,
+  onClear,
+  onMarkAllRead,
+  onMarkRead,
+  onNavigate,
+  activeDatabase,
+  activeCollection,
+  activeDocumentId,
+}: ChangesTabProps) {
   // 일시정지 = 그 순간의 목록을 얼려서 보여준다. 그동안 들어온 건 개수만 알려주고, 재개하면 다시 실시간.
   const [frozen, setFrozen] = useState<LiveLogEntry[] | null>(null);
   const paused = frozen !== null;
@@ -310,7 +325,12 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
       return next;
     });
 
-  const isUnread = (e: LiveLogEntry) => seenAt !== null && e.serverTime > seenAt && !e.own;
+  const isUnread = (e: LiveLogEntry) => seenAt !== null && e.serverTime > seenAt && !e.own && !readIds.has(e.id);
+  // 바로가기로 누르면 그 줄(묶음이면 묶음 전체)을 읽음으로
+  const navigateReading = (entries: LiveLogEntry[]) => (entry: LiveLogEntry) => {
+    onMarkRead(entries.map((x) => x.id));
+    onNavigate(entry);
+  };
   // tx 표시 — 트랜잭션 안의 쓰기가 TXN 묶음 밖에 보일 때(쓰기 하나짜리 트랜잭션, 또는 나머지가 걸러짐)
   const txnNoteOf = (group: EntryGroup): string | undefined => {
     const inTxn = group.entries.filter((e) => e.txn).length;
@@ -333,7 +353,7 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
           unread={group.entries.some(isUnread)}
           detail={multiDoc ? `${group.entries.length} documents` : isGroup ? mergedDetail(group.entries) : entryDetail(latest)}
           showDocId={!multiDoc}
-          onNavigate={onNavigate}
+          onNavigate={navigateReading(group.entries)}
           first={first}
           // 펼친 묶음이면 마지막 행은 그 안의 마지막 항목
           last={lastRow && !isOpen}
@@ -362,7 +382,7 @@ export function ChangesTab({ entries: liveEntries, seenAt, unread, onClear, onMa
                 entry={e}
                 unread={isUnread(e)}
                 detail={entryDetail(e)}
-                onNavigate={onNavigate}
+                onNavigate={navigateReading([e])}
                 compact
                 showDocId={multiDoc}
                 last={lastRow && ci === group.entries.length - 1}

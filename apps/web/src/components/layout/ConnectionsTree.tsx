@@ -5,6 +5,7 @@
 //   ▸ [서버] 다른 연결     [Connect] · ⋯(Edit)                              ← 올리면 보인다. 더블클릭도 연결
 // 지금 연결이 단독 DB(polling)면 연결 줄 아래에 안내 — 실시간 없음, 다시 받는 주기, R 키. × = 이번만, Don't show again = 이 연결에선 다시 안 보임
 // 탭마다 연결은 하나 — 다른 연결을 Connect하면 이 탭이 그 연결로 바뀐다(먼저 접속해 본다, useConnect).
+import { SkeletonRows } from '../common/Skeleton';
 import { useState } from 'react';
 import { ChevronRight, Info, Loader2, Pencil, Plus, RefreshCw, Server, Unplug, X } from 'lucide-react';
 import { connectionLabel, type CollectionSummary, type ConnectionInfo, type DatabaseSummary, type MutationRequest } from '../../types/explorer';
@@ -158,9 +159,7 @@ export function ConnectionsTree({ connections, connect, currentId, status, canMa
 
       <div className={styles.list} role="tree" aria-label="Connections">
         {connections.loading && (
-          <p className="flex h-8 items-center gap-1.5 pl-2 text-xs text-slate-400">
-            <Loader2 size={12} className="animate-spin" /> Loading…
-          </p>
+          <SkeletonRows rows={2} className="gap-3 py-2 pl-2 pr-4" label="Loading connections" />
         )}
         {connections.error && <p className="px-2 py-1 text-xs text-rose-600">Couldn&apos;t load connections — {connections.error}</p>}
 

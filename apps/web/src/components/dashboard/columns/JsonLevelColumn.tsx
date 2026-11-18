@@ -1,3 +1,4 @@
+import { SkeletonRows } from '../../common/Skeleton';
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { nextPathId } from '../../../hooks/useExplorerState';
@@ -1058,7 +1059,7 @@ export function JsonLevelColumn({
           </div>
         )}
         {isLoading && !entries.length ? (
-          <p className="flex-1 flex items-center justify-center text-sm text-slate-400 py-10">Loading…</p>
+          <SkeletonRows rows={6} className="flex-1 px-4" label="Loading the document" />
         ) : !displayDoc ? (
           <p className="flex-1 flex items-center justify-center text-sm text-slate-400 py-10">Select a document</p>
         ) : entries.length > 0 && !displayEntries.length ? (

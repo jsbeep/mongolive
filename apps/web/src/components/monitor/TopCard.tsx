@@ -2,6 +2,8 @@
 //   서버/DB 범위: 시간이 많은 컬렉션 순 — 읽기·쓰기 막대, 읽기·쓰기 횟수, 작업당 평균. 행을 누르면 그 컬렉션으로 좁힌다
 //   컬렉션 범위: 작업 종류별(find·getMore·insert·update·delete·commands) 횟수·시간·평균
 //   5m·1h만 숫자를 보여 준다(긴 기간은 안내 한 줄). 10초마다 묻는다(탭이 안 보이면 쉼). top이 없거나(mongos) 권한이 없으면 카드를 숨긴다
+import { useCachedReport } from '../../hooks/useCachedReport';
+import { RefreshSpinner } from '../common/Skeleton';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CircleAlert, Loader2 } from 'lucide-react';
 import type { CollectionTopRow, MonitorRange, TopOp, TopReport, TopUsage } from '../../types/explorer';
@@ -49,16 +51,15 @@ export const fmtMicros = (us: number): string => {
 const avgOf = (u: TopUsage) => (u.count > 0 ? fmtMicros(u.time / u.count) : '—');
 
 function useTop(range: MonitorRange, scope: MonitorScope) {
-  const [report, setReport] = useState<TopReport | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   // 긴 기간이면 1h로 물어 상태(지원·권한)만 본다 — 서버 메모리라 MongoDB에는 묻지 않는다
   const live = LIVE_RANGES.includes(range);
   const query = useRef({ range: (live ? range : '1h') as '5m' | '1h', scope });
   query.current = { range: (live ? range : '1h') as '5m' | '1h', scope };
   const key = `${query.current.range}\u0000${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
+  const { report, refreshing, setReport } = useCachedReport<TopReport>('top', key);
 
   useEffect(() => {
-    setReport(null);
     setFailed(null);
   }, [key]);
 
@@ -91,9 +92,9 @@ function useTop(range: MonitorRange, scope: MonitorScope) {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [key]);
+  }, [key, setReport]);
 
-  return { report, failed };
+  return { report, failed, refreshing };
 }
 
 // 읽기·쓰기 시간 비율 — 0인 쪽은 그리지 않는다
@@ -138,7 +139,7 @@ interface TopCardProps {
 }
 
 export function TopCard({ scope, range, onScopeChange }: TopCardProps) {
-  const { report, failed } = useTop(range, scope);
+  const { report, failed, refreshing } = useTop(range, scope);
   const [showAll, setShowAll] = useState(false);
   const live = LIVE_RANGES.includes(range);
   const atCollection = scope.database !== null && scope.collection !== null;
@@ -152,7 +153,7 @@ export function TopCard({ scope, range, onScopeChange }: TopCardProps) {
   const header = (sub: ReactNode, legend: boolean) => (
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <div className="min-w-0">
-        <h3 className={styles.title}>Time spent</h3>
+        <h3 className={styles.title}>Time spent<RefreshSpinner show={refreshing} /></h3>
         <p className={styles.sub}>{sub}</p>
       </div>
       {legend && <Legend />}

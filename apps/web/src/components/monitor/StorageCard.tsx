@@ -1,6 +1,8 @@
 // Monitor › Collections의 크기 (9-6a) — 서버가 피드를 열 때와 1시간마다 $collStats로 잰 것
 //   useSizes: 범위·기간이 바뀌면 바로, 그다음 1분마다(재는 중이면 2초마다) 묻는다. 표의 Docs·Size·Index·Growth 칸도 이걸 쓴다
 //   StorageCard: 범위 합계(문서·데이터·디스크·인덱스) + 기간 첫 측정 대비 늘고 준 양 + 크기 추이 차트(24h 이상, 기록이 켜져 있을 때)
+import { useCachedReport } from '../../hooks/useCachedReport';
+import { RefreshSpinner } from '../common/Skeleton';
 import { useEffect, useRef, useState } from 'react';
 import { CircleAlert, Loader2, RefreshCw } from 'lucide-react';
 import type { MonitorRange, SizesReport, SizeStats } from '../../types/explorer';
@@ -19,20 +21,18 @@ const RANGE_SPAN: Partial<Record<MonitorRange, number>> = { '24h': 24 * HOUR, '7
 export interface SizesState {
   report: SizesReport | null;
   failed: string | null;
+  // 지난 응답을 보여 주며 새로 받는 중
+  refreshing: boolean;
   measure: () => void;
 }
 
 export function useSizes(range: MonitorRange, scope: MonitorScope): SizesState {
-  const [report, setReport] = useState<SizesReport | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [kick, setKick] = useState(0);
   const query = useRef({ range, scope });
   query.current = { range, scope };
   const scopeKey = `${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
-
-  useEffect(() => {
-    setReport(null);
-  }, [scopeKey, range]);
+  const { report, refreshing, setReport } = useCachedReport<SizesReport>('sizes', `${range}\u0000${scopeKey}`);
 
   useEffect(() => {
     let alive = true;
@@ -73,7 +73,7 @@ export function useSizes(range: MonitorRange, scope: MonitorScope): SizesState {
       .catch(() => false)
       .then(() => setKick((k) => k + 1));
   };
-  return { report, failed, measure };
+  return { report, failed, refreshing, measure };
 }
 
 const styles = {
@@ -96,7 +96,7 @@ const STATS: { key: keyof SizeStats; label: string; tip: string; format: (v: num
 ];
 
 export function StorageCard({ sizes, range, scopeName }: { sizes: SizesState; range: MonitorRange; scopeName: string }) {
-  const { report, failed } = sizes;
+  const { report, failed, refreshing } = sizes;
   const live = LIVE_RANGES.includes(range);
   if (!report) {
     return failed
@@ -116,7 +116,7 @@ export function StorageCard({ sizes, range, scopeName }: { sizes: SizesState; ra
       <section className={styles.card} aria-label="Storage">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <h3 className={styles.title}>Storage</h3>
+            <h3 className={styles.title}>Storage<RefreshSpinner show={refreshing} /></h3>
             <p className={styles.sub}>
               {at === null
                 ? measuring ? 'Measuring collection sizes…' : 'Not measured yet'

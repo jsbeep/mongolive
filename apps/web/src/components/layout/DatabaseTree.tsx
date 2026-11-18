@@ -6,6 +6,7 @@
 // 컬렉션 목록: 지금 DB는 explorer 상태(collections)를 그대로 쓴다 — 실시간 반영이 이미 그걸 고친다.
 //              다른 DB는 펼칠 때 받아 오고, DB 목록이 바뀌면(문서 수 등) 펼친 것만 다시 받는다.
 // DB 관리: 연결 줄의 + = 추가(입력 줄을 여기서 보여 준다), 행에 올리면 휴지통 = 삭제. 이름 변경/복제는 MongoDB에 명령이 없어 없음.
+import { SkeletonRows } from '../common/Skeleton';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronRight, Database, Folder, FolderOpen, Loader2, Lock, Trash2, X } from 'lucide-react';
@@ -227,7 +228,7 @@ export function DatabaseTree({ databases, activeDatabase, activeCollection, coll
               {isOpen && (
                 <div role="group">
                   {loaded === 'loading' || loaded === undefined ? (
-                    <p className={styles.note}><Loader2 size={12} className="animate-spin" /> Loading…</p>
+                    <SkeletonRows rows={2} className="gap-3 py-2 pl-[86px] pr-4" label="Loading collections" />
                   ) : loaded === 'error' ? (
                     <p className={styles.note}>Couldn't load collections</p>
                   ) : loaded.length === 0 ? (

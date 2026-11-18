@@ -2,6 +2,8 @@
 //   분당 개수 · 트랜잭션 하나의 쓰기 수(평균·최대) · 자주 같이 쓰인 컬렉션 · 큰 것
 //   범위(DB·컬렉션) = 그 범위를 건드린 트랜잭션. 트랜잭션이 없거나 피드가 없으면 숨긴다
 //   긴 기간이면 1h로 묻고 'last hour only'라고 적는다. 5m·1h는 10초마다, 긴 기간은 60초마다(탭이 안 보이면 쉼)
+import { useCachedReport } from '../../hooks/useCachedReport';
+import { RefreshSpinner } from '../common/Skeleton';
 import { useEffect, useRef, useState } from 'react';
 import { CircleAlert } from 'lucide-react';
 import type { MonitorRange, TransactionsReport, TransactionSample } from '../../types/explorer';
@@ -34,16 +36,15 @@ const plural = (n: number, word: string) => `${fmtNumber(n)} ${word}${n === 1 ? 
 const rate = (n: number) => (n > 0 && n < 10 ? n.toFixed(1) : fmtNumber(Math.round(n)));
 
 function useTransactions(range: MonitorRange, scope: MonitorScope) {
-  const [report, setReport] = useState<TransactionsReport | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const live = LIVE_RANGES.includes(range);
   const asked = (live ? range : '1h') as '5m' | '1h';
   const query = useRef({ range: asked, scope });
   query.current = { range: asked, scope };
   const key = `${asked}\u0000${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
+  const { report, refreshing, setReport } = useCachedReport<TransactionsReport>('transactions', key);
 
   useEffect(() => {
-    setReport(null);
     setFailed(null);
   }, [key]);
 
@@ -75,9 +76,9 @@ function useTransactions(range: MonitorRange, scope: MonitorScope) {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [key, live]);
+  }, [key, live, setReport]);
 
-  return { report, failed };
+  return { report, failed, refreshing };
 }
 
 interface TransactionsCardProps {
@@ -86,7 +87,7 @@ interface TransactionsCardProps {
 }
 
 export function TransactionsCard({ scope, range }: TransactionsCardProps) {
-  const { report, failed } = useTransactions(range, scope);
+  const { report, failed, refreshing } = useTransactions(range, scope);
 
   if (failed && !report) {
     return (
@@ -110,7 +111,7 @@ export function TransactionsCard({ scope, range }: TransactionsCardProps) {
   return (
     <section className={styles.card} aria-label="Transactions">
       <div className="min-w-0">
-        <h3 className={styles.title}>Transactions</h3>
+        <h3 className={styles.title}>Transactions<RefreshSpinner show={refreshing} /></h3>
         <p className={styles.sub}>
           {fmtNumber(report.count)} in {inRange}
           {!live && <span className="font-medium text-slate-600"> (last hour only)</span>} · {rate(report.perMinute)}/min · {avg < 10 ? avg.toFixed(1) : fmtNumber(Math.round(avg))} writes on average, up to {fmtNumber(report.maxWrites)}

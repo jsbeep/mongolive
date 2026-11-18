@@ -8,8 +8,9 @@
 // 맨 위 배너(9-4): 탭이 없던 동안의 쓰기를 changeStream으로 다시 불러온다. 차트의 빈 구간 띠는 불러왔는지 툴팁에 적는다.
 // 그 아래 Alerts 카드(9-8a): 대량 삭제·쓰기 폭주·컬렉션/DB 삭제·이름 바꾸기 — 없으면 한 줄만.
 // 표·상세 아래 Transactions 카드(9-8b): 트랜잭션 분당 수·쓰기 수·같이 쓰인 컬렉션·큰 것 — 트랜잭션이 없으면 숨긴다.
+import { RefreshSpinner, SkeletonLine, SkeletonRows } from '../common/Skeleton';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpRight, CircleAlert, Loader2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpRight, CircleAlert } from 'lucide-react';
 import type { ActivityCollection, ActivityOps, ActivityRange, CollectionSizeRow, CollectionSummary, LastWrite, MonitorRange } from '../../types/explorer';
 import { LIVE_RANGES } from '../../types/explorer';
 import { api } from '../../services/api';
@@ -289,11 +290,20 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
   }, [view, atCollection, scope.database, explorerDatabase, explorerCollections, dbCollections, sort, lastWrites, sizeReport, sizeByKey]);
 
   const loading = live ? activity.loading : history.loading;
+  const refreshing = live ? activity.refreshing : history.refreshing;
   const error = live ? activity.error : history.error;
   if (!view) {
     return error
       ? <p className={cn(styles.note, 'm-4')}><CircleAlert size={14} className="mt-0.5 shrink-0" /> Could not load activity: {error}</p>
-      : <p className={cn(styles.waiting, 'px-4')}><Loader2 size={15} className="animate-spin" /> {loading ? 'Loading activity…' : 'No data'}</p>;
+      : loading
+        ? (
+            // 처음 한 번 — 알림 줄과 표 자리를 미리 잡는다
+            <div className={styles.body} aria-busy="true">
+              <div className="rounded-xl border border-slate-200/70 bg-white px-3.5 py-2.5"><SkeletonLine className="w-2/3" /></div>
+              <section className={styles.card}><SkeletonRows rows={6} label="Loading activity" /></section>
+            </div>
+          )
+        : <p className={cn(styles.waiting, 'px-4')}>No data</p>;
   }
 
   const now = view.now;
@@ -351,7 +361,10 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
         <section className={styles.card} aria-label="Collections by writes">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <div>
-              <h3 className={styles.cardTitle}>{scope.database ? `Collections in ${scope.database}` : showSizes ? 'Collections' : 'Collections written to'}</h3>
+              <h3 className={styles.cardTitle}>
+                {scope.database ? `Collections in ${scope.database}` : showSizes ? 'Collections' : 'Collections written to'}
+                <RefreshSpinner show={refreshing} />
+              </h3>
               <p className={styles.cardSub}>
                 {scope.database || showSizes
                   ? `Writes in ${inRange}${sizeReport?.at ? ` · sizes measured ${fmtClock(sizeReport.at)}` : ''} — click a row to focus on it`

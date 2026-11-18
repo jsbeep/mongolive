@@ -3,6 +3,8 @@
 //                    lag 차트·상태 변화는 서버가 10초마다 읽어 최근 1시간만 메모리에 둔다(긴 기간이면 최근 1시간을 보여 주고 그렇다고 적는다)
 // 10초마다 묻는다(탭이 안 보이면 쉼). standalone·mongos·권한 없음은 안내 한 줄.
 //   Connected node (9-7b): 연결한 멤버의 Oplog 창(열 때·60초마다, 레플리카 셋일 때만)과 Startup warnings(열 때·새로고침 버튼)
+import { useCachedReport } from '../../hooks/useCachedReport';
+import { RefreshSpinner, SkeletonRows } from '../common/Skeleton';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowRight, CircleAlert, Loader2, RefreshCw } from 'lucide-react';
 import type { MongoTopology, MonitorRange, OplogReport, ReplicaChange, ReplicaMember, ReplicaReport, StartupWarning } from '../../types/explorer';
@@ -75,8 +77,9 @@ const fmtFar = (ms: number) => {
 
 // 열 때 한 번 읽고, everyMs가 있으면 그 간격으로 다시. 탭(브라우저)이 안 보이면 쉬고, 다시 보일 때 밀린 읽기를 한다.
 // key가 바뀌면 처음부터, refresh()는 지금 다시
-function usePoll<T>(load: () => Promise<T>, everyMs: number | null, key: string) {
-  const [data, setData] = useState<T | null>(null);
+// 마지막 응답은 기억해 둔다(useCachedReport) — 탭을 바꿔 다시 와도 바로 그린다
+function usePoll<T>(card: string, load: () => Promise<T>, everyMs: number | null, key: string) {
+  const { report: data, refreshing, setReport: setData } = useCachedReport<T>(card, key);
   const [failed, setFailed] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [kick, setKick] = useState(0);
@@ -116,16 +119,16 @@ function usePoll<T>(load: () => Promise<T>, everyMs: number | null, key: string)
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [key, kick, everyMs]);
+  }, [key, kick, everyMs, setData]);
 
-  return { data, failed, loading, refresh: () => setKick((k) => k + 1) };
+  return { data, failed, loading, refreshing, refresh: () => setKick((k) => k + 1) };
 }
 
 function useReplica(range: MonitorRange) {
   // 긴 기간이면 1h로 묻는다 — 서버 메모리에 그만큼만 있다
   const queryRange = (LIVE_RANGES.includes(range) ? range : '1h') as '5m' | '1h';
-  const { data: report, failed } = usePoll(() => api.getReplica(queryRange), POLL_MS, queryRange);
-  return { report, failed };
+  const { data: report, failed, refreshing } = usePoll('replica', () => api.getReplica(queryRange), POLL_MS, queryRange);
+  return { report, failed, refreshing };
 }
 
 function StatePill({ state, healthy }: { state: string; healthy: boolean }) {
@@ -243,7 +246,13 @@ interface ServerTabProps {
   topology: MongoTopology | null;
 }
 
-function ReplicaSection({ range, topology, report, failed }: ServerTabProps & { report: ReplicaReport | null; failed: string | null }) {
+function ReplicaSection({
+  range,
+  topology,
+  report,
+  failed,
+  refreshing,
+}: ServerTabProps & { report: ReplicaReport | null; failed: string | null; refreshing: boolean }) {
   const live = LIVE_RANGES.includes(range);
 
   const section = (children: ReactNode) => (
@@ -258,7 +267,7 @@ function ReplicaSection({ range, topology, report, failed }: ServerTabProps & { 
       failed ? (
         <p className={styles.note}><CircleAlert size={14} className="mt-0.5 shrink-0" /> Could not load the replica set status: {failed}</p>
       ) : (
-        <p className={cn(styles.muted, 'flex items-center gap-2 py-3 text-[12px]')}><Loader2 size={13} className="animate-spin" /> Loading…</p>
+        <SkeletonRows rows={3} label="Loading the replica set" />
       ),
     );
   }
@@ -309,7 +318,10 @@ function ReplicaSection({ range, topology, report, failed }: ServerTabProps & { 
       )}
       <section className={styles.card} aria-label="Members">
         <div className="min-w-0">
-          <h3 className={styles.title}>Members{report.set && <span className="font-normal text-slate-500"> · {report.set}</span>}</h3>
+          <h3 className={styles.title}>
+            Members{report.set && <span className="font-normal text-slate-500"> · {report.set}</span>}
+            <RefreshSpinner show={refreshing} />
+          </h3>
           <p className={styles.sub}>
             {report.members.length} {report.members.length === 1 ? 'member' : 'members'}
             {report.votingMembers !== null && ` · ${report.votingMembers} voting`}
@@ -363,7 +375,7 @@ function ReplicaSection({ range, topology, report, failed }: ServerTabProps & { 
 }
 
 const note = (text: ReactNode) => <p className={styles.note}><CircleAlert size={14} className="mt-0.5 shrink-0" /> {text}</p>;
-const loadingLine = <p className={cn(styles.muted, 'flex items-center gap-2 py-3 text-[12px]')}><Loader2 size={13} className="animate-spin" /> Loading…</p>;
+const loadingLine = <SkeletonRows rows={2} />;
 
 // 쓰는 크기 막대 — 다 차는 건 바쁜 서버에선 정상이라 경고색을 쓰지 않는다
 function UsedBar({ used, max }: { used: number; max: number }) {
@@ -381,12 +393,12 @@ function UsedBar({ used, max }: { used: number; max: number }) {
 }
 
 function OplogCard() {
-  const { data: report, failed } = usePoll(() => api.getOplog(), OPLOG_POLL_MS, 'oplog');
+  const { data: report, failed, refreshing } = usePoll('oplog', () => api.getOplog(), OPLOG_POLL_MS, 'oplog');
   if (report?.status === 'none') return null;
 
   const header = (
     <div className="min-w-0">
-      <h3 className={styles.title}>Oplog</h3>
+      <h3 className={styles.title}>Oplog<RefreshSpinner show={refreshing} /></h3>
       <p className={styles.sub}>
         The log of recent writes that other members copy from
         {report && <> · read <span data-tt={fmtDateTime(report.at)}>{fmtClock(report.at)}</span>, every minute</>}
@@ -465,7 +477,7 @@ function WarningLine({ warning }: { warning: StartupWarning }) {
 }
 
 function StartupWarningsCard() {
-  const { data: report, failed, loading, refresh } = usePoll(() => api.getStartupWarnings(), null, 'startup-warnings');
+  const { data: report, failed, loading, refresh } = usePoll('startup-warnings', () => api.getStartupWarnings(), null, 'startup-warnings');
   const count = report?.status === 'ok' ? report.warnings.length : null;
 
   const body = () => {
@@ -501,14 +513,14 @@ function StartupWarningsCard() {
 }
 
 export function ServerTab({ range, topology }: ServerTabProps) {
-  const { report, failed } = useReplica(range);
+  const { report, failed, refreshing } = useReplica(range);
   // oplog는 레플리카 셋 멤버에만 있다 — standalone·mongos·권한 없음이면 묻지 않는다
   const replicaSet = report !== null && (report.status === 'ok' || report.status === 'error') && report.at !== null;
   const self = report?.members.find((m) => m.self) ?? null;
 
   return (
     <div className={styles.body}>
-      <ReplicaSection range={range} topology={topology} report={report} failed={failed} />
+      <ReplicaSection range={range} topology={topology} report={report} failed={failed} refreshing={refreshing} />
       <h2 className={cn(styles.sectionTitle, 'mt-2')}>
         Connected node{self && <> · <span className="font-mono normal-case tracking-normal">{self.name}</span></>}
       </h2>

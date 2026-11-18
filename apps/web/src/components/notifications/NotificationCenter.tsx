@@ -11,7 +11,7 @@ import { ChevronDown } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { dataSourceKind } from '../../services/api';
 import type { ActivityLog } from '../../hooks/useActivityLog';
-import type { SystemLog } from '../../hooks/useSystemLog';
+import { SYSTEM_TONE_BG, systemToneOf, unseenTotal, type SystemLog } from '../../hooks/useSystemLog';
 import type { LiveLogEntry } from '../../types/explorer';
 import { ChangesTab } from '../activity/ChangesTab';
 import { SystemTab } from './SystemTab';
@@ -78,9 +78,10 @@ export function NotificationCenter({ open, onClose, tab, onTabChange, activity, 
     };
   }, [open, onClose]);
 
+  const systemTone = systemToneOf(system.unseen);
   const tabs: { id: NotificationTab; label: string; badge?: { n: number; color: string } }[] = [
     { id: 'changes', label: 'Changes', badge: activity.unread ? { n: activity.unread, color: 'bg-sky-500' } : undefined },
-    { id: 'system', label: 'System', badge: system.unseenErrors ? { n: system.unseenErrors, color: 'bg-rose-500' } : undefined },
+    { id: 'system', label: 'System', badge: systemTone ? { n: unseenTotal(system.unseen), color: SYSTEM_TONE_BG[systemTone] } : undefined },
   ];
 
   return createPortal(
@@ -130,6 +131,8 @@ export function NotificationCenter({ open, onClose, tab, onTabChange, activity, 
                 entries={activity.entries}
                 seenAt={activity.seenAt}
                 unread={activity.unread}
+                readIds={activity.readIds}
+                onMarkRead={activity.markRead}
                 onClear={activity.clear}
                 onMarkAllRead={activity.markSeen}
                 onNavigate={onNavigate}

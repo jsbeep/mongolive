@@ -1,6 +1,7 @@
 // Monitor › Collections(9-2)의 데이터 — 서버가 changeStream으로 센 쓰기 집계를 10초마다 다시 받는다.
 // 받는 동안에도 지난 값을 그대로 보여 준다(새로 받을 때마다 화면이 깜빡이지 않게). 범위·기간이 바뀌면 처음부터.
 // 탭이 숨겨져 있으면(document.hidden) 쉬고, 다시 보이면 바로 받는다.
+import { useCachedReport } from './useCachedReport';
 import { useEffect, useState } from 'react';
 import type { ActivityRange, ActivityReport, HistoryReport, LastWrites, MonitorRange } from '../types/explorer';
 import { api } from '../services/api';
@@ -10,8 +11,9 @@ const POLL_MS = 10_000;
 const HISTORY_POLL_MS = 60_000;
 
 // 보이는 동안 intervalMs마다 fetch — 겹치지 않게(이전 요청이 끝난 뒤 다음을 예약)
-function usePoll<T>(enabled: boolean, key: string, fetch: () => Promise<T | null>, intervalMs = POLL_MS) {
-  const [data, setData] = useState<{ key: string; value: T | null } | null>(null);
+// 마지막 응답은 기억해 둔다(useCachedReport) — 탭을 바꿔 다시 와도 바로 그리고 뒤에서 새로 받는다
+function usePoll<T>(card: string, enabled: boolean, key: string, fetch: () => Promise<T | null>, intervalMs = POLL_MS) {
+  const { report, refreshing, setReport } = useCachedReport<T>(card, key);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -28,7 +30,7 @@ function usePoll<T>(enabled: boolean, key: string, fetch: () => Promise<T | null
       try {
         const value = await fetch();
         if (cancelled) return;
-        setData({ key, value });
+        setReport(value);
         setError(null);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -51,22 +53,24 @@ function usePoll<T>(enabled: boolean, key: string, fetch: () => Promise<T | null
     // fetch는 key가 같으면 같은 요청이라 의존성에서 뺀다
   }, [enabled, key]);
 
-  // 범위가 바뀐 직후엔 지난 범위의 값을 보여 주지 않는다
-  return { value: data?.key === key ? data.value : null, stale: data !== null && data.key !== key, error, now };
+  // 범위가 바뀐 직후엔 그 범위의 기억(없으면 null)만 보여 준다
+  return { value: report, refreshing, error, now };
 }
 
 export interface ActivityState {
   report: ActivityReport | null;
   // 범위를 바꾼 뒤 새 값을 기다리는 중
   loading: boolean;
+  // 지난 응답을 보여 주며 새로 받는 중
+  refreshing: boolean;
   error: string | null;
   now: number;
 }
 
 export function useActivity(enabled: boolean, scope: { database: string | null; collection: string | null }, range: ActivityRange): ActivityState {
   const key = JSON.stringify([scope.database, scope.collection, range]);
-  const { value, stale, error, now } = usePoll(enabled, key, () => api.getActivity(scope, range));
-  return { report: value, loading: value === null && (stale || error === null), error, now };
+  const { value, refreshing, error, now } = usePoll('activity', enabled, key, () => api.getActivity(scope, range));
+  return { report: value, loading: value === null && error === null, refreshing, error, now };
 }
 
 export interface LastWritesState {
@@ -76,13 +80,14 @@ export interface LastWritesState {
 
 // 사이드바 트리의 '마지막 쓰기' — Monitor를 보는 동안만
 export function useLastWrites(enabled: boolean): LastWritesState {
-  const { value, now } = usePoll(enabled, 'last-writes', () => api.getLastWrites());
+  const { value, now } = usePoll('last-writes', enabled, 'all', () => api.getLastWrites());
   return { data: enabled ? value : null, now };
 }
 
 export interface HistoryState {
   report: HistoryReport | null;
   loading: boolean;
+  refreshing: boolean;
   error: string | null;
 }
 
@@ -94,6 +99,6 @@ export function useHistory(
 ): HistoryState {
   const fileRange = range === '5m' || range === '1h' ? null : range;
   const key = JSON.stringify([fileRange, options.writes ?? false, options.database ?? null, options.collection ?? null]);
-  const { value, stale, error } = usePoll(enabled && fileRange !== null, key, () => (fileRange ? api.getHistory(fileRange, options) : Promise.resolve(null)), HISTORY_POLL_MS);
-  return { report: value, loading: value === null && (stale || error === null), error };
+  const { value, refreshing, error } = usePoll('history', enabled && fileRange !== null, key, () => (fileRange ? api.getHistory(fileRange, options) : Promise.resolve(null)), HISTORY_POLL_MS);
+  return { report: value, loading: value === null && error === null, refreshing, error };
 }

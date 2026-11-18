@@ -1,6 +1,7 @@
 // Monitor › Collections › Indexes (9-6b) — 컬렉션 하나로 좁혔을 때. 인덱스마다 키·쓰인 횟수·언제부터 셌나·크기
 //   열 때와 새로고침 버튼을 누를 때만 묻는다(기록 없음). 쓰인 횟수는 연결된 멤버(보통 primary)의 카운터 — 재시작하면 0부터
 //   0회인 인덱스는 Unused로 표시(_id·unique·TTL·숨김·만드는 중은 빼고 — 쿼리 말고도 하는 일이 있거나 일부러 안 쓰는 것)
+import { useCachedReport } from '../../hooks/useCachedReport';
 import { useEffect, useState } from 'react';
 import { CircleAlert, Loader2, RefreshCw } from 'lucide-react';
 import type { IndexesReport, IndexUsageRow } from '../../types/explorer';
@@ -38,13 +39,13 @@ const fmtTtl = (sec: number) => {
 };
 
 export function IndexesCard({ database, collection }: { database: string; collection: string }) {
-  const [report, setReport] = useState<IndexesReport | null>(null);
+  // 지난 응답을 기억해 둔다 — 탭을 바꿔 다시 와도 바로 그린다(새로 받는 동안 ⟳ 버튼이 돈다)
+  const { report, setReport } = useCachedReport<IndexesReport>('indexes', `${database}\u0000${collection}`);
   const [failed, setFailed] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [kick, setKick] = useState(0);
 
   useEffect(() => {
-    setReport(null);
     setFailed(null);
   }, [database, collection]);
 
@@ -65,7 +66,7 @@ export function IndexesCard({ database, collection }: { database: string; collec
     return () => {
       alive = false;
     };
-  }, [database, collection, kick]);
+  }, [database, collection, kick, setReport]);
 
   if (!report) {
     return failed ? <p className={styles.note}><CircleAlert size={14} className="mt-0.5 shrink-0" /> Could not load indexes: {failed}</p> : null;
