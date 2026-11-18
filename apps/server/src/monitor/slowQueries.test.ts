@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { MongoClient } from 'mongodb';
 import type { Recorder } from './history';
-import { addToBucket, bandOf, createSlowLog, parseSlowLine, summarize, type SlowBucketLine, type SlowEntry, type SlowLine } from './slowQueries';
+import {
+  addToBucket,
+  bandOf,
+  createSlowLog,
+  parseSlowLine,
+  slowInterval,
+  summarize,
+  SLOW_BASE_MS,
+  SLOW_FAST_MS,
+  SLOW_IDLE_MS,
+  type SlowBucketLine,
+  type SlowEntry,
+  type SlowLine,
+} from './slowQueries';
 
 // MongoDB 7.0이 실제로 남긴 줄(테스트 컨테이너에서 받은 것, locks 등은 줄임)
 const line = (t: string, c: 'COMMAND' | 'WRITE', ctx: string, attr: Record<string, unknown>) =>
@@ -191,14 +204,19 @@ describe('buckets and summary', () => {
 });
 
 // getLog 응답을 차례로 돌려주는 가짜 클라이언트 + 줄만 모으는 가짜 기록기
-const harness = (opts: { stored?: boolean; cursor?: number | null } = {}) => {
+const harness = (opts: { stored?: boolean; cursor?: number | null; every?: () => number | null } = {}) => {
   let now = at('2026-11-16T15:01:58.000Z');
   const responses: unknown[] = [];
   const appended: { lines: { t: number }[]; cursor: number | null }[] = [];
+  const calls = { getLog: 0, profile: 0 };
   const client = {
     db: () => ({
       command: async (cmd: Record<string, unknown>) => {
-        if ('profile' in cmd) return { was: 0, slowms: 100 };
+        if ('profile' in cmd) {
+          calls.profile += 1;
+          return { was: 0, slowms: 100 };
+        }
+        calls.getLog += 1;
         const next = responses.shift();
         if (next instanceof Error) throw next;
         return next;
@@ -212,10 +230,18 @@ const harness = (opts: { stored?: boolean; cursor?: number | null } = {}) => {
     },
     currentFingerprint: () => null,
   } as unknown as Recorder;
-  const slow = createSlowLog({ connectionId: 'test', client: async () => client, recorder: () => recorder, stored: () => opts.stored ?? true, clock: () => now });
+  const slow = createSlowLog({
+    connectionId: 'test',
+    client: async () => client,
+    recorder: () => recorder,
+    stored: () => opts.stored ?? true,
+    every: opts.every,
+    clock: () => now,
+  });
   return {
     slow,
     appended,
+    calls,
     respond: (...r: unknown[]) => responses.push(...r),
     advance: (ms: number) => {
       now += ms;
@@ -278,5 +304,78 @@ describe('createSlowLog', () => {
     await h.slow.stop();
     expect(h.appended).toHaveLength(1);
     expect((h.appended[0].lines[0] as SlowBucketLine).op).toBe('find');
+  });
+});
+
+describe('read interval (9-10)', () => {
+  const tab = (visible: boolean, slowCard = false) => ({ visible, slowCard });
+
+  it('picks 10 s for a visible Slow card, 30 s for a visible tab, 60 s otherwise, null when off', () => {
+    expect(slowInterval(false, [tab(true, true)])).toBeNull();
+    expect(slowInterval(true, [])).toBe(SLOW_IDLE_MS);
+    expect(slowInterval(true, [tab(false, true)])).toBe(SLOW_IDLE_MS); // 숨은 탭의 카드는 안 센다
+    expect(slowInterval(true, [tab(false), tab(true)])).toBe(SLOW_BASE_MS);
+    expect(slowInterval(true, [tab(true), tab(true, true)])).toBe(SLOW_FAST_MS);
+  });
+
+  it('reads only when its turn comes on the 10 s beat', async () => {
+    const h = harness({ stored: false, every: () => SLOW_BASE_MS });
+    for (let i = 0; i < 7; i += 1) {
+      h.respond({ totalLinesWritten: 1, log: [FIND] });
+      await h.slow.poll();
+      h.advance(10_000);
+    }
+    expect(h.calls.getLog).toBe(3); // 0 s, 30 s, 60 s
+  });
+
+  it('when off: never reads the log or slowms, flushes what it had, reports off', async () => {
+    let enabled = true;
+    const h = harness({ every: () => (enabled ? SLOW_FAST_MS : null) });
+    h.respond({ totalLinesWritten: 1, log: [FIND] });
+    await h.slow.poll();
+    enabled = false;
+    await h.slow.poll();
+    expect(h.appended).toHaveLength(1); // 끄는 순간 모아 둔 분을 적는다
+    h.advance(10_000);
+    await h.slow.poll();
+    const report = await h.slow.report({ range: '1h', scope: { database: null, collection: null }, min: 100 });
+    expect(h.calls).toEqual({ getLog: 1, profile: 0 });
+    expect(report.status).toBe('off');
+    expect(report.slowms).toBeNull();
+  });
+
+  it('turned back on: skips lines written while off and marks nothing missed', async () => {
+    let enabled = true;
+    const h = harness({ stored: false, every: () => (enabled ? SLOW_FAST_MS : null) });
+    h.respond({ totalLinesWritten: 10, log: filler(3, '2026-11-16T15:01:50.000+00:00') });
+    await h.slow.poll();
+    enabled = false;
+    await h.slow.poll();
+    h.advance(120_000); // 15:03:58
+    enabled = true;
+    // 꺼져 있던 동안 5000줄이 지나갔고, 그때 끝난 remove가 아직 버퍼에 있다
+    h.respond({ totalLinesWritten: 5010, log: [...filler(999), REMOVE_WRITE.replace('15:01:57.242', '15:03:00.000')] });
+    await h.slow.poll();
+    const report = await h.slow.report({ range: '1h', scope: { database: null, collection: null }, min: 100 });
+    expect(report.missed).toEqual([]);
+    expect(report.groups).toEqual([]);
+  });
+});
+
+describe('expand (9-10)', () => {
+  it('sends commands only for the expanded group', () => {
+    const T0 = at('2026-11-16T15:00:00.000Z');
+    const b = new Map<string, SlowBucketLine>();
+    addToBucket(b, entry(300, T0, { key: 'a', ns: 'shop.orders' }));
+    addToBucket(b, entry(200, T0, { key: 'b', ns: 'shop.users' }));
+    const scope = { database: null, collection: null };
+    const lines = [...b.values()];
+    const none = summarize(lines, { from: null, scope, min: 100 });
+    expect(none.groups.every((g) => g.runs.every((r) => r.command === null))).toBe(true);
+    const one = summarize(lines, { from: null, scope, min: 100, expand: 'a' });
+    expect(one.groups.find((g) => g.key === 'a')?.runs[0].command).toEqual({ find: 'orders' });
+    expect(one.groups.find((g) => g.key === 'b')?.runs[0].command).toBeNull();
+    // 기록 줄 자체는 그대로
+    expect(lines.every((l) => l.ex.command !== null)).toBe(true);
   });
 });

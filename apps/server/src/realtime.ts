@@ -24,6 +24,7 @@ import type { ChangeStream, ChangeStreamDocument, Document as BsonDocument, Resu
 import type { Server, Socket } from 'socket.io';
 import {
   idString,
+  type ClientPresence,
   type EjsonValue,
   type LiveChange,
   type LiveLogEntry,
@@ -39,7 +40,7 @@ import { toWire } from './wire';
 import { createSampler, type Sampler } from './monitor/sampler';
 import { createActivityStats, type ActivityStats } from './monitor/activity';
 import { createRecorder, type Recorder, type ResumePoint } from './monitor/history';
-import { createSlowLog, type SlowLog } from './monitor/slowQueries';
+import { createSlowLog, slowInterval, type SlowLog } from './monitor/slowQueries';
 import { createSizes, type Sizes } from './monitor/sizes';
 import { createReplica, type Replica } from './monitor/replica';
 import { createTop, type Top } from './monitor/top';
@@ -152,6 +153,8 @@ interface Feed {
   stopped: boolean;
   // 이 연결을 쓰는 소켓 수
   users: number;
+  // 소켓마다 알려 온 탭 상태(9-10) — 느린 쿼리 읽기 주기를 정한다
+  presence: Map<string, ClientPresence>;
   graceTimer: NodeJS.Timeout | null;
   releaseClient: () => void;
   // 마지막으로 알린 상태
@@ -418,6 +421,7 @@ export const startRealtime = (io: Server) => {
         retryTimer: null,
         stopped: false,
         users: 0,
+        presence: new Map(),
         graceTimer: null,
         // 스트림이 쓰는 동안 클라이언트가 유휴 해제로 닫히지 않게 붙잡아 둔다
         releaseClient: retainClient(id),
@@ -457,6 +461,7 @@ export const startRealtime = (io: Server) => {
           client: () => clientFor(id),
           recorder: () => created.recorder,
           stored: () => getServerSettings().monitorHistory !== 'off',
+          every: () => slowInterval(getServerSettings().slowLog, created.presence.values()),
         }),
         sizes: createSizes({
           connectionId: id,
@@ -580,6 +585,8 @@ export const startRealtime = (io: Server) => {
   io.on('connection', (socket: Socket) => {
     // 이 소켓이 쓰는 연결의 피드. 'connection:use'로 정한다
     let feed: Feed | null = null;
+    // 이 탭의 상태(9-10) — 알려 오기 전엔 보이는 탭으로 본다
+    let presence: ClientPresence = { visible: true, slowCard: false };
 
     const leaveScope = () => {
       for (const room of socket.rooms) if (room !== socket.id) void socket.leave(room);
@@ -587,7 +594,10 @@ export const startRealtime = (io: Server) => {
 
     // 이 탭이 쓸 연결 — 바꾸면 이전 연결의 채널을 모두 떠난다
     socket.on('connection:use', (id: unknown) => {
-      if (feed) release(feed);
+      if (feed) {
+        feed.presence.delete(socket.id);
+        release(feed);
+      }
       feed = null;
       leaveScope();
       if (typeof id !== 'string') return;
@@ -597,6 +607,7 @@ export const startRealtime = (io: Server) => {
         return;
       }
       feed = next;
+      feed.presence.set(socket.id, presence);
       void socket.join(connRoom(id));
       // 현재 상태만 알린다 — resync는 '그 순간' 놓친 게 있다는 신호라 지난 값을 새 연결에 다시 보내지 않는다
       // (끊겼다 다시 붙은 클라이언트는 스스로 resync한다)
@@ -622,6 +633,11 @@ export const startRealtime = (io: Server) => {
     });
     socket.on('monitor:unsubscribe', () => {
       if (feed) void socket.leave(monitorRoom(feed.id));
+    });
+    // 탭이 보이는지, Slow 카드가 떠 있는지(9-10) — 연결을 바꿔도 그대로 따라간다
+    socket.on('presence', (next: Partial<ClientPresence>) => {
+      presence = { visible: next?.visible !== false, slowCard: next?.slowCard === true };
+      feed?.presence.set(socket.id, presence);
     });
     // 브라우저↔서버 왕복 시간 측정용 — 받자마자 응답만 한다
     socket.on('rtt', (ack: unknown) => {
@@ -649,7 +665,10 @@ export const startRealtime = (io: Server) => {
     });
 
     socket.on('disconnect', () => {
-      if (feed) release(feed);
+      if (feed) {
+        feed.presence.delete(socket.id);
+        release(feed);
+      }
       feed = null;
     });
   });

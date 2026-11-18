@@ -33,6 +33,7 @@ import type {
   IndexesReport,
   SizesReport,
   SlowQueriesReport,
+  ClientPresence,
   TopReport,
   TransactionsReport,
   OplogReport,
@@ -207,8 +208,22 @@ export const createRemoteDataSource = (): DataSource => {
     undoStack = [];
     view = { database: null, collection: null };
     lastServerState = null;
-    if (socket?.connected) socket.emit('connection:use', getActiveConnection());
+    if (socket?.connected) {
+      socket.emit('connection:use', getActiveConnection());
+      sendPresence();
+    }
   });
+
+  // 서버가 로그를 얼마나 자주 읽을지 정하게 탭 상태를 알린다(9-10, 소켓 'presence')
+  let slowCards = 0;
+  const presence = (): ClientPresence => ({
+    visible: typeof document === 'undefined' || document.visibilityState === 'visible',
+    slowCard: slowCards > 0,
+  });
+  const sendPresence = () => {
+    if (socket?.connected) socket.emit('presence', presence());
+  };
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', sendPresence);
 
   const ensureSocket = (): Socket => {
     if (socket) return socket;
@@ -217,6 +232,7 @@ export const createRemoteDataSource = (): DataSource => {
     next.on('connect', () => {
       // 서버는 소켓마다 연결·채널을 기억하므로 다시 붙으면 처음부터 알려야 한다 — 연결이 먼저(채널 이름에 연결 id가 들어간다)
       next.emit('connection:use', getActiveConnection());
+      next.emit('presence', presence());
       next.emit('view', view);
       // 활동 패널이 열려 있었다면 기록 구독도 다시(최근 기록이 다시 오지만 패널이 id로 중복을 거른다)
       if (logListeners.size > 0) next.emit('log:subscribe');
@@ -447,7 +463,17 @@ export const createRemoteDataSource = (): DataSource => {
       const params = new URLSearchParams({ range: query.range, min: String(query.min) });
       if (query.database) params.set('database', query.database);
       if (query.database && query.collection) params.set('collection', query.collection);
+      if (query.expand) params.set('expand', query.expand);
       return request<SlowQueriesReport>(`/monitor/slow?${params}`);
+    },
+    watchSlowCard() {
+      ensureSocket();
+      slowCards += 1;
+      sendPresence();
+      return () => {
+        slowCards -= 1;
+        sendPresence();
+      };
     },
     getSizes(query) {
       const params = new URLSearchParams({ range: query.range });

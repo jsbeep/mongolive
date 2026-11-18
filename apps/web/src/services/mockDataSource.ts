@@ -119,6 +119,7 @@ export const createMockDataSource = (): DataSource => {
     getOperations: async () => null,
     killOperation: async () => undefined,
     getSlowQueries: async () => null,
+    watchSlowCard: () => () => undefined,
     getSizes: async () => null,
     measureSizes: async () => false,
     getIndexes: async () => null,

@@ -37,6 +37,8 @@ export interface ServerSettings {
   alertDeletes: AlertDeleteLimit;
   alertBurst: AlertBurstLimit;
   alertDrops: boolean;
+  // 느린 쿼리 수집(설정 › Monitor, 9-10) — 끄면 서버 로그(getLog)를 읽지 않는다
+  slowLog: boolean;
 }
 
 export const DEFAULT_SERVER_SETTINGS: ServerSettings = {
@@ -47,6 +49,7 @@ export const DEFAULT_SERVER_SETTINGS: ServerSettings = {
   alertDeletes: 1_000,
   alertBurst: 1_000,
   alertDrops: true,
+  slowLog: true,
 };
 
 // 이 쓰기가 건드리는 곳. null = MongoDB를 건드리지 않는 연산(메타데이터)
@@ -113,5 +116,6 @@ export const normalizeServerSettings = (raw: unknown): ServerSettings => {
   const alertDeletes = ALERT_DELETE_LIMITS.find((n) => n === obj.alertDeletes) ?? DEFAULT_SERVER_SETTINGS.alertDeletes;
   const alertBurst = ALERT_BURST_LIMITS.find((n) => n === obj.alertBurst) ?? DEFAULT_SERVER_SETTINGS.alertBurst;
   const alertDrops = typeof obj.alertDrops === 'boolean' ? obj.alertDrops : DEFAULT_SERVER_SETTINGS.alertDrops;
-  return { readOnly: obj.readOnly === true, protected: protectedTargets, monitorHistory, backfillAuto, alertDeletes, alertBurst, alertDrops };
+  const slowLog = typeof obj.slowLog === 'boolean' ? obj.slowLog : DEFAULT_SERVER_SETTINGS.slowLog;
+  return { readOnly: obj.readOnly === true, protected: protectedTargets, monitorHistory, backfillAuto, alertDeletes, alertBurst, alertDrops, slowLog };
 };

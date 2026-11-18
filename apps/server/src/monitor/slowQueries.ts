@@ -1,7 +1,9 @@
 // Monitor › Operations › 느린 쿼리 (9-5b)
 //
 // MongoDB는 slowms(기본 100ms)보다 오래 걸린 작업을 자기 로그에 "Slow query"(id 51803)로 남긴다. 우리는 그걸 읽기만 한다
-// (slowms·프로파일러는 바꾸지 않는다 — zero-footprint). 샘플러가 10초마다 getLog:'global'로 서버 로그의 최근 줄(약 1천 줄)을 받는다.
+// (slowms·프로파일러는 바꾸지 않는다 — zero-footprint). getLog:'global'로 서버 로그의 최근 줄(약 1천 줄)을 받는다.
+// 주기(9-10): 한 번에 버퍼 전체(0.2~1MB)가 오니 탭 상태로 고른다 — Slow 카드가 보이면 10초, 탭이 보이면 30초, 모두 숨으면 60초.
+//   설정 › Monitor에서 끄면 읽지 않는다(slowms 확인도). 다시 켜면 그 뒤에 쓴 줄부터.
 //
 // 새 줄 가려내기: totalLinesWritten(서버가 켜진 뒤 쓴 줄 수)의 차이만큼이 새 줄. 차이가 받은 줄보다 많으면
 //   그사이 넘어간 줄이 있다 → '놓쳤을 수 있음' 구간으로 남긴다. 처음 읽을 때는 지난번에 파일에 적은 마지막 시각(커서) 뒤만.
@@ -14,6 +16,7 @@ import { BSON, type Document as BsonDocument, type MongoClient } from 'mongodb';
 import {
   SLOW_THRESHOLDS,
   valueKind,
+  type ClientPresence,
   type EjsonObject,
   type MonitorRange,
   type RunningOpKind,
@@ -42,6 +45,26 @@ const MISSED_FLUSH_MS = 10 * 60 * 1000;
 const SLOWMS_TTL_MS = 5 * 60 * 1000;
 // 권한 없음·옛 버전이면 이만큼 뒤에 다시 물어본다(역할을 고쳤을 수 있다)
 const RETRY_MS = 10 * 60 * 1000;
+// 읽기 주기(9-10). 샘플러 박자(10초) 위에서 돈다 — 30초면 세 번째, 60초면 여섯 번째 박자마다
+export const SLOW_FAST_MS = SAMPLE_INTERVAL_MS;
+export const SLOW_BASE_MS = 30_000;
+export const SLOW_IDLE_MS = 60_000;
+// 박자가 조금 늦게 와도 차례를 건너뛰지 않게
+const TICK_SLACK_MS = SAMPLE_INTERVAL_MS / 2;
+// 놓친 구간끼리 이만큼 가까우면 하나로(가장 긴 주기에서도 이어지게)
+const MISSED_JOIN_MS = SLOW_IDLE_MS * 2;
+
+// 탭들의 상태 → 읽기 주기. null = 읽지 않음(설정에서 끔)
+export const slowInterval = (enabled: boolean, tabs: Iterable<ClientPresence>): number | null => {
+  if (!enabled) return null;
+  let visible = false;
+  for (const tab of tabs) {
+    if (!tab.visible) continue;
+    if (tab.slowCard) return SLOW_FAST_MS;
+    visible = true;
+  }
+  return visible ? SLOW_BASE_MS : SLOW_IDLE_MS;
+};
 
 export const RANGE_MS: Record<MonitorRange, number | null> = {
   '5m': 5 * 60_000,
@@ -268,7 +291,7 @@ export const addToBucket = (buckets: Map<string, SlowBucketLine>, e: SlowEntry) 
 // 줄들 → 화면의 묶음. from = 이 시각 뒤(null = 전부), min보다 빠른 구간은 뺀다
 export const summarize = (
   lines: SlowLine[],
-  { from, scope, min }: { from: number | null; scope: OperationsScope; min: SlowThreshold },
+  { from, scope, min, expand = null }: { from: number | null; scope: OperationsScope; min: SlowThreshold; expand?: string | null },
 ): { groups: SlowGroup[]; hidden: number; missed: SlowMissed[] } => {
   const minBand = bandOf(min);
   const groups = new Map<string, SlowGroup>();
@@ -319,13 +342,17 @@ export const summarize = (
     g.runs.push(line.ex);
   }
   const list = [...groups.values()].sort((a, b) => b.totalMs - a.totalMs).slice(0, MAX_GROUPS);
-  for (const g of list) g.runs = g.runs.sort((a, b) => b.at - a.at).slice(0, RUNS_PER_GROUP);
+  // 명령은 펼친 그룹에만 싣는다(하나에 최대 4KB × 20개 × 200묶음이 될 수 있다). 기록 줄은 바꾸지 않는다
+  for (const g of list) {
+    const runs = g.runs.sort((a, b) => b.at - a.at).slice(0, RUNS_PER_GROUP);
+    g.runs = g.key === expand ? runs : runs.map((r) => (r.command === null ? r : { ...r, command: null }));
+  }
   // 이어진 구간은 하나로(10분마다 끊어 적은 것·바로 이어진 것)
   missed.sort((a, b) => a.from - b.from);
   const merged: SlowMissed[] = [];
   for (const m of missed) {
     const prev = merged[merged.length - 1];
-    if (prev && m.from - prev.to <= SAMPLE_INTERVAL_MS * 6) {
+    if (prev && m.from - prev.to <= MISSED_JOIN_MS) {
       prev.to = Math.max(prev.to, m.to);
       prev.lines += m.lines;
     } else merged.push({ ...m });
@@ -342,6 +369,8 @@ export interface SlowLogHooks {
   recorder: () => Recorder;
   // 기록 파일에 남기는가(설정 › Monitor 기록)
   stored: () => boolean;
+  // 읽기 주기(ms) — null = 설정에서 끔. 없으면 박자마다(테스트)
+  every?: () => number | null;
   clock?: () => number;
 }
 
@@ -352,7 +381,7 @@ export interface SlowLog {
   stop: () => Promise<void>;
   // 주소가 바뀜 — 지금까지 것을 옛 서버 폴더에 적고 처음부터(기록기 reset보다 먼저 부른다)
   reset: () => Promise<void>;
-  report: (query: { range: MonitorRange; scope: OperationsScope; min: SlowThreshold }) => Promise<SlowQueriesReport>;
+  report: (query: { range: MonitorRange; scope: OperationsScope; min: SlowThreshold; expand?: string | null }) => Promise<SlowQueriesReport>;
 }
 
 export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
@@ -374,9 +403,14 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
   // 기록이 꺼져 있을 때만 — 최근 1시간
   let memory: SlowLine[] = [];
   let slowms: { value: number | null; at: number } | null = null;
+  const everyNow = (): number | null => (hooks.every ? hooks.every() : SAMPLE_INTERVAL_MS);
+  // 마지막으로 읽은 시각과 그때의 주기, 설정에서 꺼 둔 상태인가
+  let lastRead: number | null = null;
+  let lastEvery = SAMPLE_INTERVAL_MS;
+  let off = false;
 
   const noteMissed = (from: number, to: number, lines: number) => {
-    if (missedOpen && from - missedOpen.t <= SAMPLE_INTERVAL_MS * 3) {
+    if (missedOpen && from - missedOpen.t <= lastEvery * 3) {
       missedOpen.t = Math.max(missedOpen.t, to);
       missedOpen.missed += lines;
       return;
@@ -418,7 +452,29 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
 
   const poll = async () => {
     const now = clock();
+    const every = everyNow();
+    if (every === null) {
+      // 막 껐으면 모아 둔 것을 지금 적는다
+      if (!off) {
+        off = true;
+        await write(take(true));
+      }
+      return;
+    }
+    if (off) {
+      // 다시 켬 — 꺼져 있던 동안 쓴 줄은 건너뛴다('놓침'으로 세지 않는다)
+      off = false;
+      prevTotal = null;
+      prevNewest = null;
+      started = true;
+      since = now;
+      lastRead = null;
+    }
     if ((status === 'denied' || status === 'unsupported') && now < retryAt) return;
+    // 주기 훅이 없으면(테스트) 부를 때마다 읽는다
+    if (hooks.every && lastRead !== null && now - lastRead < every - TICK_SLACK_MS) return;
+    lastRead = now;
+    lastEvery = every;
     const mine = generation;
     let res: BsonDocument;
     try {
@@ -511,14 +567,17 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
       prevNewest = null;
       started = false;
       since = null;
+      lastRead = null;
+      off = false;
       writes.clear();
       pending = new Map();
       memory = [];
       slowms = null;
       return done;
     },
-    async report({ range, scope, min }) {
+    async report({ range, scope, min, expand = null }) {
       const now = clock();
+      const disabled = everyNow() === null;
       const span = RANGE_MS[range];
       const from = span === null ? null : now - span;
       const stored = hooks.stored();
@@ -535,12 +594,13 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
       return {
         at: now,
         range,
-        status,
-        error,
-        slowms: await readSlowms(),
+        status: disabled ? 'off' : status,
+        error: disabled ? null : error,
+        // 꺼져 있으면 MongoDB에 묻지 않는다
+        slowms: disabled ? null : await readSlowms(),
         min,
         stored,
-        ...summarize(lines, { from, scope, min }),
+        ...summarize(lines, { from, scope, min, expand }),
       };
     },
   };

@@ -145,7 +145,16 @@ export interface DataSource {
   getOperations(scope: { database: string | null; collection: string | null }): Promise<OperationsReport | null>;
   killOperation(opid: string): Promise<void>;
   // Monitor › Operations › 느린 쿼리 — 서버가 MongoDB 로그에서 모은 것(9-5b). Mock은 null
-  getSlowQueries(query: { database: string | null; collection: string | null; range: MonitorRange; min: SlowThreshold }): Promise<SlowQueriesReport | null>;
+  //   expand = 펼친 그룹 키 — 그 그룹의 실행에만 명령(command)이 실려 온다(9-10, 응답 크기)
+  getSlowQueries(query: {
+    database: string | null;
+    collection: string | null;
+    range: MonitorRange;
+    min: SlowThreshold;
+    expand?: string | null;
+  }): Promise<SlowQueriesReport | null>;
+  // Slow 카드가 떠 있는 동안 — 서버가 로그를 10초마다 읽는다(아니면 30초, 탭이 숨으면 60초). 돌려준 함수로 끝낸다. Mock은 아무것도 안 함
+  watchSlowCard(): () => void;
   // Monitor › Collections의 크기(9-6a) — 서버가 1시간마다 잰 것 / 지금 재기(true = 시작함). Mock은 null / false
   getSizes(query: { database: string | null; collection: string | null; range: MonitorRange }): Promise<SizesReport | null>;
   measureSizes(): Promise<boolean>;

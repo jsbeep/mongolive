@@ -121,8 +121,11 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
   const [sort, setSort] = useState<SortKey>('total');
   const [open, setOpen] = useState<string | null>(null);
   const scopeKey = `${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
-  const queryRef = useRef({ scope, range, min });
-  queryRef.current = { scope, range, min };
+  const queryRef = useRef({ scope, range, min, open });
+  queryRef.current = { scope, range, min, open };
+
+  // 떠 있는 동안 서버가 로그를 10초마다 읽는다(9-10)
+  useEffect(() => api.watchSlowCard(), []);
 
   useEffect(() => {
     setReport(null);
@@ -137,7 +140,8 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
       if (document.hidden) return; // 다시 보일 때 visibilitychange가 이어 간다
       try {
         const q = queryRef.current;
-        const next = await api.getSlowQueries({ database: q.scope.database, collection: q.scope.collection, range: q.range, min: q.min });
+        // 펼친 그룹에만 명령이 실려 온다 — 펼치면 바로 다시 받는다
+        const next = await api.getSlowQueries({ database: q.scope.database, collection: q.scope.collection, range: q.range, min: q.min, expand: q.open });
         if (!alive) return;
         setFailed(null);
         if (next) {
@@ -164,7 +168,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [scopeKey, range, min]);
+  }, [scopeKey, range, min, open]);
 
   const slowms = report?.slowms ?? null;
   const floor = floorOf(slowms);
@@ -192,7 +196,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
       <div className={styles.toolbar}>
         <div className="flex min-w-0 flex-col">
           <h2 className={styles.title}>Slow queries{report && status === 'ok' ? ` · ${shown.length} shape${shown.length === 1 ? '' : 's'}` : ''}</h2>
-          <span className={styles.sub} data-tt="Read every 10 s from MongoDB’s own log, on the node mongolive is connected to (usually the primary). mongolive never changes slowms.">
+          <span className={styles.sub} data-tt="Read from MongoDB’s own log on the node mongolive is connected to (usually the primary) — every 10 s while this card is open, 30 s otherwise, 60 s when no tab is visible. mongolive never changes slowms.">
             Finished operations MongoDB logged as slower than {slowms ?? DEFAULT_SLOWMS} ms{slowms === null && report ? ' (default)' : ''} · {RANGE_LABEL[range]}
             {report ? ` · ${fmtClock(report.at, true)}` : ''}
           </span>
@@ -245,6 +249,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
         </p>
       )}
       {status === 'closed' && <p className={styles.note}>Slow queries are read while this connection is open in a tab.</p>}
+      {status === 'off' && <p className={styles.note}>Slow query collection is off (Settings › Monitor) — MongoDB’s log isn’t read. Earlier records are still shown.</p>}
       {missedLines > 0 && (
         <p className={styles.note} data-tt={report?.missed.map((m) => `${fmtDateTime(m.from)} – ${fmtClock(m.to)} · ${fmtNumber(m.lines)} lines`).join('\n')}>
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700" />
@@ -259,7 +264,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
         <div className="flex items-center gap-2 px-1 py-6 text-[13px] text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin" /> Reading…
         </div>
-      ) : report && (status === 'ok' || status === 'closed') && (
+      ) : report && (status === 'ok' || status === 'closed' || status === 'off') && (
         <div className={styles.card}>
           {shown.length === 0 ? (
             <div className={styles.empty}>

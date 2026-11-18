@@ -516,7 +516,7 @@ export interface SlowRun {
   // 돌려준 문서 수(수정·삭제는 맞은 문서 수)
   returned: number | null;
   summary: string;
-  // 너무 길면 { $truncated: 요약 }
+  // 너무 길면 { $truncated: 요약 }. 응답 크기를 줄이려고 펼친 그룹(expand)에만 채워 보낸다 — 나머지는 null
   command: EjsonObject | null;
 }
 
@@ -548,8 +548,8 @@ export interface SlowMissed {
 }
 
 //   ok = 읽는 중, closed = 이 연결을 쓰는 탭이 없어 안 읽음, denied = getLog 권한 없음,
-//   unsupported = 4.4 전(로그가 JSON이 아님), error = 그 밖의 실패
-export type SlowLogStatus = 'ok' | 'closed' | 'denied' | 'unsupported' | 'error';
+//   unsupported = 4.4 전(로그가 JSON이 아님), error = 그 밖의 실패, off = 설정에서 수집을 끔(9-10)
+export type SlowLogStatus = 'ok' | 'closed' | 'denied' | 'unsupported' | 'error' | 'off';
 
 export interface SlowQueriesReport {
   at: number;
@@ -565,6 +565,15 @@ export interface SlowQueriesReport {
   missed: SlowMissed[];
   // 기록 파일에 남기는가(설정 › Monitor 기록이 켜져 있음). 꺼져 있으면 최근 1시간만 메모리에
   stored: boolean;
+}
+
+// 탭이 서버에 알리는 상태(소켓 'presence', 9-10) — 서버 로그(getLog)를 얼마나 자주 읽을지 정한다.
+//   그 연결을 쓰는 탭 중 Slow 카드가 보이는 탭이 있으면 10초, 보이는 탭이 있으면 30초, 모두 숨겨져 있으면 60초
+export interface ClientPresence {
+  // 브라우저 탭이 보이는가(document.visibilityState)
+  visible: boolean;
+  // Monitor › Operations의 Slow queries 카드가 떠 있는가
+  slowCard: boolean;
 }
 
 // ── Monitor › Collections의 크기 (9-6a, GET /api/monitor/sizes) ─────────────────

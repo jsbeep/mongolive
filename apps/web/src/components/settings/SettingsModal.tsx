@@ -572,6 +572,18 @@ function MonitorSection() {
       </div>
 
       <div className={styles.group}>
+        <div className="flex items-center justify-between gap-4">
+          <p className={styles.groupTitle}>Slow queries</p>
+          <Switch label="Collect slow queries" checked={settings.slowLog} onChange={(v) => void save({ slowLog: v })} />
+        </div>
+        <p className={styles.groupHint}>
+          mongolive reads MongoDB’s own log to find slow operations — the whole recent log (up to about 1 MB) on every read: every 10 s while the
+          Slow queries card is open, 30 s otherwise, 60 s when no tab is visible. Turn it off to never read the log, e.g. on a remote server
+          with a slow link. Saved on the server, for every browser.
+        </p>
+      </div>
+
+      <div className={styles.group}>
         <p className={styles.groupTitle}>This connection</p>
         {!connection ? (
           <p className={styles.groupHint}>Connect to see this connection's history.</p>

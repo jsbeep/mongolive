@@ -165,13 +165,27 @@ monitorRouter.get('/monitor/slow', async (req, res) => {
     database: database ? checkDatabaseName(database) : null,
     collection: collection ? checkCollectionName(collection) : null,
   };
+  // 펼친 그룹 — 그 그룹에만 명령을 싣는다(9-10)
+  const expand = text(req.query.expand);
   const slow = slowOf(connectionIdOf(res));
   if (!slow) {
-    const closed: SlowQueriesReport = { at: Date.now(), range, status: 'closed', error: null, slowms: null, min, groups: [], hidden: 0, missed: [], stored: getServerSettings().monitorHistory !== 'off' };
+    const settings = getServerSettings();
+    const closed: SlowQueriesReport = {
+      at: Date.now(),
+      range,
+      status: settings.slowLog ? 'closed' : 'off',
+      error: null,
+      slowms: null,
+      min,
+      groups: [],
+      hidden: 0,
+      missed: [],
+      stored: settings.monitorHistory !== 'off',
+    };
     res.json(closed);
     return;
   }
-  res.json(await slow.report({ range, scope, min }));
+  res.json(await slow.report({ range, scope, min, expand }));
 });
 
 const scopeOf = (query: Record<string, unknown>) => {
