@@ -34,9 +34,17 @@ const readTime = (storage: ConnectionScoped): number | null => {
 // 저장 공간이 꽉 차도 기능은 동작한다(새로고침하면 잊을 뿐)
 const writeTime = (storage: ConnectionScoped, value: number) => storage.write(String(value));
 
+// 이 탭이 못 따라와서(회선이 느림) 서버가 건너뛴 변경 — 수는 쌓이고, at은 마지막으로 따라잡은 때(이 브라우저 시계)
+export interface SkippedChanges {
+  count: number;
+  at: number;
+}
+
 export interface ActivityLog {
   // 비운 시점 이후의 기록, 최신이 앞
   entries: LiveLogEntry[];
+  // 비우기 전까지 남는다. null = 건너뛴 적 없음
+  skipped: SkippedChanges | null;
   // 이 시점(serverTime) 이후 기록이 안 읽음. null = 아직 기준 없음(첫 접속 직후)
   seenAt: number | null;
   unread: number;
@@ -53,6 +61,17 @@ export function useActivityLog(): ActivityLog {
   // null = 이 브라우저에서 처음 — 첫 기록 묶음(backlog)을 받으면 '다 읽음'으로 시작한다
   const [seenAt, setSeenAt] = useState<number | null>(() => readTime(SEEN));
   const [readIds, setReadIds] = useState<ReadonlySet<string>>(readIdsOf);
+  const [skipped, setSkipped] = useState<SkippedChanges | null>(null);
+
+  // 따라잡은 뒤 서버가 이 탭에만 보내는 resync에 건너뛴 수가 실려 온다(빠진 기록은 log:backlog로 다시 온다)
+  useEffect(() => {
+    if (dataSourceKind !== 'remote') return;
+    return api.onLiveStatus((status) => {
+      const n = status.skipped;
+      if (!n) return;
+      setSkipped((prev) => ({ count: (prev?.count ?? 0) + n, at: Date.now() }));
+    });
+  }, []);
 
   useEffect(() => {
     if (dataSourceKind !== 'remote') return;
@@ -85,6 +104,7 @@ export function useActivityLog(): ActivityLog {
   const newestTime = entries[0]?.serverTime;
 
   const clear = useCallback(() => {
+    setSkipped(null);
     if (newestTime === undefined) return;
     setClearedAt(newestTime);
     writeTime(CLEARED, newestTime);
@@ -109,5 +129,5 @@ export function useActivityLog(): ActivityLog {
     });
   }, []);
 
-  return { entries, seenAt, unread, readIds, clear, markSeen, markRead };
+  return { entries, skipped, seenAt, unread, readIds, clear, markSeen, markRead };
 }

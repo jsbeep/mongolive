@@ -129,6 +129,7 @@ export function NotificationCenter({ open, onClose, tab, onTabChange, activity, 
             ) : (
               <ChangesTab
                 entries={activity.entries}
+                skipped={activity.skipped}
                 seenAt={activity.seenAt}
                 unread={activity.unread}
                 readIds={activity.readIds}

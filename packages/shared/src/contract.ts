@@ -187,6 +187,9 @@ export interface LiveStatus {
   error?: string;
   // true면 이벤트를 놓쳤을 수 있다 — 화면을 전부 다시 받아야 한다
   resync?: boolean;
+  // 이 탭이 못 따라와서(회선이 느려 서버 송신 버퍼가 넘침) 서버가 보내지 않고 건너뛴 변경 수 — resync와 같이 온다.
+  // 서버는 따라잡은 뒤 이 탭에만 보내고, 활동 패널을 구독 중이면 log:backlog도 다시 보낸다
+  skipped?: number;
   // true면 이 탭이 쓰던 연결이 지워졌다 — 화면은 연결 고르기(웰컴)로 돌아간다
   gone?: boolean;
 }

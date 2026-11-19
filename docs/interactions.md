@@ -71,9 +71,11 @@ web 안의 계약 경계는 `web/src/services/dataSource.ts`의 `DataSource` 인
 | web→server | `monitor:subscribe/unsubscribe` | 모니터 구독 | |
 | web→server | `presence` | `ClientPresence {visible, slowCard}` — 탭이 보이는지, Slow 카드가 떠 있는지 (`watchSlowCard`) | |
 | web→server | `rtt` | 왕복 시간 측정 (`measureRtt`) | |
-| server→web | `status` | `LiveStatus` (연결·live 상태) | 연결 room |
-| server→web | `change` | `LiveChange` | 컬렉션 room |
-| server→web | `log`, `log:backlog` | `LiveLogEntry[]` | 로그 구독자 |
+| server→web | `status` | `LiveStatus` (연결·live 상태). 밀렸다 따라잡은 탭엔 `{resync, skipped}` | 연결 room / 그 탭만 |
+| server→web | `change` | `LiveChange` | 컬렉션 room (밀린 탭 제외) |
+| server→web | `log`, `log:backlog` | `LiveLogEntry[]`. 따라잡은 탭엔 `log:backlog`를 다시 | 로그 구독자 (밀린 탭 제외) |
+
+**밀린 탭 (backpressure)** — 탭으로 가는 송신 버퍼(engine.io가 아직 못 넘긴 글자 수)가 4MB를 넘으면 그 탭을 `c:<id>:behind` room에 넣고 `change`·`log`를 보내지 않는다. 서버 메모리가 회선 속도에 끌려 끝없이 늘지 않게 하려는 것. 2초 쉰 뒤 0.5초마다 버퍼가 비었는지 보고, 비면 room에서 빼고 `status {resync: true, skipped: n}`(+ 로그 구독 중이면 `log:backlog`)를 그 탭에만 보낸다. 탭은 보이는 범위를 다시 받고, Changes 탭에 건너뛴 수를 띄운다. 브라우저는 JS가 바빠도 소켓을 계속 읽으므로, 이게 걸리는 건 주로 회선이 느릴 때(원격·모바일)다.
 | server→web | `monitor:sample`, `monitor:backlog` | `MonitorTick` / `MonitorSnapshot` (10초) | 모니터 room |
 | server→web | `monitor:alert` | `MonitorAlert` | 연결 room (모든 탭) |
 | server→web | `monitor:backfill` | `BackfillReport` | 모니터 room |
@@ -122,7 +124,8 @@ feed는 그 연결을 쓰는 탭이 있으면 돌고, 마지막 탭이 떠나고
 |---|---|---|
 | **10초 틱** | feed 시작 | 10초: ping+serverStatus → `monitor:sample` push → metrics/ 기록 → sizes·alerts·transactions tick → slow·top·replica poll(병렬) |
 | slow `getLog` | 10초 틱이 차례 확인 | 그 연결의 탭 중 Slow 카드가 보이면 10초 / 보이는 탭이 있으면 30초 / 모두 숨으면 60초 / 설정 off면 안 읽음 |
-| change stream | Mongo 이벤트 | 이벤트마다: `change`·`log` push → activity·alerts·transactions에 기록 |
+| change stream | Mongo 이벤트 | 이벤트마다: 밀린 탭 확인 → `change`·`log` push(밀린 탭 제외) → activity·alerts·transactions에 기록 |
+| 밀린 탭 따라잡기 확인 | 탭이 밀렸을 때 | 2초 뒤부터 0.5초마다, 버퍼가 비면 resync |
 | sizes 자동 측정 | 10초 틱이 시각 확인 | 1시간 |
 | 클라이언트 정리 | `db.ts` | 60초마다 확인, 10분 놀면 닫음 |
 | 소켓 세션 재확인 | `index.ts` | 60초 |
@@ -175,7 +178,7 @@ feed는 그 연결을 쓰는 탭이 있으면 돌고, 마지막 탭이 떠나고
 | 작업 | Mongo 부하 | 서버 메모리·디스크 | 빈도 | 종합 |
 |---|---|---|---|---|
 | ping + serverStatus | 하 (~4KB) | 하 | 10초 | 하 |
-| change stream | 하~중 (쓰기량 비례) | 중 (로그 backlog, lag 1000개) | 상시 | 중 |
+| change stream | 하~중 (쓰기량 비례) | 중 (로그 backlog, lag 1000개, 송신 버퍼 탭당 4MB까지 + 보내는 중인 한 묶음) | 상시 | 중 |
 | slow (`getLog`) | 중 (한 번에 버퍼 전체 0.2~1MB) | 중 (1시간 보관) | 대부분 30초, 카드 볼 때 10초, 숨으면 60초, off 가능 | 중 — 10초 고정일 때의 약 1/3 |
 | top / replica | 하 | 하~중 (1시간 보관) | 10초 | 하 |
 | metrics/ 기록 | — | 디스크 쓰기 | 10초 | 하 (SD카드면 주의) |

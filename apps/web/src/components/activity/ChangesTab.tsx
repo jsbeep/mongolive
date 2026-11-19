@@ -9,6 +9,7 @@
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { CheckCheck, ChevronDown, Pause, Play, Trash2 } from 'lucide-react';
 import type { LiveLogEntry, LiveOperation } from '../../types/explorer';
+import type { SkippedChanges } from '../../hooks/useActivityLog';
 import { cn } from '../../utils/cn';
 import { buildItems, txnSummary, txnTotals, type EntryGroup, type TxnGroup } from './grouping';
 
@@ -80,6 +81,8 @@ const styles = {
   children: 'ml-[34px] flex flex-col gap-px border-l border-slate-100 pl-2',
   empty: 'flex flex-col items-center justify-center gap-1 py-16 text-xs text-slate-400 text-center',
   newBanner: 'mx-3 mt-2 rounded-lg bg-sky-50 px-3 py-1.5 text-[11px] text-sky-700 text-center',
+  // 이 탭이 못 따라와서 건너뛴 변경 — 목록에 빈 데가 있다는 표시
+  skipBanner: 'mx-3 mt-2 rounded-lg bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700 text-center',
 } as const;
 
 const shortId = (id: string) => (id.length > 12 ? `…${id.slice(-8)}` : id);
@@ -231,6 +234,8 @@ function TxnRow({ item, total, unread, open, onToggle, first, last }: TxnRowProp
 interface ChangesTabProps {
   // 비운 시점 이후의 기록(최신이 앞) — 구독·보관은 useActivityLog가 한다
   entries: LiveLogEntry[];
+  // 이 탭이 못 따라와서 서버가 건너뛴 변경(비우면 사라진다)
+  skipped: SkippedChanges | null;
   seenAt: number | null;
   unread: number;
   // 하나씩 읽은 기록(바로가기로 누른 것)
@@ -259,6 +264,7 @@ const loadHiddenOps = (): Set<OpGroup> => {
 
 export function ChangesTab({
   entries: liveEntries,
+  skipped,
   seenAt,
   unread,
   readIds,
@@ -443,6 +449,11 @@ export function ChangesTab({
         })}
       </div>
 
+      {skipped && (
+        <div className={styles.skipBanner} data-tt="The connection to this tab was too slow, so the server skipped live changes until it caught up. The screen was reloaded; the list may have gaps.">
+          Skipped {skipped.count.toLocaleString()} changes — this tab couldn’t keep up (last at {clock(skipped.at).slice(0, 8)})
+        </div>
+      )}
       {paused && heldCount > 0 && <div className={styles.newBanner}>{heldCount} new while paused</div>}
 
       <div className={styles.list}>

@@ -50,6 +50,7 @@ import { clusterNow, createBackfill, resumePointOf, toTimestamp, tokenTs, tsOf, 
 import { clusterFingerprint } from './monitor/identity';
 import { SAMPLE_INTERVAL_MS } from './monitor/sampler';
 import { getServerSettings } from './settings';
+import { trackSendQueue, type SendQueue } from './sendQueue';
 
 const DOCUMENT_OPS = new Set<LiveOperation>(['insert', 'update', 'replace', 'delete']);
 const STRUCTURE_OPS = new Set<LiveOperation>(['create', 'drop', 'rename', 'dropDatabase']);
@@ -60,6 +61,8 @@ const dbRoom = (id: string, database: string) => `c:${id}:db:${database}`;
 const colRoom = (id: string, database: string, collection: string) => `c:${id}:col:${database}.${collection}`;
 const logRoom = (id: string) => `c:${id}:log`;
 const monitorRoom = (id: string) => `c:${id}:monitor`;
+// 못 따라오는 탭 — change·log를 잠시 안 보낸다(아래 '밀린 탭')
+const behindRoom = (id: string) => `c:${id}:behind`;
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -134,6 +137,15 @@ const LOG_BACKLOG = 200;
 const WINDOW_LAG_SAMPLES = 1000;
 // 마지막 탭이 떠난 뒤 스트림을 닫기까지
 const FEED_GRACE_MS = 60 * 1000;
+// 밀린 탭: 탭으로 가는 송신 버퍼가 이만큼(글자 수) 넘으면 그 탭엔 change·log를 안 보낸다 —
+// 회선이 느린 탭 때문에 서버 메모리가 끝없이 늘지 않게. 쉬었다가 버퍼가 비면 resync로 화면을 새로 받게 한다
+const BEHIND_LIMIT = 4 * 1024 * 1024;
+// 밀린 뒤 최소한 쉬는 시간(resync가 연달아 오지 않게)과, 그다음 버퍼가 비었는지 보는 간격
+const BEHIND_HOLD_MS = 2000;
+const BEHIND_CHECK_MS = 500;
+
+// 소켓마다 아직 못 보낸 양
+const sendQueues = new WeakMap<Socket, SendQueue>();
 
 const UNREACHABLE_ERROR = "Can't reach MongoDB.";
 const GONE_ERROR = 'This connection no longer exists — it may have been deleted.';
@@ -188,6 +200,10 @@ interface Feed {
   needsBoundary: boolean;
   // 실시간을 다시 받기 시작한 때(ms) — 맨 마지막 빈 구간을 다 채우면 메모리 집계의 '세기 시작'을 앞당긴다
   t0At: number | null;
+  // 받은 이벤트 번호(1부터) — 밀린 탭이 건너뛴 수를 센다
+  seq: number;
+  // 밀린 탭(소켓 id) — 밀리기 직전까지 받은 이벤트 번호와 따라잡기 확인 타이머
+  behind: Map<string, { from: number; timer: NodeJS.Timeout }>;
 }
 
 const feeds = new Map<string, Feed>();
@@ -272,17 +288,63 @@ export const startRealtime = (io: Server) => {
     if (changed || resync) io.to(connRoom(feed.id)).emit('status', resync ? { ...next, resync: true } : next);
   };
 
+  // ── 밀린 탭 ──
+  // 이 연결을 쓰는 탭 중 송신 버퍼가 넘친 탭을 behind room에 넣는다(이번 이벤트부터 건너뜀).
+  // 탭 수만큼만 돈다 — 버퍼 크기는 sendQueue가 이벤트로 세 둔 값이라 바로 읽힌다
+  const holdLagging = (feed: Feed) => {
+    const sockets = io.sockets.adapter.rooms.get(connRoom(feed.id));
+    if (!sockets) return;
+    for (const sid of sockets) {
+      if (feed.behind.has(sid)) continue;
+      const socket = io.sockets.sockets.get(sid);
+      const queue = socket && sendQueues.get(socket);
+      if (!socket || !queue || queue.size <= BEHIND_LIMIT) continue;
+      void socket.join(behindRoom(feed.id));
+      feed.behind.set(sid, { from: feed.seq - 1, timer: setTimeout(() => checkCaughtUp(feed, socket), BEHIND_HOLD_MS) });
+    }
+  };
+
+  // 버퍼가 다 나갔으면(쌓인 것 없음 + transport가 쓰기 가능) 다시 보내기 시작하고, 그 탭에만 resync를 알린다
+  const checkCaughtUp = (feed: Feed, socket: Socket) => {
+    const lag = feed.behind.get(socket.id);
+    if (!lag) return;
+    if (feed.stopped || !socket.connected) {
+      feed.behind.delete(socket.id);
+      return;
+    }
+    const queue = sendQueues.get(socket);
+    if ((queue && queue.size > 0) || !socket.conn.transport.writable) {
+      lag.timer = setTimeout(() => checkCaughtUp(feed, socket), BEHIND_CHECK_MS);
+      return;
+    }
+    feed.behind.delete(socket.id);
+    void socket.leave(behindRoom(feed.id));
+    socket.emit('status', { ...feed.status, resync: true, skipped: feed.seq - lag.from });
+    if (socket.rooms.has(logRoom(feed.id))) socket.emit('log:backlog', feed.logBacklog);
+  };
+
+  // 그 탭이 연결을 바꾸거나 떠나면 — room은 leaveScope/socket.io가 비운다
+  const forgetLagging = (feed: Feed, socketId: string) => {
+    const lag = feed.behind.get(socketId);
+    if (!lag) return;
+    clearTimeout(lag.timer);
+    feed.behind.delete(socketId);
+  };
+
   const dispatch = (feed: Feed, change: LiveChange) => {
-    io.to(logRoom(feed.id)).emit('log', record(feed, change));
+    feed.seq += 1;
+    holdLagging(feed);
+    const skip = behindRoom(feed.id);
+    io.to(logRoom(feed.id)).except(skip).emit('log', record(feed, change));
     if (STRUCTURE_OPS.has(change.op) || !change.collection) {
-      io.to(connRoom(feed.id)).emit('change', summarize(change));
+      io.to(connRoom(feed.id)).except(skip).emit('change', summarize(change));
       return;
     }
     // 이 컬렉션을 보는 클라이언트에겐 자세히, 같은 DB의 나머지에겐 요약만
     // (socket.io는 한 소켓이 두 방에 다 있어도 except로 중복 없이 나눌 수 있다)
     const col = colRoom(feed.id, change.database, change.collection);
-    io.to(col).emit('change', change);
-    io.to(dbRoom(feed.id, change.database)).except(col).emit('change', summarize(change));
+    io.to(col).except(skip).emit('change', change);
+    io.to(dbRoom(feed.id, change.database)).except([col, skip]).emit('change', summarize(change));
   };
 
   const closeStream = (feed: Feed) => {
@@ -394,6 +456,8 @@ export const startRealtime = (io: Server) => {
     if (feed.stopped) return Promise.resolve();
     feed.stopped = true;
     if (feed.graceTimer) clearTimeout(feed.graceTimer);
+    for (const lag of feed.behind.values()) clearTimeout(lag.timer);
+    feed.behind.clear();
     feed.sampler.stop();
     closeStream(feed);
     if (feeds.get(feed.id) === feed) feeds.delete(feed.id);
@@ -429,6 +493,8 @@ export const startRealtime = (io: Server) => {
         logBacklog: [],
         windowEvents: 0,
         windowLags: [],
+        seq: 0,
+        behind: new Map(),
         activity: createActivityStats(),
         recorder: createRecorder({
           connectionId: id,
@@ -587,6 +653,7 @@ export const startRealtime = (io: Server) => {
     let feed: Feed | null = null;
     // 이 탭의 상태(9-10) — 알려 오기 전엔 보이는 탭으로 본다
     let presence: ClientPresence = { visible: true, slowCard: false };
+    sendQueues.set(socket, trackSendQueue(socket.conn));
 
     const leaveScope = () => {
       for (const room of socket.rooms) if (room !== socket.id) void socket.leave(room);
@@ -596,6 +663,7 @@ export const startRealtime = (io: Server) => {
     socket.on('connection:use', (id: unknown) => {
       if (feed) {
         feed.presence.delete(socket.id);
+        forgetLagging(feed, socket.id);
         release(feed);
       }
       feed = null;
@@ -667,6 +735,7 @@ export const startRealtime = (io: Server) => {
     socket.on('disconnect', () => {
       if (feed) {
         feed.presence.delete(socket.id);
+        forgetLagging(feed, socket.id);
         release(feed);
       }
       feed = null;
