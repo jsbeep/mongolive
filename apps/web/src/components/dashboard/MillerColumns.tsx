@@ -14,6 +14,7 @@ import { INPUT_STAGE_ID } from '../../services/pipelines';
 import type { ActivePath, Document, MutationRequest } from '../../types/explorer';
 import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../utils/motionPresets';
 import { usePreferences } from '../../services/preferences';
+import { PresenceBoundary } from '../common/PresenceBoundary';
 
 // ── 상수 ──────────────────────────────────────────────────────────────────────
 
@@ -26,16 +27,18 @@ const getFlexRatios = (count: number): number[] =>
 
 // ── 애니메이션 variants ────────────────────────────────────────────────────────
 
+// 퇴장 중인 패널은 클릭을 안 받는다(popLayout이라 투명한 채 다른 패널 위에 떠 있다). 같은 키로 돌아오면 다시 받는다
 const colVariants = {
   enter: (dir: number) => ({
     x: dir > 0 ? '60%' : '-60%',
     opacity: 0,
     scale: 0.96,
   }),
-  center: { x: 0, opacity: 1, scale: 1 },
+  center: { x: 0, opacity: 1, scale: 1, pointerEvents: 'auto' as const },
   exit: {
     opacity: 0,
     scale: 0.94,
+    pointerEvents: 'none' as const,
   },
 };
 
@@ -43,8 +46,8 @@ const spring = { type: 'spring' as const, stiffness: 260, damping: 28 };
 
 const placeholderVariants = {
   enter: { opacity: 0, scale: 0.9 },
-  center: { opacity: 1, scale: 1 },
-  exit: { opacity: 0, scale: 0.85 },
+  center: { opacity: 1, scale: 1, pointerEvents: 'auto' as const },
+  exit: { opacity: 0, scale: 0.85, pointerEvents: 'none' as const },
 };
 
 // ── Props 타입 ────────────────────────────────────────────────────────────────
@@ -248,6 +251,8 @@ export function MillerColumns({
                   : 'bg-white border border-slate-200/80 shadow-panel',
               ].join(' ')}
             >
+              {/* 안쪽 내용이 패널 지우기를 붙잡지 않게 — PresenceBoundary 설명 참고 */}
+              <PresenceBoundary>
               {isPlaceholder ? (
                 <PlaceholderColumn slotIndex={slot.placeholderHint ?? visualIndex} aggregation={isAggregation} />
               ) : slot.isCollectionsDocuments ? (
@@ -315,6 +320,7 @@ export function MillerColumns({
                   selectAggregateResult={selectAggregateResult}
                 />
               )}
+              </PresenceBoundary>
             </motion.div>
           );
         })}

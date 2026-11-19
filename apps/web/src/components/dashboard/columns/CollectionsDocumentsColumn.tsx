@@ -3,12 +3,14 @@ import type { ActivePath, CollectionSummary, DocumentSummary, MutationRequest } 
 import { CollectionsColumn } from './CollectionsColumn';
 import { DocumentsColumn, type DocumentListControls } from './DocumentsColumn';
 import { SPRING_SOFT } from '../../../utils/motionPresets';
+import { PresenceBoundary } from '../../common/PresenceBoundary';
 
 // 컬렉션↔문서 전환 — 문서로 들어갈 땐 오른쪽에서, 뒤로 갈 땐 왼쪽에서 슬라이드
+// 안쪽 내용은 PresenceBoundary로 끊어 둔다 — 늦게 그려진 행이 패널 지우기를 붙잡지 않게. 퇴장 중엔 클릭도 안 받는다
 const panelVariants = {
   enter: (dir: number) => ({ x: dir > 0 ? '40%' : '-40%', opacity: 0 }),
-  center: { x: 0, opacity: 1 },
-  exit: (dir: number) => ({ x: dir > 0 ? '-40%' : '40%', opacity: 0 }),
+  center: { x: 0, opacity: 1, pointerEvents: 'auto' as const },
+  exit: (dir: number) => ({ x: dir > 0 ? '-40%' : '40%', opacity: 0, pointerEvents: 'none' as const }),
 };
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -74,6 +76,7 @@ export function CollectionsDocumentsColumn({
           transition={reduceMotion ? { duration: 0 } : SPRING_SOFT}
           className="absolute inset-0 flex flex-col"
         >
+          <PresenceBoundary>
           {documentsPath ? (
             <DocumentsColumn
               path={documentsPath}
@@ -107,6 +110,7 @@ export function CollectionsDocumentsColumn({
               aggregation={aggregation}
             />
           )}
+          </PresenceBoundary>
         </m.div>
       </AnimatePresence>
     </div>

@@ -789,15 +789,20 @@ export function useExplorerState(): UseExplorerStateResult {
   const finalizePushFieldReference = useCallback((candidate: FieldReferenceCandidate, fieldKey: string, popIndex?: number) => {
     setActivePaths((prev) => {
       const base = popIndex !== undefined ? prev.slice(0, popIndex + 1) : prev;
-      // oid 참조와 같은 규칙 — 이미 열린 컬럼이 있으면 되감는다.
       // ref.key를 '_id'로 고정해 저장하므로 대상도 documentId로 비교한다.
-      const openIndex = findOpenColumnForRef(base, {
+      const target: RefLocator = {
         kind: 'field',
         database: candidate.database,
         collection: candidate.collection,
         key: '_id',
         value: candidate.documentId,
-      });
+      };
+      // 바로 다음 컬럼이 이미 그 문서면 그대로 — REF 다시 클릭과 같은 규칙.
+      // 닫고 새로 열면 같은 문서인데 퇴장·등장 애니메이션만 쌓인다(광클하면 패널이 수십 개)
+      const next = popIndex !== undefined ? prev[popIndex + 1] : undefined;
+      if (next && findOpenColumnForRef([next], target) === 0) return prev;
+      // oid 참조와 같은 규칙 — 이미 열린 컬럼이 있으면 되감는다.
+      const openIndex = findOpenColumnForRef(base, target);
       if (openIndex >= 0) return base.slice(0, openIndex + 1);
 
       const chainIndex = base.filter((p) => p.kind === 'reference').length;
@@ -860,9 +865,14 @@ export function useExplorerState(): UseExplorerStateResult {
     setEditingId(null);
   }, []);
 
+  // 지금 조회 중인 LINK — 같은 LINK를 광클하면 첫 조회 하나만 보낸다
+  const linkLookupRef = useRef<string | null>(null);
   const pushReferenceByField = useCallback(async (
     database: string, collection: string, key: string, value: JsonValue, fieldKey: string, popIndex?: number,
   ) => {
+    const lookup = JSON.stringify([database, collection, key, compareKey(value), fieldKey, popIndex ?? null]);
+    if (linkLookupRef.current === lookup) return;
+    linkLookupRef.current = lookup;
     setIsLoading(true);
     try {
       const candidates = await api.getReferenceCandidatesByField(database, collection, key, value);
@@ -876,6 +886,7 @@ export function useExplorerState(): UseExplorerStateResult {
     } catch {
       showToast('Could not load reference.', 'error');
     } finally {
+      if (linkLookupRef.current === lookup) linkLookupRef.current = null;
       setIsLoading(false);
     }
   }, [showToast, finalizePushFieldReference]);
