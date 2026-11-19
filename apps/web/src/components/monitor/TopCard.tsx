@@ -10,7 +10,7 @@ import type { CollectionTopRow, MonitorRange, TopOp, TopReport, TopUsage } from 
 import { LIVE_RANGES } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
-import { fmtClock, fmtDateTime, fmtDuration, fmtMs, fmtNumber } from './format';
+import { fmtClock, fmtDateTime, fmtDuration, fmtMs, fmtNumber, memoryRange, rangePhrase } from './format';
 import type { MonitorScope } from './ScopeBar';
 
 const POLL_MS = 10_000;
@@ -54,8 +54,8 @@ function useTop(range: MonitorRange, scope: MonitorScope) {
   const [failed, setFailed] = useState<string | null>(null);
   // 긴 기간이면 1h로 물어 상태(지원·권한)만 본다 — 서버 메모리라 MongoDB에는 묻지 않는다
   const live = LIVE_RANGES.includes(range);
-  const query = useRef({ range: (live ? range : '1h') as '5m' | '1h', scope });
-  query.current = { range: (live ? range : '1h') as '5m' | '1h', scope };
+  const query = useRef({ range: memoryRange(range), scope });
+  query.current = { range: memoryRange(range), scope };
   const key = `${query.current.range}\u0000${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
   const { report, refreshing, setReport } = useCachedReport<TopReport>('top', key);
 
@@ -169,12 +169,12 @@ export function TopCard({ scope, range, onScopeChange }: TopCardProps) {
     return (
       <section className={styles.card} aria-label="Time spent">
         {header(<>Read and write {source} per collection</>, false)}
-        <p className={cn(styles.muted, 'text-[12px]')}>Kept for the last hour only — switch the range to 5m or 1h to see it.</p>
+        <p className={cn(styles.muted, 'text-[12px]')}>Kept for the last hour only — switch the range to 5m, 30m or 1h to see it.</p>
       </section>
     );
   }
 
-  const inRange = range === '5m' ? 'the last 5 minutes' : 'the last hour';
+  const inRange = rangePhrase(memoryRange(range));
   const since = report.since;
   const sinceText = since === null ? null : <span data-tt={fmtDateTime(since)}>{fmtClock(since)}</span>;
   const errorNote = report.status === 'error' && (

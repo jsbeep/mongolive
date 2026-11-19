@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom';
 import { AnimatePresence, m } from 'framer-motion';
 import { Activity, CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import type { AlertBurstLimit, AlertDeleteLimit, BackfillAutoLimit, CollectionSummary, DatabaseSummary, Diagnostics, HistoryInfo, MonitorHistory, MutationRequest, ServerSettings } from '../../types/explorer';
+import type { AlertBurstLimit, AlertDeleteLimit, BackfillAutoLimit, CollectionSummary, DatabaseSummary, Diagnostics, HistoryBudget, HistoryInfo, MinuteHistory, MonitorHistory, MutationRequest, ServerSettings } from '../../types/explorer';
 import { ALERT_BURST_LIMITS, ALERT_DELETE_LIMITS, BACKFILL_AUTO_LIMITS, PAGE_SIZE } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
 import { useActiveConnection } from '../../services/activeConnection';
@@ -460,7 +460,9 @@ function RealtimeSection() {
 
 // ── Monitor ──────────────────────────────────────────────────────────────────
 
-const fmtBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+const fmtBytes = (n: number) =>
+  n < 1024 ? `${n} B` : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB` : n < 1024 ** 3 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${(n / 1024 ** 3).toFixed(2)} GB`;
+const BUDGET_LABEL: Record<HistoryBudget, string> = { '500mb': '500 MB', '1gb': '1 GB', '5gb': '5 GB', off: 'Off' };
 
 function MonitorSection() {
   const settings = useServerSettings();
@@ -511,7 +513,7 @@ function MonitorSection() {
         <p className={styles.groupTitle}>History</p>
         <p className={styles.groupHint}>
           The mongolive server keeps the Monitor numbers in files next to its other settings (never in MongoDB) — while a tab uses the connection.
-          The last 24 hours are kept per minute, older ones per hour for the time you pick here, and a one-line daily summary is kept for good.
+          Recent days are kept per minute, older ones per hour for the time you pick here, and a one-line daily summary is kept for good.
           Saved on the server, for every browser.
         </p>
         <Segment<MonitorHistory>
@@ -527,6 +529,45 @@ function MonitorSection() {
         {settings.monitorHistory === 'off' && (
           <p className="mt-2 text-[11px] text-slate-500">Off: only the last hour, in memory. Files already written stay until you clear them.</p>
         )}
+        <div className={cn('mt-4 flex flex-col gap-4', settings.monitorHistory === 'off' && 'pointer-events-none opacity-50')} aria-disabled={settings.monitorHistory === 'off'}>
+          <div>
+            <p className="mb-1 text-[12px] font-medium text-slate-700">Per-minute detail</p>
+            <p className={styles.groupHint}>The 6h, 12h and 24h ranges read these. About 1.5 MB a day.</p>
+            <Segment<MinuteHistory>
+              value={settings.minuteHistory}
+              onChange={(v) => void save({ minuteHistory: v })}
+              options={[
+                { value: '2d', label: '2 days' },
+                { value: '7d', label: '7 days' },
+                { value: '14d', label: '14 days' },
+              ]}
+            />
+          </div>
+          <div>
+            <p className="mb-1 text-[12px] font-medium text-slate-700">Disk limit</p>
+            <p className={styles.groupHint}>
+              Per connection. Past the limit the oldest files go first — slow queries, sizes and alerts, then per-minute, then per-hour and daily.
+              Today's files and the last two days per minute always stay.
+            </p>
+            <Segment<HistoryBudget>
+              value={settings.historyBudget}
+              onChange={(v) => void save({ historyBudget: v })}
+              options={(['500mb', '1gb', '5gb', 'off'] as const).map((value) => ({ value, label: BUDGET_LABEL[value] }))}
+            />
+            {connection && info && (
+              <p className="mt-2 text-[11px] text-slate-500">
+                This connection uses {fmtBytes(info.bytes)}
+                {settings.historyBudget !== 'off' ? ` of ${BUDGET_LABEL[settings.historyBudget]}` : ''}
+                {info.oldest ? ` · oldest record ${new Date(info.oldest).toLocaleString()}` : ''}
+              </p>
+            )}
+            {info?.trimmed && (
+              <p className="mt-1 text-[11px] text-amber-700">
+                The limit removed {fmtBytes(info.trimmed.bytes)} of old history on {new Date(info.trimmed.at).toLocaleString()}.
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className={styles.group}>

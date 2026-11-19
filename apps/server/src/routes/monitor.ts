@@ -21,7 +21,7 @@
 //   GET /api/monitor/transactions?range=5m|1h&database=&collection= → TransactionsReport (트랜잭션, 9-8b — 메모리 1시간, DB에 묻지 않는다)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
-import { SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type AlertsReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type OplogReport, type ReplicaReport, type SlowThreshold, type TopReport, type TransactionsReport } from '@mongolive/shared';
+import { LIVE_RANGES, RANGE_SPAN_MS, SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type AlertsReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type OplogReport, type ReplicaReport, type SlowThreshold, type TopReport, type TransactionsReport } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
@@ -38,17 +38,20 @@ import { getServerSettings } from '../settings';
 export const monitorRouter = Router();
 
 const text = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null);
+// 메모리로 답하는 짧은 기간(없으면 1h)
+const liveRange = (value: unknown): ActivityRange | null =>
+  value === undefined ? '1h' : typeof value === 'string' && LIVE_RANGES.includes(value as MonitorRange) ? (value as ActivityRange) : null;
 
 monitorRouter.get('/monitor/activity', (req, res) => {
-  const range = req.query.range === '5m' ? '5m' : req.query.range === '1h' || req.query.range === undefined ? '1h' : null;
-  if (!range) throw new HttpError(400, 'range must be 5m or 1h');
+  const range = liveRange(req.query.range);
+  if (!range) throw new HttpError(400, 'range must be 5m, 30m or 1h');
   const database = text(req.query.database);
   const collection = text(req.query.collection);
   if (collection && !database) throw new HttpError(400, 'collection needs a database');
   const query = {
     database: database ? checkDatabaseName(database) : null,
     collection: collection ? checkCollectionName(collection) : null,
-    range: range as ActivityRange,
+    range,
   };
   const stats = activityOf(connectionIdOf(res));
   const empty: ActivityReport = { since: Date.now(), range: query.range, timeline: [], collections: [] };
@@ -76,7 +79,7 @@ monitorRouter.delete('/monitor/history', async (_req, res) => {
 
 monitorRouter.get('/monitor/history', async (req, res) => {
   const range = String(req.query.range ?? '');
-  if (!isFileRange(range)) throw new HttpError(400, 'range must be 24h, 7d, 30d, 90d or all — shorter ranges come live over the socket');
+  if (!isFileRange(range)) throw new HttpError(400, 'range must be 6h, 12h, 24h, 7d, 30d, 90d or all — shorter ranges come live over the socket');
   const database = text(req.query.database);
   const collection = text(req.query.collection);
   if (collection && !database) throw new HttpError(400, 'collection needs a database');
@@ -150,7 +153,7 @@ monitorRouter.post('/monitor/operations/kill', async (req, res) => {
   res.status(204).end();
 });
 
-const RANGES: readonly MonitorRange[] = ['5m', '1h', '24h', '7d', '30d', '90d', 'all'];
+const RANGES = Object.keys(RANGE_SPAN_MS) as MonitorRange[];
 
 // 느린 쿼리 — 피드가 열려 있는 동안 샘플러가 서버 로그에서 모은 것(기록 파일 + 아직 안 적은 지금 분)
 monitorRouter.get('/monitor/slow', async (req, res) => {
@@ -230,8 +233,8 @@ monitorRouter.get('/monitor/indexes', async (req, res) => {
 
 // 컬렉션별 서버 시간 — 피드가 열려 있는 동안 10초마다 읽은 top의 차이(최근 1시간만 메모리에)
 monitorRouter.get('/monitor/top', (req, res) => {
-  const range = req.query.range === '5m' ? '5m' : req.query.range === '1h' || req.query.range === undefined ? '1h' : null;
-  if (!range) throw new HttpError(400, 'range must be 5m or 1h — time spent is kept in memory for the last hour only');
+  const range = liveRange(req.query.range);
+  if (!range) throw new HttpError(400, 'range must be 5m, 30m or 1h — time spent is kept in memory for the last hour only');
   const top = topOf(connectionIdOf(res));
   const closed: TopReport = { status: 'closed', error: null, since: null, at: null, rows: [], more: 0 };
   res.json(top ? top.report({ range, scope: scopeOf(req.query) }) : closed);
@@ -239,8 +242,8 @@ monitorRouter.get('/monitor/top', (req, res) => {
 
 // 레플리카 셋 멤버 — 피드가 열려 있는 동안 10초마다 읽은 replSetGetStatus(lag·상태 변화는 최근 1시간만 메모리에)
 monitorRouter.get('/monitor/replica', (req, res) => {
-  const range = req.query.range === '5m' ? '5m' : req.query.range === '1h' || req.query.range === undefined ? '1h' : null;
-  if (!range) throw new HttpError(400, 'range must be 5m or 1h — replica set lag is kept in memory for the last hour only');
+  const range = liveRange(req.query.range);
+  if (!range) throw new HttpError(400, 'range must be 5m, 30m or 1h — replica set lag is kept in memory for the last hour only');
   const replica = replicaOf(connectionIdOf(res));
   const closed: ReplicaReport = {
     status: 'closed', error: null, at: null, set: null, term: null, writeMajority: null, votingMembers: null, members: [],
@@ -292,8 +295,8 @@ monitorRouter.post('/monitor/sizes/measure', (_req, res) => {
 
 // 트랜잭션 — 피드가 받은 이벤트 중 트랜잭션 안의 쓰기를 센 것(최근 1시간만 메모리에). 피드가 없으면 closed
 monitorRouter.get('/monitor/transactions', (req, res) => {
-  const range = req.query.range === '5m' ? '5m' : req.query.range === '1h' || req.query.range === undefined ? '1h' : null;
-  if (!range) throw new HttpError(400, 'range must be 5m or 1h — transactions are kept in memory for the last hour only');
+  const range = liveRange(req.query.range);
+  if (!range) throw new HttpError(400, 'range must be 5m, 30m or 1h — transactions are kept in memory for the last hour only');
   const transactions = transactionsOf(connectionIdOf(res));
   const closed: TransactionsReport = {
     status: 'closed', at: Date.now(), since: null, count: 0, writes: 0, perMinute: 0, maxWrites: 0, combos: [], largest: [], partial: false,

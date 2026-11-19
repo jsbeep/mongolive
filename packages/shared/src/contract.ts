@@ -295,7 +295,8 @@ export interface MonitorTick {
 //   GET /api/monitor/activity?database=&collection=&range=5m|1h → ActivityReport
 //   GET /api/monitor/last-writes → LastWrites
 
-export type ActivityRange = '5m' | '1h';
+// 서버 메모리(최근 1시간)로 답하는 짧은 기간 — 실시간
+export type ActivityRange = '5m' | '30m' | '1h';
 
 export interface ActivityOps {
   insert: number;
@@ -335,9 +336,25 @@ export interface ActivityReport {
   partial?: boolean;
 }
 
-// ── Monitor 기간(9-3b) — 범위 바의 기간 선택. 5m·1h = 서버 메모리(실시간), 그보다 길면 기록 파일 ──
-export type MonitorRange = '5m' | '1h' | '24h' | '7d' | '30d' | '90d' | 'all';
-export const LIVE_RANGES: readonly MonitorRange[] = ['5m', '1h'];
+// ── Monitor 기간(9-3b, C1) — 범위 바의 기간 선택. 5m·30m·1h = 서버 메모리(실시간), 그보다 길면 기록 파일 ──
+export type MonitorRange = ActivityRange | '6h' | '12h' | '24h' | '7d' | '30d' | '90d' | 'all';
+// 기록 파일에서 읽는 기간(GET /monitor/history)
+export type HistoryRange = Exclude<MonitorRange, ActivityRange>;
+export const LIVE_RANGES: readonly MonitorRange[] = ['5m', '30m', '1h'];
+export const isLiveRange = (range: MonitorRange): range is ActivityRange => LIVE_RANGES.includes(range);
+// 기간의 길이(ms). all = 끝이 없다
+export const RANGE_SPAN_MS: Record<MonitorRange, number | null> = {
+  '5m': 5 * 60_000,
+  '30m': 30 * 60_000,
+  '1h': 3_600_000,
+  '6h': 6 * 3_600_000,
+  '12h': 12 * 3_600_000,
+  '24h': 24 * 3_600_000,
+  '7d': 7 * 86_400_000,
+  '30d': 30 * 86_400_000,
+  '90d': 90 * 86_400_000,
+  all: null,
+};
 
 // 기록 파일의 지표 이름(서버 monitor/rollup과 같다)
 export const MONITOR_METRIC_KEYS = [
@@ -427,10 +444,10 @@ export interface BackfillReport {
   autoLimit: number;
 }
 
-//   GET /api/monitor/history?range=24h|7d|30d|90d|all[&writes=1&database=&collection=] → HistoryReport
+//   GET /api/monitor/history?range=6h|12h|24h|7d|30d|90d|all[&writes=1&database=&collection=] → HistoryReport
 export interface HistoryReport {
   range: MonitorRange;
-  // 한 칸의 길이(24h = 5분, 7d = 1시간, 30d = 2시간, 90d = 6시간, all = 1일)
+  // 한 칸의 길이(6h = 1분, 12h = 2분, 24h = 5분, 7d = 1시간, 30d = 2시간, 90d = 6시간, all = 1일)
   bucketMs: number;
   from: number;
   to: number;
@@ -455,6 +472,8 @@ export interface HistoryInfo {
   oldest: number | null;
   // 지금 서버의 신분(replicaSetId 등으로 만든 폴더 이름). 아직 모르면 null
   current: string | null;
+  // 디스크 한도(설정 › Monitor › Disk limit) 때문에 마지막으로 지운 때와 지운 크기(바이트). 없으면 null
+  trimmed: { at: number; bytes: number } | null;
 }
 
 export interface LastWrites {

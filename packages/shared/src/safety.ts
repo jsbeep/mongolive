@@ -14,6 +14,12 @@ export interface ProtectedTarget {
 // Monitor 기록을 파일로 남길지(9-3) — 시 단위 기록의 보관 기간. 일 단위 요약은 켜져 있으면 늘 남긴다(하루 1줄)
 export type MonitorHistory = 'off' | '30d' | '90d' | '1y';
 export const MONITOR_HISTORY_DAYS: Record<Exclude<MonitorHistory, 'off'>, number> = { '30d': 30, '90d': 90, '1y': 365 };
+// 1분 기록을 며칠 남길지(C1) — 6h·12h·24h 차트가 1분·2분·5분 칸으로 읽는다. 따라잡기(시 합치기)는 이와 상관없이 2일
+export type MinuteHistory = '2d' | '7d' | '14d';
+export const MINUTE_HISTORY_DAYS: Record<MinuteHistory, number> = { '2d': 2, '7d': 7, '14d': 14 };
+// 연결 하나의 기록 폴더 한도(C1) — 넘으면 정리할 때 오래된 것부터 지운다(slow·sizes·alerts → 분 → 시·일). off = 한도 없음
+export type HistoryBudget = '500mb' | '1gb' | '5gb' | 'off';
+export const HISTORY_BUDGET_BYTES: Record<Exclude<HistoryBudget, 'off'>, number> = { '500mb': 500 * 1024 ** 2, '1gb': 1024 ** 3, '5gb': 5 * 1024 ** 3 };
 // 빈 구간 자동 불러오기 한도(이벤트 수, 9-4) — 추정이 이 이하면 피드가 열릴 때 바로 불러온다. 0 = 끔(늘 버튼으로)
 export const BACKFILL_AUTO_LIMITS = [0, 1_000, 10_000, 100_000] as const;
 export type BackfillAutoLimit = (typeof BACKFILL_AUTO_LIMITS)[number];
@@ -40,6 +46,10 @@ export interface ServerSettings {
   // 느린 쿼리 수집(설정 › Monitor, 9-10) — 끄면 서버 로그(getLog)를 읽지 않는다.
   // 기본 꺼짐: 읽을 때마다 로그 버퍼 전체(최대 약 1MB)를 받고, getLog 권한이 없는 계정도 많다
   slowLog: boolean;
+  // 1분 기록 보관(설정 › Monitor › History)
+  minuteHistory: MinuteHistory;
+  // 연결 하나의 기록 폴더 한도(설정 › Monitor › History)
+  historyBudget: HistoryBudget;
 }
 
 export const DEFAULT_SERVER_SETTINGS: ServerSettings = {
@@ -51,6 +61,8 @@ export const DEFAULT_SERVER_SETTINGS: ServerSettings = {
   alertBurst: 1_000,
   alertDrops: true,
   slowLog: false,
+  minuteHistory: '2d',
+  historyBudget: '1gb',
 };
 
 // 이 쓰기가 건드리는 곳. null = MongoDB를 건드리지 않는 연산(메타데이터)
@@ -118,5 +130,8 @@ export const normalizeServerSettings = (raw: unknown): ServerSettings => {
   const alertBurst = ALERT_BURST_LIMITS.find((n) => n === obj.alertBurst) ?? DEFAULT_SERVER_SETTINGS.alertBurst;
   const alertDrops = typeof obj.alertDrops === 'boolean' ? obj.alertDrops : DEFAULT_SERVER_SETTINGS.alertDrops;
   const slowLog = typeof obj.slowLog === 'boolean' ? obj.slowLog : DEFAULT_SERVER_SETTINGS.slowLog;
-  return { readOnly: obj.readOnly === true, protected: protectedTargets, monitorHistory, backfillAuto, alertDeletes, alertBurst, alertDrops, slowLog };
+  const minuteHistory = typeof obj.minuteHistory === 'string' && Object.keys(MINUTE_HISTORY_DAYS).includes(obj.minuteHistory) ? (obj.minuteHistory as MinuteHistory) : DEFAULT_SERVER_SETTINGS.minuteHistory;
+  const budget = obj.historyBudget;
+  const historyBudget: HistoryBudget = budget === 'off' || (typeof budget === 'string' && Object.keys(HISTORY_BUDGET_BYTES).includes(budget)) ? (budget as HistoryBudget) : DEFAULT_SERVER_SETTINGS.historyBudget;
+  return { readOnly: obj.readOnly === true, protected: protectedTargets, monitorHistory, backfillAuto, alertDeletes, alertBurst, alertDrops, slowLog, minuteHistory, historyBudget };
 };

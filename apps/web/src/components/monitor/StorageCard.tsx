@@ -16,7 +16,7 @@ import type { MonitorScope } from './ScopeBar';
 const POLL_MS = 60_000;
 const MEASURING_POLL_MS = 2000;
 const HOUR = 3_600_000;
-const RANGE_SPAN: Partial<Record<MonitorRange, number>> = { '24h': 24 * HOUR, '7d': 7 * 24 * HOUR, '30d': 30 * 24 * HOUR, '90d': 90 * 24 * HOUR };
+const RANGE_SPAN: Partial<Record<MonitorRange, number>> = { '6h': 6 * HOUR, '12h': 12 * HOUR, '24h': 24 * HOUR, '7d': 7 * 24 * HOUR, '30d': 30 * 24 * HOUR, '90d': 90 * 24 * HOUR };
 
 export interface SizesState {
   report: SizesReport | null;

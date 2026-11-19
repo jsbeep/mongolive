@@ -30,6 +30,7 @@ import type {
   LastWrites,
   HistoryInfo,
   HistoryReport,
+  HistoryRange,
   MonitorRange,
   BackfillReport,
   OperationsReport,
@@ -133,7 +134,7 @@ export interface DataSource {
   // 설정 › Monitor(9-3) — 이 연결의 기록 파일 크기·가장 오래된 기록 / 전부 지우기. Mock은 null / 아무것도 안 함
   getHistoryInfo(): Promise<HistoryInfo | null>;
   // Monitor의 긴 기간(24h~All, 9-3b) — 기록 파일을 칸으로 묶은 것. writes = 컬렉션별 쓰기도(Collections 탭). Mock은 null
-  getHistory(range: Exclude<MonitorRange, '5m' | '1h'>, options?: { writes?: boolean; database?: string | null; collection?: string | null }): Promise<HistoryReport | null>;
+  getHistory(range: HistoryRange, options?: { writes?: boolean; database?: string | null; collection?: string | null }): Promise<HistoryReport | null>;
   clearHistory(): Promise<void>;
   // 빈 구간 불러오기(9-4) — 탭이 없던 동안의 쓰기를 changeStream으로 다시 읽는다. id가 없으면 전부. Mock은 null / 아무것도 안 함
   getBackfill(): Promise<BackfillReport | null>;
@@ -161,9 +162,9 @@ export interface DataSource {
   // 컬렉션 범위의 Indexes 카드(9-6b) — 인덱스 정의·쓰인 횟수·크기를 그때그때. Mock은 null
   getIndexes(database: string, collection: string): Promise<IndexesReport | null>;
   // Collections의 Time spent 카드(9-6c) — top으로 본 컬렉션별 서버 시간(최근 1시간 메모리). Mock은 null
-  getTop(query: { database: string | null; collection: string | null; range: '5m' | '1h' }): Promise<TopReport | null>;
+  getTop(query: { database: string | null; collection: string | null; range: ActivityRange }): Promise<TopReport | null>;
   // Server 탭의 Members(9-7a) — replSetGetStatus로 본 멤버·lag·상태 변화(최근 1시간 메모리). Mock은 null
-  getReplica(range: '5m' | '1h'): Promise<ReplicaReport | null>;
+  getReplica(range: ActivityRange): Promise<ReplicaReport | null>;
   // Server 탭의 Oplog·Startup warnings(9-7b) — 연결한 멤버에게 그때그때 묻는다. Mock은 null
   getOplog(): Promise<OplogReport | null>;
   getStartupWarnings(): Promise<StartupWarningsReport | null>;
@@ -172,7 +173,7 @@ export interface DataSource {
   // 새 실시간 알림 — 이 연결을 쓰는 모든 탭에 온다(앱 어디서나 토스트). 반환값을 부르면 해제
   onAlert(listener: (alert: MonitorAlert) => void): () => void;
   // 트랜잭션(9-8b) — 서버가 changeStream 이벤트로 센 것, 최근 1시간 메모리만. Mock은 null
-  getTransactions(query: { database: string | null; collection: string | null; range: '5m' | '1h' }): Promise<TransactionsReport | null>;
+  getTransactions(query: { database: string | null; collection: string | null; range: ActivityRange }): Promise<TransactionsReport | null>;
   // 설정 창의 진단(서버·MongoDB·changeStream·권한·보안 설정 읽기 전용). Mock은 서버가 없으니 null.
   getDiagnostics(): Promise<Diagnostics | null>;
 

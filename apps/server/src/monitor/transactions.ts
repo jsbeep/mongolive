@@ -21,7 +21,7 @@ const MAX_COMBOS = 200;
 const TOP = 5;
 const OTHER = '\u0000other';
 
-const RANGE_MS = { '5m': 5 * MINUTE, '1h': 60 * MINUTE } as const;
+const RANGE_MS = { '5m': 5 * MINUTE, '30m': 30 * MINUTE, '1h': 60 * MINUTE } as const;
 export type TransactionsRange = keyof typeof RANGE_MS;
 
 // 변경 이벤트의 트랜잭션 표시 — 세션 id(lsid.id, UUID)를 16진수로 + ':' + 그 세션의 트랜잭션 번호.

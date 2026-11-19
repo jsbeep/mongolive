@@ -12,7 +12,7 @@ import { LIVE_RANGES } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { TimeChart, type ChartSeries } from './charts';
-import { chartWindow, fmtAgo, fmtBytes, fmtClock, fmtDateTime, fmtDuration, fmtMs, fmtUptime, RANGE_LABEL } from './format';
+import { fmtAgo, liveWindow, memoryRange, fmtBytes, fmtClock, fmtDateTime, fmtDuration, fmtMs, fmtUptime, RANGE_LABEL } from './format';
 
 const POLL_MS = 10_000;
 const OPLOG_POLL_MS = 60_000;
@@ -126,7 +126,7 @@ function usePoll<T>(card: string, load: () => Promise<T>, everyMs: number | null
 
 function useReplica(range: MonitorRange) {
   // 긴 기간이면 1h로 묻는다 — 서버 메모리에 그만큼만 있다
-  const queryRange = (LIVE_RANGES.includes(range) ? range : '1h') as '5m' | '1h';
+  const queryRange = memoryRange(range);
   const { data: report, failed, refreshing } = usePoll('replica', () => api.getReplica(queryRange), POLL_MS, queryRange);
   return { report, failed, refreshing };
 }
@@ -304,7 +304,7 @@ function ReplicaSection({
   const noPrimary = !report.members.some((m) => m.state === 'PRIMARY');
   const since = report.since;
   const kept = live ? RANGE_LABEL[range].toLowerCase() : 'the last hour — kept in memory for one hour only';
-  const windowMs = range === '5m' ? 5 * 60_000 : chartWindow(report.lag.times[0], now).ms;
+  const windowMs = liveWindow(memoryRange(range), report.lag.times[0], now).ms;
   const series: ChartSeries[] = report.lag.series.map((s, i) => ({ key: s.member, label: s.member, color: C[i % C.length], values: s.values }));
   const changes = [...report.changes].reverse();
 

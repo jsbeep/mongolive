@@ -79,7 +79,7 @@ export const downloadBackup = (backup: SettingsBackup) => {
 
 // 파일 내용 → 백업. 모양이 틀리면 이유를 담아 던진다. 목록에 없는 키·문자열이 아닌 값은 버린다
 // 백업 파일에 없는 키는 기본값이 아니라 지금 서버 값으로
-const LATER_SERVER_KEYS = ['monitorHistory', 'backfillAuto', 'alertDeletes', 'alertBurst', 'alertDrops', 'slowLog'] as const;
+const LATER_SERVER_KEYS = ['monitorHistory', 'backfillAuto', 'alertDeletes', 'alertBurst', 'alertDrops', 'slowLog', 'minuteHistory', 'historyBudget'] as const;
 const withCurrentDefaults = (raw: unknown): ServerSettings => {
   const parsed = normalizeServerSettings(raw);
   const current = getServerSettingsSnapshot();

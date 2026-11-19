@@ -1,6 +1,6 @@
 # 시스템 상호작용 분석
 
-9-10 기준 (2026-11-18). 코드를 grep으로 훑어 만든 지도다. 부하 칸은 측정값이 아니라 코드 기준 추정(상/중/하).
+9-10 기준 (2026-11-18), C1 반영 (2026-11-20). 코드를 grep으로 훑어 만든 지도다. 부하 칸은 측정값이 아니라 코드 기준 추정(상/중/하).
 새 기능을 설계할 때 코드보다 이 문서를 먼저 읽는다. 바뀌면 같이 고친다.
 
 ## 0. 부품과 통신 경계
@@ -48,7 +48,7 @@ web 안의 계약 경계는 `web/src/services/dataSource.ts`의 `DataSource` 인
 |---|---|---|
 | `/monitor/activity` | `getActivity` | 메모리 (change stream 누적) |
 | `/monitor/last-writes` | `getLastWrites` | 메모리 |
-| `/monitor/history`, `/history-info`, `DELETE /history` | `getHistory` `getHistoryInfo` `clearHistory` | 파일 metrics/ |
+| `/monitor/history`, `/history-info`, `DELETE /history` | `getHistory` (6h 1분·12h 2분·24h 5분 칸 … 기간과 겹치는 파일만 연다) `getHistoryInfo` (`trimmed` = 디스크 한도로 지운 때·크기) `clearHistory` | 파일 metrics/ |
 | `/monitor/backfill`, `/start`, `/stop` | `get/start/stopBackfill` | 메모리 + oplog 스캔 시작·정지 |
 | `/monitor/slow` | `getSlowQueries` (`expand`=펼친 그룹만 command 포함, `dropped`=1분 50줄 상한으로 못 남긴 실행 수) | 메모리·파일 (slow 폴링이 채움) |
 | `/monitor/top` | `getTop` | 메모리 (10초 틱) |
@@ -109,7 +109,7 @@ web 안의 계약 경계는 `web/src/services/dataSource.ts`의 `DataSource` 인
 | settings.json | Safety 설정 (read-only, 보호 대상) |
 | connections.json | 저장된 연결 |
 | meta.json | owned OID, 컬렉션 메타데이터 |
-| metrics/ | 모니터 기록 (샘플·카운터·rollup) |
+| metrics/ | 모니터 기록 (샘플·카운터·rollup). 분 파일 보관 = `minuteHistory` 2·7·14일, 연결당 한도 = `historyBudget` 500MB·1GB·5GB·off — 정리(시 경계·설정 바뀐 다음 1분) 때 넘으면 slow·sizes·alerts → 분 → 시·일 순으로 오래된 것부터 지운다 |
 
 ### B4 localStorage
 
@@ -182,7 +182,7 @@ feed는 그 연결을 쓰는 탭이 있으면 돌고, 마지막 탭이 떠나고
 | change stream | 하~중 (쓰기량 비례) | 중 (로그 backlog, lag 1000개, 송신 버퍼 탭당 4MB까지 + 보내는 중인 한 묶음) | 상시 | 중 |
 | slow (`getLog`) | 중 (한 번에 버퍼 전체 0.2~1MB) | 중 (1시간 보관, 파일은 1분 50줄 상한 → 하루 최대 약 360MB) | 기본 off. 켜면 대부분 30초, 카드 볼 때 10초, 숨으면 60초 | 중 — 10초 고정일 때의 약 1/3 |
 | top / replica | 하 | 하~중 (1시간 보관) | 10초 | 하 |
-| metrics/ 기록 | — | 디스크 쓰기 | 10초 | 하 (SD카드면 주의) |
+| metrics/ 기록 | — | 디스크 쓰기 (분 줄 ~1KB → 하루 ~1.5MB, 한도 기본 1GB) | 10초, 정리는 1시간마다 폴더 stat | 하 (SD카드면 주의) |
 | **sizes** | **상** (컬렉션 수 비례) | 하 | 1시간 + 수동 | 드물지만 무거움 |
 | **operations** `$currentOp` | 중 | 하 | **2초** (탭 열려 있을 때) | 중 — 가장 잦음 |
 | indexes / oplog / startup | 중 / 하~중 / 하 | 하 | 요청 시·60초 | 하 |

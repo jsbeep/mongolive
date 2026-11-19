@@ -5,7 +5,7 @@
 // 기록이 켜져 있으면 sizes-날짜.jsonl에 측정마다 한 줄(파일 첫 줄은 전부, 그다음은 바뀐 컬렉션만 — monitor/history appendSizes).
 // 읽을 때는 기간 시작이 든 날짜 파일부터 차례로 되살려(replay) 추이와 기간 첫 측정(Δ의 기준)을 낸다.
 import type { MongoClient } from 'mongodb';
-import type { MonitorRange, SizeStats, SizesReport } from '@mongolive/shared';
+import { isLiveRange, type MonitorRange, type SizeStats, type SizesReport } from '@mongolive/shared';
 import { HIDDEN_DATABASES, isHiddenCollection } from '../names';
 import { readDayFiles, serverHistoryDir, type Recorder } from './history';
 import { isUnauthorized, type OperationsScope } from './operations';
@@ -239,7 +239,7 @@ export const createSizes = (hooks: SizesHooks): Sizes => {
     async report({ range, scope }) {
       const now = clock();
       const span = RANGE_MS[range];
-      const live = range === '5m' || range === '1h';
+      const live = isLiveRange(range);
       const stored = hooks.stored();
       const from = span === null ? null : now - span;
       let lines: SizesLine[] = [];

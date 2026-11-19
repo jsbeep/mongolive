@@ -18,6 +18,7 @@ import {
   valueKind,
   type ClientPresence,
   type EjsonObject,
+  RANGE_SPAN_MS,
   type MonitorRange,
   type RunningOpKind,
   type SlowGroup,
@@ -69,15 +70,8 @@ export const slowInterval = (enabled: boolean, tabs: Iterable<ClientPresence>): 
   return visible ? SLOW_BASE_MS : SLOW_IDLE_MS;
 };
 
-export const RANGE_MS: Record<MonitorRange, number | null> = {
-  '5m': 5 * 60_000,
-  '1h': 60 * 60_000,
-  '24h': 24 * 3_600_000,
-  '7d': 7 * 86_400_000,
-  '30d': 30 * 86_400_000,
-  '90d': 90 * 86_400_000,
-  all: null,
-};
+// 기간 길이 — 공유 표(contract)를 그대로 쓴다
+export const RANGE_MS = RANGE_SPAN_MS;
 
 // 로그 한 줄에서 꺼낸 한 번의 실행
 export interface SlowEntry extends SlowRun {

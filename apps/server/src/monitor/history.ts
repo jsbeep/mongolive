@@ -1,6 +1,6 @@
 // Monitor 기록 파일 (9-3) — ~/.mongolive/metrics/<연결 id>/<서버 신분>/
 //
-//   minutes-YYYY-MM-DD.jsonl   1분 기록(한 줄 = Rollup). 이틀 지난 날짜 파일은 통째로 지운다(보여 주는 건 24시간)
+//   minutes-YYYY-MM-DD.jsonl   1분 기록(한 줄 = Rollup). 보관 기간(설정 › Monitor: 2·7·14일)이 지난 날짜 파일은 통째로 지운다
 //   hours-YYYY-MM.jsonl        1시간 기록. 보관 기간(설정 › Monitor: 30일·90일·1년)이 지난 달 파일을 통째로 지운다
 //   days-YYYY.jsonl            1일 기록. 지우지 않는다(하루 한 줄)
 //   gaps.jsonl                 기록하지 않던 구간 — MongoDB가 그사이 재시작하지 않았으면 그동안의 합계(누적값 차이)
@@ -11,12 +11,15 @@
 //   sizes-YYYY-MM-DD.jsonl     컬렉션 크기(9-6a) — 측정마다 한 줄. 파일 첫 줄은 전부(full), 그다음은 바뀐 컬렉션만. 보관은 slow와 같다
 //   alerts-YYYY-MM-DD.jsonl    끝난 알림(9-8a) — 한 건에 한 줄, 끝난 날짜의 파일에. 보관은 slow와 같다
 //
+// 디스크 한도(C1, 설정 › Monitor › Disk limit) — 정리할 때 연결 폴더 전체(옛 서버 포함)가 한도를 넘으면
+//   오래된 slow·sizes·alerts 날짜 파일 → 오래된 분 파일 → 시·일 파일 순서로 지운다. 오늘·이번 달·올해 파일과 최근 이틀 분 파일은 남긴다.
+//   지웠으면 state.json의 trimmed에 남긴다(설정 창이 보여 준다).
 // 파일은 다시 쓰지 않는다 — 덧붙이기와 통째 삭제만(SD카드 쓰기를 줄이려고). state.json만 임시 파일 → 이름 바꾸기로 교체.
 // 파일 작업은 한 줄로 세운다(queue) — 덧붙이기·합치기·지우기가 서로 끼어들지 않게.
 // 시·일 경계는 서버의 시간대 기준. 피드가 닫혀 있던 동안 끝난 시·일은 다음에 피드가 열릴 때 따라잡아 합친다.
 import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { MONITOR_HISTORY_DAYS, type ActivityOps, type HistoryFill, type HistoryInfo, type MonitorAlert, type MonitorHistory, type MonitorOp, type MonitorSample } from '@mongolive/shared';
+import { HISTORY_BUDGET_BYTES, MINUTE_HISTORY_DAYS, MONITOR_HISTORY_DAYS, type ActivityOps, type HistoryFill, type HistoryBudget, type HistoryInfo, type MinuteHistory, type MonitorAlert, type MonitorHistory, type MonitorOp, type MonitorSample } from '@mongolive/shared';
 import { metricsDirPath } from '../paths';
 import {
   addSample,
@@ -39,10 +42,8 @@ import type { SizesLine, SizeTuple } from './sizes';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
-// 분 기록 파일은 이틀치 남긴다(24시간을 보여 주려면 어제 파일도 필요)
-const KEEP_MINUTE_DAYS = 2;
-// 따라잡기 한도 — 그보다 오래된 분·시 기록은 이미 지워졌다
-const CATCH_UP_HOURS_MS = KEEP_MINUTE_DAYS * DAY_MS;
+// 따라잡기 한도 — 닫혀 있던 동안 끝난 시간은 이틀까지만 합친다(분 보관 기간과 따로: 최소 보관이 2일이라 그 안의 분은 늘 있다)
+const CATCH_UP_HOURS_MS = 2 * DAY_MS;
 const CATCH_UP_DAYS_MS = 35 * DAY_MS;
 
 export interface GapRecord {
@@ -97,6 +98,8 @@ interface StateFile {
   gaps: StoredGap[];
   // 느린 쿼리를 파일에 적은 마지막 로그 시각 — 다음에 열려 서버 로그를 다시 읽을 때 그 뒤만 받는다(9-5b)
   slowCursor?: number | null;
+  // 디스크 한도 때문에 마지막으로 지운 때와 크기(C1)
+  trimmed?: { at: number; bytes: number } | null;
 }
 
 const emptyState = (): StateFile => ({ version: 1, rolledHour: null, rolledDay: null, last: null, resume: null, gaps: [], slowCursor: null });
@@ -208,6 +211,9 @@ export interface RecorderHooks {
   // 그 1분 동안 changeStream으로 본 컬렉션별 쓰기(monitor/activity)
   minuteWrites: (start: number) => Map<string, ActivityOps> | undefined;
   retention: () => MonitorHistory;
+  // 1분 기록 보관(없으면 2일)·디스크 한도(없으면 끔) — C1
+  minuteRetention?: () => MinuteHistory;
+  budget?: () => HistoryBudget;
   // 연결이 아직 있는가 — 지운 연결의 폴더를 다시 만들지 않게
   alive: () => boolean;
   intervalSec: number;
@@ -334,15 +340,23 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
       state.rolledDay = d;
       changed = true;
     }
-    if (changed) await prune(clock());
+    // 시가 끝났거나(1시간마다) 보관·한도 설정이 바뀌었으면 정리한다 — 열린 뒤 첫 1분에도(설정 키가 아직 없으니)
+    if (changed || pruneKey() !== prunedWith) await prune(clock());
   };
+
+  const minuteDays = () => MINUTE_HISTORY_DAYS[hooks.minuteRetention?.() ?? '2d'];
+  const budgetOf = () => hooks.budget?.() ?? 'off';
+  const pruneKey = () => `${hooks.retention()}|${minuteDays()}|${budgetOf()}`;
+  // 마지막으로 정리할 때의 설정(바뀌면 다음 1분 기록 때 다시 정리)
+  let prunedWith: string | null = null;
 
   // 보관 기간이 지난 파일을 통째로 지운다
   const prune = async (now: number) => {
     if (!dir || !enabled()) return;
+    prunedWith = pruneKey();
     const retention = hooks.retention();
     const keepHoursMs = retention === 'off' ? Infinity : MONITOR_HISTORY_DAYS[retention] * DAY_MS;
-    const oldestMinuteKey = dateKey(now - KEEP_MINUTE_DAYS * DAY_MS);
+    const oldestMinuteKey = dateKey(now - minuteDays() * DAY_MS);
     for (const name of await readdir(dir)) {
       const minute = /^minutes-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
       if (minute && minute[1] < oldestMinuteKey) await rm(join(dir, name), { force: true });
@@ -357,6 +371,14 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
         // 그달의 마지막 순간(다음 달 1일)이 보관 기간보다 오래됐으면
         const monthEnd = new Date(Number(hour[1]), Number(hour[2]), 1).getTime();
         if (monthEnd < now - keepHoursMs) await rm(join(dir, name), { force: true });
+      }
+    }
+    const budget = budgetOf();
+    if (budget !== 'off') {
+      const bytes = await trimToBudget(connectionDir(hooks.connectionId), HISTORY_BUDGET_BYTES[budget], now);
+      if (bytes > 0) {
+        state.trimmed = { at: now, bytes };
+        console.warn(`[monitor] ${hooks.connectionId} 디스크 한도(${budget})를 넘어 오래된 기록 ${bytes} B를 지웠다`);
       }
     }
   };
@@ -385,7 +407,7 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
     const dayWillRoll = (d: number) => (state.rolledDay === null || d > state.rolledDay) && d >= nextDay(dayStart(now - CATCH_UP_DAYS_MS));
     const retention = hooks.retention();
     const keepHoursFrom = retention === 'off' ? Infinity : now - MONITOR_HISTORY_DAYS[retention] * DAY_MS;
-    const keepMinutesKey = dateKey(now - KEEP_MINUTE_DAYS * DAY_MS);
+    const keepMinutesKey = dateKey(now - minuteDays() * DAY_MS);
     const hours = new Map<number, Map<string, ActivityOps>>();
     const days = new Map<number, Map<string, ActivityOps>>();
     const add = (into: Map<number, Map<string, ActivityOps>>, t: number, writes: Map<string, ActivityOps>) => {
@@ -604,6 +626,55 @@ export const createRecorder = (hooks: RecorderHooks): Recorder => {
 
 // ── 연결 단위 관리 ──
 
+// 한도를 넘는 동안 지울 파일 순서 — 낮은 단계부터, 같은 단계 안에서는 끝 시각이 이른 것부터.
+// 지우지 않는 것: 오늘의 날짜 파일, 오늘·어제의 분 파일(24시간 차트), 이번 달 시 파일, 올해 일 파일, state·gaps·fills
+const trimOrder = (name: string, now: number): { tier: number; end: number } | null => {
+  const day = /^(slow|sizes|alerts|minutes)-(\d{4})-(\d{2})-(\d{2})\.jsonl$/.exec(name);
+  if (day) {
+    const end = new Date(Number(day[2]), Number(day[3]) - 1, Number(day[4]) + 1).getTime();
+    if (day[1] === 'minutes') return end <= dayStart(now) - DAY_MS ? { tier: 1, end } : null;
+    return end <= dayStart(now) ? { tier: 0, end } : null;
+  }
+  const hour = /^hours-(\d{4})-(\d{2})\.jsonl$/.exec(name);
+  if (hour) {
+    const end = new Date(Number(hour[1]), Number(hour[2]), 1).getTime();
+    return end <= now ? { tier: 2, end } : null;
+  }
+  const year = /^days-(\d{4})\.jsonl$/.exec(name);
+  if (year) {
+    const end = new Date(Number(year[1]) + 1, 0, 1).getTime();
+    return end <= now ? { tier: 2, end } : null;
+  }
+  return null;
+};
+
+// 연결 폴더(모든 서버)가 limit 바이트 아래가 될 때까지 오래된 기록을 지운다 — 지운 바이트
+export const trimToBudget = async (root: string, limit: number, now: number): Promise<number> => {
+  const files: { path: string; size: number; tier: number; end: number }[] = [];
+  let total = 0;
+  for (const server of await readdir(root).catch(() => [] as string[])) {
+    const serverDir = join(root, server);
+    const names = await readdir(serverDir).catch(() => null);
+    if (!names) continue;
+    for (const name of names) {
+      const info = await stat(join(serverDir, name)).catch(() => null);
+      if (!info?.isFile()) continue;
+      total += info.size;
+      const order = trimOrder(name, now);
+      if (order) files.push({ path: join(serverDir, name), size: info.size, ...order });
+    }
+  }
+  if (total <= limit) return 0;
+  files.sort((a, b) => a.tier - b.tier || a.end - b.end);
+  let freed = 0;
+  for (const file of files) {
+    if (total - freed <= limit) break;
+    await rm(file.path, { force: true });
+    freed += file.size;
+  }
+  return freed;
+};
+
 // 연결을 지웠을 때 — 그 연결의 기록 폴더 전체(옛 서버 것까지)
 export const dropConnectionHistory = (connectionId: string) => rm(connectionDir(connectionId), { recursive: true, force: true });
 
@@ -632,12 +703,15 @@ export const historyInfo = async (connectionId: string, current: string | null):
   try {
     entries = await readdir(root);
   } catch {
-    return { bytes: 0, servers: 0, oldest: null, current };
+    return { bytes: 0, servers: 0, oldest: null, current, trimmed: null };
   }
+  let trimmed: HistoryInfo['trimmed'] = null;
   for (const server of entries) {
     const serverDir = join(root, server);
     if (!(await stat(serverDir)).isDirectory()) continue;
     servers += 1;
+    const state = await loadState(serverDir);
+    if (state.trimmed && (!trimmed || state.trimmed.at > trimmed.at)) trimmed = state.trimmed;
     for (const name of await readdir(serverDir)) {
       const file = join(serverDir, name);
       bytes += (await stat(file)).size;
@@ -647,5 +721,5 @@ export const historyInfo = async (connectionId: string, current: string | null):
       }
     }
   }
-  return { bytes, servers, oldest, current };
+  return { bytes, servers, oldest, current, trimmed };
 };

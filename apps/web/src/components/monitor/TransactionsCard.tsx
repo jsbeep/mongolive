@@ -10,7 +10,7 @@ import type { MonitorRange, TransactionsReport, TransactionSample } from '../../
 import { LIVE_RANGES } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
-import { fmtClock, fmtNumber } from './format';
+import { fmtClock, fmtNumber, memoryRange, rangePhrase } from './format';
 import type { MonitorScope } from './ScopeBar';
 
 const LIVE_POLL_MS = 10_000;
@@ -38,7 +38,7 @@ const rate = (n: number) => (n > 0 && n < 10 ? n.toFixed(1) : fmtNumber(Math.rou
 function useTransactions(range: MonitorRange, scope: MonitorScope) {
   const [failed, setFailed] = useState<string | null>(null);
   const live = LIVE_RANGES.includes(range);
-  const asked = (live ? range : '1h') as '5m' | '1h';
+  const asked = memoryRange(range);
   const query = useRef({ range: asked, scope });
   query.current = { range: asked, scope };
   const key = `${asked}\u0000${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
@@ -99,7 +99,7 @@ export function TransactionsCard({ scope, range }: TransactionsCardProps) {
   if (!report || report.status !== 'ok' || report.count === 0) return null;
 
   const live = LIVE_RANGES.includes(range);
-  const inRange = range === '5m' ? 'the last 5 minutes' : 'the last hour';
+  const inRange = rangePhrase(memoryRange(range));
   // 범위의 DB 안이면 컬렉션 이름만
   const label = (ns: string) => (scope.database && ns.startsWith(`${scope.database}.`) ? ns.slice(scope.database.length + 1) : ns);
   const avg = report.writes / report.count;

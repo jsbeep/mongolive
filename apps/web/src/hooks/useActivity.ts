@@ -4,6 +4,7 @@
 import { useCachedReport } from './useCachedReport';
 import { useEffect, useState } from 'react';
 import type { ActivityRange, ActivityReport, HistoryReport, LastWrites, MonitorRange } from '../types/explorer';
+import { isLiveRange } from '../types/explorer';
 import { api } from '../services/api';
 
 const POLL_MS = 10_000;
@@ -97,7 +98,7 @@ export function useHistory(
   range: MonitorRange,
   options: { writes?: boolean; database?: string | null; collection?: string | null } = {},
 ): HistoryState {
-  const fileRange = range === '5m' || range === '1h' ? null : range;
+  const fileRange = isLiveRange(range) ? null : range;
   const key = JSON.stringify([fileRange, options.writes ?? false, options.database ?? null, options.collection ?? null]);
   const { value, refreshing, error } = usePoll('history', enabled && fileRange !== null, key, () => (fileRange ? api.getHistory(fileRange, options) : Promise.resolve(null)), HISTORY_POLL_MS);
   return { report: value, loading: value === null && error === null, refreshing, error };

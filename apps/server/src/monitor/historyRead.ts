@@ -1,28 +1,31 @@
 // 기록 파일 읽기 — Monitor의 긴 기간(9-3b)
 //
 // 기간마다 읽는 파일과 한 칸의 길이(화면의 점이 400개를 넘지 않게):
-//   24h → 분 기록을 5분 칸으로   7d → 시 기록 그대로   30d → 시 기록을 2시간 칸으로   90d → 6시간 칸으로   all → 일 기록
+//   6h → 분 기록 그대로   12h → 2분 칸으로   24h → 5분 칸으로   7d → 시 기록 그대로   30d → 시 기록을 2시간 칸으로   90d → 6시간 칸으로   all → 일 기록
 // 아직 합치지 않은 최근 기록도 넣는다: 시 기록 뒤쪽은 분 기록에서, 일 기록 뒤쪽은 시·분 기록에서(지금 시간·오늘이 빠지지 않게).
 // 칸은 서버 시간대 기준(2시간 칸 = 자정부터 2시간씩).
+// 파일은 기간과 겹치는 것만 연다(분 = 날짜, 시 = 달, 일 = 해 — 파일 이름의 키로 고른다).
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ActivityOps, HistoryFill, HistoryGap, HistoryPoint, HistoryReport, MonitorRange } from '@mongolive/shared';
+import type { ActivityOps, HistoryFill, HistoryGap, HistoryPoint, HistoryRange, HistoryReport } from '@mongolive/shared';
 import { readJsonl, serverHistoryDir } from './history';
-import { average, dayStart, hourStart, MINUTE_MS, mergeRollups, METRIC_KEYS, nextDay, nextHour, TOP_WRITES, type Rollup } from './rollup';
+import { average, dateKey, dayStart, hourStart, MINUTE_MS, mergeRollups, METRIC_KEYS, monthKey, nextDay, nextHour, TOP_WRITES, yearKey, type Rollup } from './rollup';
 
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const TOP_COLLECTIONS = 50;
 
-type FileRange = Exclude<MonitorRange, '5m' | '1h'>;
+type FileRange = HistoryRange;
 const PLAN: Record<FileRange, { spanMs: number | null; bucketMs: number; from: 'minutes' | 'hours' | 'days' }> = {
+  '6h': { spanMs: 6 * HOUR_MS, bucketMs: MINUTE_MS, from: 'minutes' },
+  '12h': { spanMs: 12 * HOUR_MS, bucketMs: 2 * MINUTE_MS, from: 'minutes' },
   '24h': { spanMs: DAY_MS, bucketMs: 5 * MINUTE_MS, from: 'minutes' },
   '7d': { spanMs: 7 * DAY_MS, bucketMs: HOUR_MS, from: 'hours' },
   '30d': { spanMs: 30 * DAY_MS, bucketMs: 2 * HOUR_MS, from: 'hours' },
   '90d': { spanMs: 90 * DAY_MS, bucketMs: 6 * HOUR_MS, from: 'hours' },
   all: { spanMs: null, bucketMs: DAY_MS, from: 'days' },
 };
-export const isFileRange = (range: string): range is FileRange => range in PLAN;
+export const isFileRange = (range: string): range is FileRange => Object.hasOwn(PLAN, range);
 
 // 칸 시작 — 분 단위 칸은 그대로 나누고, 시·일 단위는 서버 시간대의 시각에 맞춘다
 const bucketOf = (t: number, bucketMs: number): number => {
@@ -34,14 +37,18 @@ const bucketOf = (t: number, bucketMs: number): number => {
   return d.getTime();
 };
 
-const readAll = async (dir: string, prefix: 'minutes' | 'hours' | 'days'): Promise<Rollup[]> => {
+const FILE_KEY = { minutes: dateKey, hours: monthKey, days: yearKey } as const;
+
+// 그 단계의 파일 중 from이 든 날짜·달·해부터(0 = 전부) — 키가 YYYY-MM-DD·YYYY-MM·YYYY라 문자열 비교로 고른다
+export const readAll = async (dir: string, prefix: 'minutes' | 'hours' | 'days', from = 0): Promise<Rollup[]> => {
   let names: string[] = [];
   try {
     names = await readdir(dir);
   } catch {
     return [];
   }
-  const files = names.filter((n) => n.startsWith(`${prefix}-`) && n.endsWith('.jsonl')).sort();
+  const fromKey = from > 0 ? FILE_KEY[prefix](from) : '';
+  const files = names.filter((n) => n.startsWith(`${prefix}-`) && n.endsWith('.jsonl') && n.slice(prefix.length + 1, -6) >= fromKey).sort();
   const out: Rollup[] = [];
   for (const name of files) out.push(...(await readJsonl<Rollup>(join(dir, name))));
   return out.sort((a, b) => a.t - b.t);
@@ -68,16 +75,15 @@ export const readHistory = async (connectionId: string, fingerprint: string, que
 
   // 원본 기록 모으기 — 큰 단위 기록 + 아직 합치지 않은 뒤쪽은 작은 단위에서
   let records: Rollup[] = [];
-  const minutes = () => readAll(dir, 'minutes');
   if (plan.from === 'minutes') {
-    records = await minutes();
+    records = await readAll(dir, 'minutes', from);
   } else {
-    const hours = await readAll(dir, 'hours');
     const days = plan.from === 'days' ? await readAll(dir, 'days') : [];
     const dayEnd = coverEnd(days, nextDay);
+    const hours = await readAll(dir, 'hours', Math.max(from, dayEnd ?? 0));
     const hoursAfter = dayEnd === null ? hours : hours.filter((r) => r.t >= dayEnd);
     const hourEnd = coverEnd(hours, nextHour) ?? dayEnd;
-    const minutesAfter = (await minutes()).filter((r) => hourEnd === null || r.t >= hourEnd);
+    const minutesAfter = (await readAll(dir, 'minutes', Math.max(from, hourEnd ?? 0))).filter((r) => hourEnd === null || r.t >= hourEnd);
     records = [...days, ...hoursAfter, ...minutesAfter];
   }
   records = records.filter((r) => r.t + plan.bucketMs > from && r.t <= now);

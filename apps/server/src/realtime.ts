@@ -501,6 +501,8 @@ export const startRealtime = (io: Server) => {
           fingerprint: async () => clusterFingerprint(await clientFor(id), connectionUri(id) ?? ''),
           minuteWrites: (start) => created.activity.minuteWrites(start),
           retention: () => getServerSettings().monitorHistory,
+          minuteRetention: () => getServerSettings().minuteHistory,
+          budget: () => getServerSettings().historyBudget,
           alive: () => connectionUri(id) !== null,
           intervalSec: SAMPLE_INTERVAL_MS / 1000,
         }),

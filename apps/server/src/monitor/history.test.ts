@@ -1,9 +1,9 @@
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ActivityOps, MonitorHistory, MonitorSample } from '@mongolive/shared';
-import { createRecorder, dropConnectionHistory, gapBetween, historyInfo, readJsonl, type GapRecord, type ResumePoint } from './history';
+import type { ActivityOps, HistoryBudget, MinuteHistory, MonitorHistory, MonitorSample } from '@mongolive/shared';
+import { createRecorder, dropConnectionHistory, gapBetween, historyInfo, readJsonl, trimToBudget, type GapRecord, type ResumePoint } from './history';
 import { addSample, average, emptyRollup, mergeRollups, type Rollup } from './rollup';
 import type { StatusCounters } from './serverStatus';
 
@@ -84,6 +84,8 @@ describe('createRecorder', () => {
   let root: string;
   let now = T0;
   let retention: MonitorHistory = '90d';
+  let minutes: MinuteHistory = '2d';
+  let budget: HistoryBudget = 'off';
   let alive = true;
   const writes = new Map<number, Map<string, ActivityOps>>();
   const make = (fp = 'rs-test-abc') =>
@@ -92,6 +94,8 @@ describe('createRecorder', () => {
       fingerprint: async () => fp,
       minuteWrites: (start) => writes.get(start),
       retention: () => retention,
+      minuteRetention: () => minutes,
+      budget: () => budget,
       alive: () => alive,
       intervalSec: 10,
       clock: () => now,
@@ -107,6 +111,8 @@ describe('createRecorder', () => {
     process.env.METRICS_DIR = root;
     now = T0;
     retention = '90d';
+    minutes = '2d';
+    budget = 'off';
     alive = true;
     writes.clear();
   });
@@ -212,6 +218,61 @@ describe('createRecorder', () => {
     expect(files).not.toContain('hours-2026-05.jsonl'); // 90일보다 오래됨
     expect(files).toContain('hours-2026-10.jsonl');
     expect(files).toContain('days-2020.jsonl'); // 일 기록은 지우지 않는다
+  });
+
+  it('분 보관 7일: 5일 전 분 파일은 남고 8일 전은 지운다(설정이 바뀌면 다음 1분 기록 때 정리)', async () => {
+    const r = make();
+    feed(r, T0);
+    feed(r, T0 + MIN);
+    await r.idle();
+    await writeFile(join(dir(), 'minutes-2026-11-11.jsonl'), '{}\n');
+    await writeFile(join(dir(), 'minutes-2026-11-08.jsonl'), '{}\n');
+    minutes = '7d';
+    feed(r, T0 + 2 * MIN); // 같은 시간 안 — 설정이 바뀌어서 정리
+    await r.idle();
+    const files = await readdir(dir());
+    expect(files).toContain('minutes-2026-11-11.jsonl');
+    expect(files).not.toContain('minutes-2026-11-08.jsonl');
+  });
+
+  it('디스크 한도: slow·sizes·alerts → 분 → 시·일 순서로, 오래된 것부터, 오늘·최근 것은 남긴다', async () => {
+    const at = join(root, 'conn1');
+    const kb = async (server: string, name: string, size: number) => {
+      await mkdir(join(at, server), { recursive: true });
+      await writeFile(join(at, server, name), 'x'.repeat(size * 1024));
+    };
+    await kb('a', 'slow-2026-11-01.jsonl', 10);
+    await kb('b', 'sizes-2026-11-03.jsonl', 10); // 옛 서버 폴더도 같이 센다
+    await kb('a', 'slow-2026-11-16.jsonl', 10); // 오늘 — 남긴다
+    await kb('a', 'minutes-2026-11-10.jsonl', 10);
+    await kb('a', 'minutes-2026-11-15.jsonl', 10); // 어제 — 남긴다
+    await kb('a', 'hours-2026-09.jsonl', 10);
+    await kb('a', 'hours-2026-11.jsonl', 10); // 이번 달 — 남긴다
+    await kb('a', 'state.json', 1);
+    // 71KB → 35KB 아래로: slow 11-01, sizes 11-03, minutes 11-10, hours 09까지 지워야 31KB
+    const freed = await trimToBudget(at, 35 * 1024, T0);
+    expect(freed).toBe(40 * 1024);
+    expect((await readdir(join(at, 'a'))).sort()).toEqual(['hours-2026-11.jsonl', 'minutes-2026-11-15.jsonl', 'slow-2026-11-16.jsonl', 'state.json']);
+    expect(await readdir(join(at, 'b'))).toEqual([]);
+    // 한도 안이면 아무것도 안 지운다
+    expect(await trimToBudget(at, 35 * 1024, T0)).toBe(0);
+  });
+
+  it('디스크 한도를 넘으면 정리 때 지우고 state.json·historyInfo에 남긴다', async () => {
+    const r = make();
+    feed(r, T0);
+    feed(r, T0 + MIN);
+    await r.idle();
+    // 600MB짜리 성긴 파일(디스크는 거의 안 쓴다)
+    const big = join(dir(), 'slow-2026-11-01.jsonl');
+    await writeFile(big, '');
+    await truncate(big, 600 * 1024 ** 2);
+    budget = '500mb';
+    feed(r, T0 + 2 * MIN);
+    await r.idle();
+    expect(await readdir(dir())).not.toContain('slow-2026-11-01.jsonl');
+    const info = await historyInfo('conn1', 'rs-test-abc');
+    expect(info.trimmed).toEqual({ at: T0 + 2 * MIN, bytes: 600 * 1024 ** 2 });
   });
 
   it('느린 쿼리: 날짜 파일에 덧붙이고 커서를 남기며, 시 기록과 같은 보관 기간으로 지운다', async () => {

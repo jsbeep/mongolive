@@ -1,5 +1,6 @@
 // Monitor 화면의 숫자 모양 — 작은 값은 소수까지, 큰 값은 줄여서(12.3K)
 
+import { isLiveRange, type ActivityRange, type MonitorRange } from '../../types/explorer';
 const trim = (text: string) => (text.includes('.') ? text.replace(/\.?0+$/, '') : text);
 
 // 초당 값·개수: 0 / 0.25 / 3.5 / 42 / 1,234 / 12.3K / 4.5M
@@ -58,14 +59,15 @@ export const fmtClock = (ms: number, seconds = false): string => {
   return seconds ? `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` : `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-// 차트 시간 창 — 기록이 짧으면(막 연결함) 10분부터 시작해 5분 단위로 늘리고 1시간에서 멈춘다.
+// 실시간 차트 시간 창 — 5m는 고정. 30m·1h는 기록이 짧으면(막 연결함) 10분부터 시작해 5분 단위로 늘리고 그 기간에서 멈춘다.
 // 1시간 창에 1분치만 그리면 선이 오른쪽 끝에 몰려 읽을 수 없어서
 const MINUTE = 60_000;
-export const MAX_WINDOW_MS = 60 * MINUTE;
-export const chartWindow = (firstAt: number | undefined, now: number): { ms: number; label: string } => {
+export const liveWindow = (range: ActivityRange, firstAt: number | undefined, now: number): { ms: number; label: string } => {
+  if (range === '5m') return { ms: 5 * MINUTE, label: RANGE_LABEL['5m'] };
+  const max = range === '30m' ? 30 * MINUTE : 60 * MINUTE;
   const span = firstAt === undefined ? 0 : now - firstAt;
-  const ms = Math.min(MAX_WINDOW_MS, Math.max(10 * MINUTE, Math.ceil(span / (5 * MINUTE)) * 5 * MINUTE));
-  return { ms, label: ms === MAX_WINDOW_MS ? 'Last hour' : `Last ${ms / MINUTE} min` };
+  const ms = Math.min(max, Math.max(10 * MINUTE, Math.ceil(span / (5 * MINUTE)) * 5 * MINUTE));
+  return { ms, label: ms === max ? RANGE_LABEL[range] : `Last ${ms / MINUTE} min` };
 };
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -119,15 +121,24 @@ export const fmtAgo = (at: number, now: number): string => {
 };
 
 // 기간 이름 — 범위 바·제목
-export const RANGE_LABEL = {
+export const RANGE_LABEL: Record<MonitorRange, string> = {
   '5m': 'Last 5 min',
+  '30m': 'Last 30 min',
   '1h': 'Last hour',
+  '6h': 'Last 6 hours',
+  '12h': 'Last 12 hours',
   '24h': 'Last 24 hours',
   '7d': 'Last 7 days',
   '30d': 'Last 30 days',
   '90d': 'Last 90 days',
   all: 'All history',
-} as const;
+};
+
+// 문장 안의 기간 — the last 30 min / the last hour / all history
+export const rangePhrase = (range: MonitorRange): string => (range === 'all' ? 'all history' : RANGE_LABEL[range].replace(/^Last /, 'the last '));
+
+// 메모리 카드가 물을 기간 — 긴 기간이면 1h(서버 메모리에 그만큼만 있다)
+export const memoryRange = (range: MonitorRange): ActivityRange => (isLiveRange(range) ? range : '1h');
 
 // 칸 길이 이름 — 5 min / 1 hour / 6 hours / 1 day
 export const fmtSpan = (ms: number): string => {

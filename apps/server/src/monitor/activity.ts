@@ -21,7 +21,7 @@ const TOP = 20;
 const MAX_COLLECTIONS = 300;
 
 const COUNTED_OPS = new Set<LiveOperation>(['insert', 'update', 'replace', 'delete']);
-const RANGE_MS: Record<ActivityRange, number> = { '5m': 5 * MINUTE_MS, '1h': 60 * MINUTE_MS };
+const RANGE_MS: Record<ActivityRange, number> = { '5m': 5 * MINUTE_MS, '30m': 30 * MINUTE_MS, '1h': 60 * MINUTE_MS };
 
 const emptyOps = (): ActivityOps => ({ insert: 0, update: 0, replace: 0, delete: 0 });
 const addOps = (into: ActivityOps, from: ActivityOps) => {

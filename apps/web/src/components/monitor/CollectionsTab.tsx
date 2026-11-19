@@ -11,14 +11,14 @@
 import { RefreshSpinner, SkeletonLine, SkeletonRows } from '../common/Skeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpRight, CircleAlert } from 'lucide-react';
-import type { ActivityCollection, ActivityOps, ActivityRange, CollectionSizeRow, CollectionSummary, LastWrite, MonitorRange } from '../../types/explorer';
+import type { ActivityCollection, ActivityOps, CollectionSizeRow, CollectionSummary, LastWrite, MonitorRange } from '../../types/explorer';
 import { LIVE_RANGES } from '../../types/explorer';
 import { api } from '../../services/api';
 import { useActivity, useHistory } from '../../hooks/useActivity';
 import { useBackfill } from '../../hooks/useBackfill';
 import { cn } from '../../utils/cn';
 import { TimeChart, Sparkline, type ChartSeries } from './charts';
-import { chartWindow, fmtAgo, fmtBytes, fmtBytesDelta, fmtClock, fmtDateTime, fmtNumber, fmtSpan, RANGE_LABEL } from './format';
+import { fmtAgo, liveWindow, memoryRange, rangePhrase, fmtBytes, fmtBytesDelta, fmtClock, fmtDateTime, fmtNumber, fmtSpan } from './format';
 import { StorageCard, useSizes } from './StorageCard';
 import { IndexesCard } from './IndexesCard';
 import { TopCard } from './TopCard';
@@ -156,7 +156,7 @@ const DAY_MS = 24 * 60 * MINUTE;
 export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explorerDatabase, explorerCollections, onOpenDocument }: CollectionsTabProps) {
   const live = LIVE_RANGES.includes(range);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'writes', desc: true });
-  const activity = useActivity(live, scope, (live ? range : '1h') as ActivityRange);
+  const activity = useActivity(live, scope, memoryRange(range));
   const history = useHistory(!live, range, { writes: true, database: scope.database, collection: scope.collection });
   // 탭이 없던 동안의 쓰기 불러오기(9-4) — 범위와 상관없이 이 연결 전체
   const backfill = useBackfill(true);
@@ -199,7 +199,7 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
           subtitle: `${scopeName} · finished minutes only`,
           times: done.map((t) => t.at),
           series: OPS.map((o) => ({ key: o.key, label: o.label, color: o.color, values: done.map((t) => t.ops[o.key]) })),
-          windowMs: range === '5m' ? 5 * MINUTE : chartWindow(report.since, now).ms,
+          windowMs: liveWindow(memoryRange(range), report.since, now).ms,
           gapMs: 1.5 * MINUTE,
           timeFormat: 'seconds',
           bands: [],
@@ -307,7 +307,7 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
   }
 
   const now = view.now;
-  const inRange = live ? (range === '5m' ? 'the last 5 minutes' : 'the last hour') : RANGE_LABEL[range].replace(/^Last /, 'the last ').replace('All history', 'all history');
+  const inRange = rangePhrase(range);
   const sortHeader = (key: SortKey, label: string, align: 'left' | 'right' = 'left') => {
     const on = sort.key === key;
     return (

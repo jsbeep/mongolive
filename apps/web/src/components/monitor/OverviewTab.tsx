@@ -7,13 +7,13 @@
 import { RefreshSpinner } from '../common/Skeleton';
 import { useMemo, type ReactNode } from 'react';
 import { CircleAlert, Loader2 } from 'lucide-react';
-import type { HistoryGap, HistoryPoint, MonitorMetricKey, MonitorRange, MonitorRates, MonitorSample } from '../../types/explorer';
-import { LIVE_RANGES } from '../../types/explorer';
+import type { ActivityRange, HistoryGap, HistoryPoint, HistoryRange, MonitorMetricKey, MonitorRange, MonitorRates, MonitorSample } from '../../types/explorer';
+import { isLiveRange } from '../../types/explorer';
 import type { MonitorState } from '../../hooks/useMonitor';
 import { useHistory } from '../../hooks/useActivity';
 import { cn } from '../../utils/cn';
 import { TimeChart, Sparkline, type ChartSeries } from './charts';
-import { chartWindow, fmtBytesRate, fmtDateTime, fmtDuration, fmtMs, fmtNumber, fmtSpan, fmtUptime, RANGE_LABEL } from './format';
+import { fmtBytesRate, liveWindow, fmtDateTime, fmtDuration, fmtMs, fmtNumber, fmtSpan, fmtUptime, RANGE_LABEL } from './format';
 
 // 타일의 추세선 — 실시간은 최근 5분(30칸)
 const TREND_SAMPLES = 30;
@@ -122,7 +122,7 @@ const assertsOf = (r: MonitorRates) => sum(r.asserts.regular, r.asserts.warning,
 const pick = (samples: MonitorSample[], fn: (s: MonitorSample) => number | null | undefined) => samples.map((s) => fn(s) ?? null);
 const fromRates = (samples: MonitorSample[], fn: (r: MonitorRates) => number | null) => pick(samples, (s) => (s.rates ? fn(s.rates) : null));
 
-function LiveOverview({ monitor, range }: { monitor: MonitorState; range: '5m' | '1h' }) {
+function LiveOverview({ monitor, range }: { monitor: MonitorState; range: ActivityRange }) {
   const { samples, info, intervalMs, received, now } = monitor;
   const times = useMemo(() => samples.map((s) => s.at), [samples]);
   const seconds = intervalMs / 1000;
@@ -169,7 +169,8 @@ function LiveOverview({ monitor, range }: { monitor: MonitorState; range: '5m' |
   const lastGauges = [...samples].reverse().find((s) => s.gauges)?.gauges ?? null;
   const trend = (fn: (r: MonitorRates) => number | null) => fromRates(samples.slice(-TREND_SAMPLES), fn);
   const recent = samples.slice(-TREND_SAMPLES);
-  const windowMs = range === '5m' ? 5 * 60_000 : chartWindow(samples[0]?.at, now).ms;
+  const window = liveWindow(range, samples[0]?.at, now);
+  const windowMs = window.ms;
 
   return (
     <div className={styles.body}>
@@ -215,7 +216,7 @@ function LiveOverview({ monitor, range }: { monitor: MonitorState; range: '5m' |
         />
       </div>
 
-      <h2 className={styles.sectionTitle}>{range === '5m' ? RANGE_LABEL['5m'] : chartWindow(samples[0]?.at, now).label} · whole server · live</h2>
+      <h2 className={styles.sectionTitle}>{window.label} · whole server · live</h2>
       <ChartGrid
         charts={charts}
         chartProps={{ times, windowMs, now, gapMs: intervalMs * 2.5 }}
@@ -259,7 +260,7 @@ const gapLabel = (g: HistoryGap) => {
   return `Not recording ${span} — meanwhile ${w.toLocaleString()} write and ${r.toLocaleString()} read requests (whole server)`;
 };
 
-function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState; range: Exclude<MonitorRange, '5m' | '1h'>; historyOff: boolean }) {
+function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState; range: HistoryRange; historyOff: boolean }) {
   const { report, loading, refreshing, error } = useHistory(true, range);
   const points = report?.points ?? [];
 
@@ -396,6 +397,6 @@ function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState
 }
 
 export function OverviewTab({ monitor, range, historyOff }: { monitor: MonitorState; range: MonitorRange; historyOff: boolean }) {
-  if (LIVE_RANGES.includes(range)) return <LiveOverview monitor={monitor} range={range as '5m' | '1h'} />;
-  return <HistoryOverview monitor={monitor} range={range as Exclude<MonitorRange, '5m' | '1h'>} historyOff={historyOff} />;
+  if (isLiveRange(range)) return <LiveOverview monitor={monitor} range={range} />;
+  return <HistoryOverview monitor={monitor} range={range} historyOff={historyOff} />;
 }

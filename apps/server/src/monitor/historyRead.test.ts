@@ -41,6 +41,28 @@ describe('readHistory', () => {
     ]);
   });
 
+  it('6h = 1분 칸, 12h = 2분 칸', async () => {
+    await write(`minutes-${dateKey(NOW)}.jsonl`, [rec(NOW - 7 * HOUR, 1), rec(NOW - 4 * MIN, 2), rec(NOW - 3 * MIN, 4)]);
+    const six = await readHistory('c1', 'rs-x', { range: '6h' }, NOW);
+    expect(six.bucketMs).toBe(MIN);
+    expect(six.points.map((p) => [p.t, p.avg.conns])).toEqual([[NOW - 4 * MIN, 2], [NOW - 3 * MIN, 4]]);
+    const twelve = await readHistory('c1', 'rs-x', { range: '12h' }, NOW);
+    expect(twelve.bucketMs).toBe(2 * MIN);
+    expect(twelve.points.map((p) => [p.t, p.avg.conns])).toEqual([[NOW - 7 * HOUR, 1], [NOW - 4 * MIN, 3]]);
+  });
+
+  it('기간과 겹치는 파일만 연다(분 = 날짜, 시 = 달)', async () => {
+    // 열면 기간 안 기록이 섞여 들어오는 '덫' 파일 — 이름의 날짜·달이 기간 밖이라 열지 않아야 한다
+    await write(`minutes-${dateKey(NOW - 2 * 24 * HOUR)}.jsonl`, [rec(NOW - 10 * MIN, 99)]);
+    await write(`minutes-${dateKey(NOW)}.jsonl`, [rec(NOW - 5 * MIN, 1)]);
+    const r = await readHistory('c1', 'rs-x', { range: '6h' }, NOW);
+    expect(r.points.map((p) => p.avg.conns)).toEqual([1]);
+    await write(`hours-2026-01.jsonl`, [rec(NOW - 3 * HOUR, 99, 360)]);
+    await write(`hours-${monthKey(NOW)}.jsonl`, [rec(NOW - 2 * HOUR, 5, 360)]);
+    const week = await readHistory('c1', 'rs-x', { range: '7d' }, NOW);
+    expect(week.points.map((p) => p.avg.conns)).not.toContain(99);
+  });
+
   it('7d = 시 기록 + 아직 합치지 않은 지금 시간(분 기록)', async () => {
     await write(`hours-${monthKey(NOW)}.jsonl`, [rec(NOW - 2 * HOUR, 5, 360), rec(NOW - HOUR, 7, 360)]);
     // 11:00대는 이미 시 기록이 있으니 분 기록에서 빼고, 12:00대(지금)만
