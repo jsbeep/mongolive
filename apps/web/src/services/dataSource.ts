@@ -31,7 +31,8 @@ import type {
   HistoryInfo,
   HistoryReport,
   HistoryRange,
-  MonitorRange,
+  MonitorPeriod,
+  MonitorWindow,
   BackfillReport,
   OperationsReport,
   IndexesReport,
@@ -133,8 +134,8 @@ export interface DataSource {
   getLastWrites(): Promise<LastWrites | null>;
   // 설정 › Monitor(9-3) — 이 연결의 기록 파일 크기·가장 오래된 기록 / 전부 지우기. Mock은 null / 아무것도 안 함
   getHistoryInfo(): Promise<HistoryInfo | null>;
-  // Monitor의 긴 기간(24h~All, 9-3b) — 기록 파일을 칸으로 묶은 것. writes = 컬렉션별 쓰기도(Collections 탭). Mock은 null
-  getHistory(range: HistoryRange, options?: { writes?: boolean; database?: string | null; collection?: string | null }): Promise<HistoryReport | null>;
+  // Monitor의 긴 기간(6h~All, 9-3b)·날짜로 찾기 구간(C2) — 기록 파일을 칸으로 묶은 것. writes = 컬렉션별 쓰기도(Collections 탭). Mock은 null
+  getHistory(range: HistoryRange | MonitorWindow, options?: { writes?: boolean; database?: string | null; collection?: string | null }): Promise<HistoryReport | null>;
   clearHistory(): Promise<void>;
   // 빈 구간 불러오기(9-4) — 탭이 없던 동안의 쓰기를 changeStream으로 다시 읽는다. id가 없으면 전부. Mock은 null / 아무것도 안 함
   getBackfill(): Promise<BackfillReport | null>;
@@ -150,14 +151,14 @@ export interface DataSource {
   getSlowQueries(query: {
     database: string | null;
     collection: string | null;
-    range: MonitorRange;
+    range: MonitorPeriod;
     min: SlowThreshold;
     expand?: string | null;
   }): Promise<SlowQueriesReport | null>;
   // Slow 카드가 떠 있는 동안 — 서버가 로그를 10초마다 읽는다(아니면 30초, 탭이 숨으면 60초). 돌려준 함수로 끝낸다. Mock은 아무것도 안 함
   watchSlowCard(): () => void;
   // Monitor › Collections의 크기(9-6a) — 서버가 1시간마다 잰 것 / 지금 재기(true = 시작함). Mock은 null / false
-  getSizes(query: { database: string | null; collection: string | null; range: MonitorRange }): Promise<SizesReport | null>;
+  getSizes(query: { database: string | null; collection: string | null; range: MonitorPeriod }): Promise<SizesReport | null>;
   measureSizes(): Promise<boolean>;
   // 컬렉션 범위의 Indexes 카드(9-6b) — 인덱스 정의·쓰인 횟수·크기를 그때그때. Mock은 null
   getIndexes(database: string, collection: string): Promise<IndexesReport | null>;
@@ -169,7 +170,7 @@ export interface DataSource {
   getOplog(): Promise<OplogReport | null>;
   getStartupWarnings(): Promise<StartupWarningsReport | null>;
   // 알림(9-8a) — 서버가 changeStream 이벤트로 찾은 대량 삭제·쓰기 폭주·삭제. Mock은 null / 아무것도 안 함
-  getAlerts(query: { database: string | null; collection: string | null; range: MonitorRange }): Promise<AlertsReport | null>;
+  getAlerts(query: { database: string | null; collection: string | null; range: MonitorPeriod }): Promise<AlertsReport | null>;
   // 새 실시간 알림 — 이 연결을 쓰는 모든 탭에 온다(앱 어디서나 토스트). 반환값을 부르면 해제
   onAlert(listener: (alert: MonitorAlert) => void): () => void;
   // 트랜잭션(9-8b) — 서버가 changeStream 이벤트로 센 것, 최근 1시간 메모리만. Mock은 null

@@ -11,14 +11,14 @@
 import { RefreshSpinner, SkeletonLine, SkeletonRows } from '../common/Skeleton';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpRight, CircleAlert } from 'lucide-react';
-import type { ActivityCollection, ActivityOps, CollectionSizeRow, CollectionSummary, LastWrite, MonitorRange } from '../../types/explorer';
-import { LIVE_RANGES } from '../../types/explorer';
+import type { ActivityCollection, ActivityOps, CollectionSizeRow, CollectionSummary, LastWrite, MonitorPeriod } from '../../types/explorer';
+import { isLiveRange, isWindow } from '../../types/explorer';
 import { api } from '../../services/api';
 import { useActivity, useHistory } from '../../hooks/useActivity';
 import { useBackfill } from '../../hooks/useBackfill';
 import { cn } from '../../utils/cn';
 import { TimeChart, Sparkline, type ChartSeries } from './charts';
-import { fmtAgo, liveWindow, memoryRange, rangePhrase, fmtBytes, fmtBytesDelta, fmtClock, fmtDateTime, fmtNumber, fmtSpan } from './format';
+import { fmtAgo, liveWindow, memoryRange, pollAgain, rangePhrase, fmtBytes, fmtBytesDelta, fmtClock, fmtDateTime, fmtNumber, fmtSpan } from './format';
 import { StorageCard, useSizes } from './StorageCard';
 import { IndexesCard } from './IndexesCard';
 import { TopCard } from './TopCard';
@@ -128,7 +128,7 @@ type SortKey = 'name' | 'writes' | 'last' | 'docs' | 'size' | 'index' | 'growth'
 interface CollectionsTabProps {
   scope: MonitorScope;
   onScopeChange: (scope: MonitorScope) => void;
-  range: MonitorRange;
+  range: MonitorPeriod;
   // "db.collection" → 마지막 쓰기(서버 메모리 — 긴 기간 표의 '마지막 쓰기' 칸)
   lastWrites: Record<string, LastWrite> | null;
   explorerDatabase: string | null;
@@ -154,7 +154,7 @@ interface View {
 const DAY_MS = 24 * 60 * MINUTE;
 
 export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explorerDatabase, explorerCollections, onOpenDocument }: CollectionsTabProps) {
-  const live = LIVE_RANGES.includes(range);
+  const live = isLiveRange(range);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'writes', desc: true });
   const activity = useActivity(live, scope, memoryRange(range));
   const history = useHistory(!live, range, { writes: true, database: scope.database, collection: scope.collection });
@@ -337,8 +337,9 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
           <>
             <span data-tt="Kept in mongolive's history files — only while a tab used this connection">
               From <span className="font-medium text-slate-700">{fmtDateTime(view.since)}</span>
+              {isWindow(range) && <> to <span className="font-medium text-slate-700">{fmtDateTime(view.now)}</span></>}
             </span>
-            <span className={styles.muted}>· updates every minute · top 50 collections</span>
+            <span className={styles.muted}>{pollAgain(range) ? '· updates every minute ' : ''}· top 50 collections</span>
           </>
         )}
       </div>
@@ -427,7 +428,7 @@ export function CollectionsTab({ scope, onScopeChange, range, lastWrites, explor
               : <>{fmtNumber(target?.total ?? 0)} writes in {inRange}.</>}
           </p>
           {!live ? (
-            <p className={styles.note}><CircleAlert size={14} className="mt-0.5 shrink-0" /> Most changed fields and documents are kept for the last hour only (there can be too many to store) — switch the range to 5m or 1h to see them.</p>
+            <p className={styles.note}><CircleAlert size={14} className="mt-0.5 shrink-0" /> Most changed fields and documents are kept for the last hour only (there can be too many to store) — switch the range to 5m, 30m or 1h to see them.</p>
           ) : (
             <>
               {view.partial && (

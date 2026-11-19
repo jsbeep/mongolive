@@ -36,7 +36,7 @@ const setup = (options: { rules?: Partial<AlertRules>; start?: number; settleMs?
     for (let i = 0; i < n; i += 1) alerts.record(change(op, t, collection), backfill);
   };
   const list = async (range: '5m' | '1h' | '24h' = '1h', scope = { database: null as string | null, collection: null as string | null }) =>
-    (await alerts.report({ range, scope })).alerts;
+    (await alerts.report({ period: range, scope })).alerts;
   return { alerts, sent, many, list, at: (t: number) => (now = t) };
 };
 
@@ -168,5 +168,17 @@ describe('빈 구간 불러오기', () => {
     expect(await list('1h')).toMatchObject([{ filled: true, ongoing: false }]);
     // 일어난 때(30분 전) 기준 — 최근 5분 범위엔 안 든다
     expect(await list('5m')).toHaveLength(0);
+  });
+});
+
+describe('날짜로 찾기(C2)', () => {
+  it('구간과 겹친 알림만 — 구간 뒤에 시작한 건 뺀다', async () => {
+    const { alerts, many } = setup();
+    many('delete', 1200, T);
+    const scope = { database: null, collection: null };
+    const before = await alerts.report({ period: { from: T - 30 * MIN, to: T - 10 * MIN }, scope });
+    expect(before.alerts).toHaveLength(0);
+    const over = await alerts.report({ period: { from: T - 30 * MIN, to: T + MIN }, scope });
+    expect(over.alerts.map((a) => a.kind)).toEqual(['mass-delete']);
   });
 });

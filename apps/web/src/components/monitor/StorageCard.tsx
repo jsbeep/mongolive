@@ -5,12 +5,12 @@ import { useCachedReport } from '../../hooks/useCachedReport';
 import { RefreshSpinner } from '../common/Skeleton';
 import { useEffect, useRef, useState } from 'react';
 import { CircleAlert, Loader2, RefreshCw } from 'lucide-react';
-import type { MonitorRange, SizesReport, SizeStats } from '../../types/explorer';
-import { LIVE_RANGES } from '../../types/explorer';
+import type { MonitorPeriod, MonitorRange, SizesReport, SizeStats } from '../../types/explorer';
+import { isLiveRange, isWindow } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { TimeChart } from './charts';
-import { fmtBytes, fmtBytesDelta, fmtClock, fmtDateTime, fmtNumber } from './format';
+import { fmtBytes, fmtBytesDelta, fmtClock, fmtDateTime, fmtNumber, periodKey, pollAgain } from './format';
 import type { MonitorScope } from './ScopeBar';
 
 const POLL_MS = 60_000;
@@ -26,13 +26,13 @@ export interface SizesState {
   measure: () => void;
 }
 
-export function useSizes(range: MonitorRange, scope: MonitorScope): SizesState {
+export function useSizes(range: MonitorPeriod, scope: MonitorScope): SizesState {
   const [failed, setFailed] = useState<string | null>(null);
   const [kick, setKick] = useState(0);
   const query = useRef({ range, scope });
   query.current = { range, scope };
   const scopeKey = `${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
-  const { report, refreshing, setReport } = useCachedReport<SizesReport>('sizes', `${range}\u0000${scopeKey}`);
+  const { report, refreshing, setReport } = useCachedReport<SizesReport>('sizes', `${periodKey(range)}\u0000${scopeKey}`);
 
   useEffect(() => {
     let alive = true;
@@ -50,10 +50,11 @@ export function useSizes(range: MonitorRange, scope: MonitorScope): SizesState {
       } catch (e) {
         if (alive) setFailed(e instanceof Error ? e.message : String(e));
       }
-      if (alive) timer = setTimeout(tick, measuring ? MEASURING_POLL_MS : POLL_MS);
+      // 끝난 구간(날짜로 찾기)은 한 번만
+      if (alive && (measuring || pollAgain(query.current.range))) timer = setTimeout(tick, measuring ? MEASURING_POLL_MS : POLL_MS);
     };
     const onVisible = () => {
-      if (!document.hidden && alive) {
+      if (!document.hidden && alive && pollAgain(query.current.range)) {
         clearTimeout(timer);
         void tick();
       }
@@ -65,7 +66,7 @@ export function useSizes(range: MonitorRange, scope: MonitorScope): SizesState {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [scopeKey, range, kick]);
+  }, [scopeKey, periodKey(range), kick]);
 
   const measure = () => {
     void api
@@ -95,9 +96,9 @@ const STATS: { key: keyof SizeStats; label: string; tip: string; format: (v: num
   { key: 'index', label: 'Indexes', tip: 'Disk space for all indexes', format: fmtBytes, delta: fmtBytesDelta },
 ];
 
-export function StorageCard({ sizes, range, scopeName }: { sizes: SizesState; range: MonitorRange; scopeName: string }) {
+export function StorageCard({ sizes, range, scopeName }: { sizes: SizesState; range: MonitorPeriod; scopeName: string }) {
   const { report, failed, refreshing } = sizes;
-  const live = LIVE_RANGES.includes(range);
+  const live = isLiveRange(range);
   if (!report) {
     return failed
       ? <p className={styles.note}><CircleAlert size={14} className="mt-0.5 shrink-0" /> Could not load sizes: {failed}</p>
@@ -108,8 +109,9 @@ export function StorageCard({ sizes, range, scopeName }: { sizes: SizesState; ra
   const { at, measuring, total, baseAt, baseTotal } = report;
   const showDelta = baseTotal !== null && baseAt !== null && at !== null && baseAt < at;
   const collections = report.rows.length;
-  const span = RANGE_SPAN[range] ?? (report.trend.length ? Math.max(HOUR, (report.trend[report.trend.length - 1].t - report.trend[0].t) * 1.05) : 24 * HOUR);
-  const now = Date.now();
+  const window = isWindow(range) ? range : null;
+  const span = window ? window.to - window.from : RANGE_SPAN[range as MonitorRange] ?? (report.trend.length ? Math.max(HOUR, (report.trend[report.trend.length - 1].t - report.trend[0].t) * 1.05) : 24 * HOUR);
+  const now = window ? Math.min(window.to, Date.now()) : Date.now();
 
   return (
     <>
@@ -122,7 +124,9 @@ export function StorageCard({ sizes, range, scopeName }: { sizes: SizesState; ra
                 ? measuring ? 'Measuring collection sizes…' : 'Not measured yet'
                 : <>
                     {scopeName} · {collections === 1 ? '1 collection' : `${collections.toLocaleString()} collections`} · measured{' '}
-                    <span data-tt={fmtDateTime(at)}>{fmtClock(at)}</span>, then every hour while a tab uses this connection
+                    {window
+                      ? <>{fmtDateTime(at)} — the last measurement up to the end of this window</>
+                      : <><span data-tt={fmtDateTime(at)}>{fmtClock(at)}</span>, then every hour while a tab uses this connection</>}
                   </>}
             </p>
           </div>

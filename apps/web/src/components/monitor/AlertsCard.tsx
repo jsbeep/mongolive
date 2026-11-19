@@ -6,11 +6,11 @@ import { useCachedReport } from '../../hooks/useCachedReport';
 import { RefreshSpinner, SkeletonLine } from '../common/Skeleton';
 import { useEffect, useRef, useState } from 'react';
 import { BellRing, CircleAlert, ShieldCheck } from 'lucide-react';
-import type { AlertKind, AlertsReport, MonitorAlert, MonitorRange } from '../../types/explorer';
-import { LIVE_RANGES } from '../../types/explorer';
+import type { AlertKind, AlertsReport, MonitorAlert, MonitorPeriod } from '../../types/explorer';
+import { isLiveRange } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
-import { fmtClock, fmtDate, RANGE_LABEL } from './format';
+import { fmtClock, fmtDate, periodKey, pollAgain, rangePhrase } from './format';
 import { ALERT_LABEL, alertFocus, alertTarget } from './alerts';
 import type { MonitorScope } from './ScopeBar';
 
@@ -78,8 +78,8 @@ const timeOf = (a: MonitorAlert, withDate: boolean): string => {
   return `${day}${fmtClock(a.start)}–${endDay}${fmtClock(a.end)}`;
 };
 
-function useAlerts(range: MonitorRange, scope: MonitorScope) {
-  const key = `${range}\u0000${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
+function useAlerts(range: MonitorPeriod, scope: MonitorScope) {
+  const key = `${periodKey(range)}\u0000${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
   const { report, loaded, refreshing, setReport } = useCachedReport<AlertsReport>('alerts', key);
   const [failed, setFailed] = useState<string | null>(null);
   const query = useRef({ range, scope });
@@ -92,7 +92,7 @@ function useAlerts(range: MonitorRange, scope: MonitorScope) {
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const every = LIVE_RANGES.includes(range) ? LIVE_POLL_MS : LONG_POLL_MS;
+    const every = isLiveRange(range) ? LIVE_POLL_MS : LONG_POLL_MS;
     const tick = async () => {
       clearTimeout(timer);
       if (document.hidden) return; // 다시 보일 때 visibilitychange가 이어 간다
@@ -105,7 +105,8 @@ function useAlerts(range: MonitorRange, scope: MonitorScope) {
       } catch (e) {
         if (alive) setFailed(e instanceof Error ? e.message : String(e));
       }
-      if (alive) timer = setTimeout(tick, every);
+      // 끝난 구간(날짜로 찾기)은 한 번만
+      if (alive && pollAgain(query.current.range)) timer = setTimeout(tick, every);
     };
     const onVisible = () => {
       if (!document.hidden && alive) void tick();
@@ -114,7 +115,7 @@ function useAlerts(range: MonitorRange, scope: MonitorScope) {
     document.addEventListener('visibilitychange', onVisible);
     // 새 알림 — 바로 다시(서버가 막 연 건을 보여 준다)
     const off = api.onAlert(() => {
-      if (alive) void tick();
+      if (alive && pollAgain(query.current.range)) void tick();
     });
     return () => {
       alive = false;
@@ -122,14 +123,14 @@ function useAlerts(range: MonitorRange, scope: MonitorScope) {
       document.removeEventListener('visibilitychange', onVisible);
       off();
     };
-  }, [key, range, setReport]);
+  }, [key, setReport]);
 
   return { report, loaded, failed, refreshing };
 }
 
 interface AlertsCardProps {
   scope: MonitorScope;
-  range: MonitorRange;
+  range: MonitorPeriod;
   onScopeChange: (scope: MonitorScope) => void;
 }
 
@@ -156,8 +157,8 @@ export function AlertsCard({ scope, range, onScopeChange }: AlertsCardProps) {
   }
   if (!report || report.status === 'closed') return null;
 
-  const live = LIVE_RANGES.includes(range);
-  const inRange = RANGE_LABEL[range].replace(/^Last /, 'the last ').replace('All history', 'all history');
+  const live = isLiveRange(range);
+  const inRange = rangePhrase(range);
   const rules = rulesText(report.rules);
   const memoryOnly = !report.stored && !live ? ' · history is off, so only the last hour is kept' : '';
 

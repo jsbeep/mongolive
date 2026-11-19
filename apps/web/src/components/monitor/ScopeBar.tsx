@@ -1,15 +1,17 @@
 // 범위 바 — Explorer의 브레드크럼 자리(같은 모양·높이). Explorer에선 '어디를 보고 있나', 여기선 '어디를 지켜보나'.
-//   [연결 이름] ▸ [DB ▾] ▸ [컬렉션 ▾]          [Explorer ↗] [5m 30m 1h 6h 12h 24h 7d More ▾] ● Live
+//   [연결 이름] ▸ [DB ▾] ▸ [컬렉션 ▾]          [Explorer ↗] [5m 30m 1h 6h 12h 24h 7d More ▾ 📅] ● Live
 // 기간은 모든 탭에 같이 적용된다(5m·30m·1h = 실시간, 그보다 길면 기록 파일 — 9-3b, C1). 30d·90d·All은 More 메뉴에.
+// 📅 = 날짜로 찾기(C2, WindowPicker) — 고르면 칩 "11/18 09:00 → 15:00 ×"가 된다.
 // 앞 칸을 누르면 넓어지고, 드롭다운에서 고르면 좁혀진다. 사이드바 트리에서 골라도 여기가 바뀐다(page.tsx).
 // 범위를 따르는 항목은 다음 단계(9-2~)부터 — 9-1의 Overview는 MongoDB가 서버 전체로만 알려 주는 값이다.
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowUpRight, Check, ChevronDown, ChevronRight, Database, Folder, Server } from 'lucide-react';
-import type { CollectionSummary, DatabaseSummary, MonitorRange } from '../../types/explorer';
+import { isWindow, type CollectionSummary, type DatabaseSummary, type MonitorPeriod, type MonitorRange } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { ScopeMenu, type ScopeMenuItem } from './ScopeMenu';
+import { WindowPicker } from './WindowPicker';
 
 export interface MonitorScope {
   database: string | null;
@@ -31,8 +33,8 @@ interface ScopeBarProps {
   explorerDatabase: string | null;
   explorerCollections: CollectionSummary[];
   live: LiveIndicator;
-  range: MonitorRange;
-  onRangeChange: (range: MonitorRange) => void;
+  range: MonitorPeriod;
+  onRangeChange: (range: MonitorPeriod) => void;
   onOpenInExplorer: (scope: MonitorScope) => void;
 }
 
@@ -82,7 +84,7 @@ const menuStyles = {
 } as const;
 
 // 기간 줄의 마지막 칸 — 30d·90d·All 중 골랐으면 그 이름, 아니면 More
-function MoreRanges({ range, onRangeChange }: { range: MonitorRange; onRangeChange: (range: MonitorRange) => void }) {
+function MoreRanges({ range, onRangeChange }: { range: MonitorPeriod; onRangeChange: (range: MonitorPeriod) => void }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -176,6 +178,9 @@ export function ScopeBar({ connectionName, scope, onScopeChange, databases, expl
   };
 
   const atCluster = scope.database === null;
+  // 날짜 칩의 × — 그 전에 보던 이름 붙은 기간으로
+  const lastNamed = useRef<MonitorRange>('1h');
+  if (!isWindow(range)) lastNamed.current = range;
 
   return (
     <section className={styles.container} aria-label="Monitor scope">
@@ -239,6 +244,7 @@ export function ScopeBar({ connectionName, scope, onScopeChange, databases, expl
             </button>
           ))}
           <MoreRanges range={range} onRangeChange={onRangeChange} />
+          <WindowPicker value={isWindow(range) ? range : null} onPick={onRangeChange} onClear={() => onRangeChange(lastNamed.current)} />
         </div>
         <span className={styles.live} data-tt={live.tip}>
           <span className={cn('h-2 w-2 rounded-full', DOT[live.tone])} aria-hidden="true" />

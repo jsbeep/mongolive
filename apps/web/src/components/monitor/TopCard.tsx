@@ -6,8 +6,8 @@ import { useCachedReport } from '../../hooks/useCachedReport';
 import { RefreshSpinner } from '../common/Skeleton';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CircleAlert, Loader2 } from 'lucide-react';
-import type { CollectionTopRow, MonitorRange, TopOp, TopReport, TopUsage } from '../../types/explorer';
-import { LIVE_RANGES } from '../../types/explorer';
+import type { CollectionTopRow, MonitorPeriod, TopOp, TopReport, TopUsage } from '../../types/explorer';
+import { isLiveRange } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { fmtClock, fmtDateTime, fmtDuration, fmtMs, fmtNumber, memoryRange, rangePhrase } from './format';
@@ -50,10 +50,10 @@ export const fmtMicros = (us: number): string => {
 };
 const avgOf = (u: TopUsage) => (u.count > 0 ? fmtMicros(u.time / u.count) : '—');
 
-function useTop(range: MonitorRange, scope: MonitorScope) {
+function useTop(range: MonitorPeriod, scope: MonitorScope) {
   const [failed, setFailed] = useState<string | null>(null);
   // 긴 기간이면 1h로 물어 상태(지원·권한)만 본다 — 서버 메모리라 MongoDB에는 묻지 않는다
-  const live = LIVE_RANGES.includes(range);
+  const live = isLiveRange(range);
   const query = useRef({ range: memoryRange(range), scope });
   query.current = { range: memoryRange(range), scope };
   const key = `${query.current.range}\u0000${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
@@ -134,14 +134,14 @@ function Legend() {
 
 interface TopCardProps {
   scope: MonitorScope;
-  range: MonitorRange;
+  range: MonitorPeriod;
   onScopeChange: (scope: MonitorScope) => void;
 }
 
 export function TopCard({ scope, range, onScopeChange }: TopCardProps) {
   const { report, failed, refreshing } = useTop(range, scope);
   const [showAll, setShowAll] = useState(false);
-  const live = LIVE_RANGES.includes(range);
+  const live = isLiveRange(range);
   const atCollection = scope.database !== null && scope.collection !== null;
 
   if (!report) {

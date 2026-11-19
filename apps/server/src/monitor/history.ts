@@ -137,7 +137,7 @@ const dayFileCache = new Map<string, { size: number; mtime: number; lines: unkno
 const DAY_FILE_CACHE_MAX = 6;
 
 // <prefix>-YYYY-MM-DD.jsonl 중 from이 든 날짜부터(null = 전부) 날짜 순서대로 모든 줄
-export const readDayFiles = async <T>(dir: string, prefix: 'slow' | 'sizes' | 'alerts', from: number | null): Promise<T[]> => {
+export const readDayFiles = async <T>(dir: string, prefix: 'slow' | 'sizes' | 'alerts', from: number | null, to: number | null = null): Promise<T[]> => {
   let names: string[];
   try {
     names = await readdir(dir);
@@ -146,10 +146,12 @@ export const readDayFiles = async <T>(dir: string, prefix: 'slow' | 'sizes' | 'a
   }
   const pattern = new RegExp(`^${prefix}-(\\d{4}-\\d{2}-\\d{2})\\.jsonl$`);
   const fromKey = from === null ? null : dateKey(from);
+  // 구간 끝(날짜로 찾기) 뒤의 날짜 파일은 열지 않는다
+  const toKey = to === null ? null : dateKey(to);
   const out: T[] = [];
   for (const name of names.sort()) {
     const m = pattern.exec(name);
-    if (!m || (fromKey !== null && m[1] < fromKey)) continue;
+    if (!m || (fromKey !== null && m[1] < fromKey) || (toKey !== null && m[1] > toKey)) continue;
     const file = join(dir, name);
     const info = await stat(file).catch(() => null);
     if (!info) continue;

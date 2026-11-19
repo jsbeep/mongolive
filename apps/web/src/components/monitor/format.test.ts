@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmtBytes, fmtBytesDelta, fmtDuration, fmtSpan, timeTicks } from './format';
+import { fmtBytes, fmtBytesDelta, fmtDuration, fmtSpan, memoryRange, periodKey, periodLabel, pollAgain, rangePhrase, timeTicks } from './format';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -43,5 +43,23 @@ describe('fmtSpan · fmtDuration', () => {
   it('칸 길이·걸린 시간', () => {
     expect([fmtSpan(5 * MIN), fmtSpan(HOUR), fmtSpan(6 * HOUR), fmtSpan(DAY)]).toEqual(['5 min', '1 hour', '6 hours', '1 day']);
     expect([fmtDuration(20 * MIN), fmtDuration(3 * HOUR + 20 * MIN), fmtDuration(50 * HOUR)]).toEqual(['20m', '3h 20m', '2d 2h']);
+  });
+});
+
+describe('날짜로 찾기(C2) 기간', () => {
+  const sameDay = { from: NOW - 3 * HOUR - 34 * MIN, to: NOW - 34 * MIN };
+  it('이름 — 같은 날이면 끝은 시각만, 아니면 날짜까지', () => {
+    expect(periodLabel(sameDay)).toBe('11/16 09:00 → 12:00');
+    expect(periodLabel({ from: NOW - DAY, to: NOW })).toBe('11/15 12:34 → 11/16 12:34');
+    expect(periodLabel('30m')).toBe('Last 30 min');
+    expect(rangePhrase('1h')).toBe('the last hour');
+    expect(rangePhrase(sameDay)).toBe('11/16 09:00 → 12:00');
+  });
+  it('키·메모리 카드·다시 받기', () => {
+    expect(periodKey(sameDay)).toBe(`${sameDay.from}-${sameDay.to}`);
+    expect(memoryRange(sameDay)).toBe('1h');
+    expect(pollAgain('24h')).toBe(true);
+    expect(pollAgain({ from: Date.now() - HOUR, to: Date.now() })).toBe(true);
+    expect(pollAgain({ from: Date.now() - 3 * HOUR, to: Date.now() - HOUR })).toBe(false);
   });
 });

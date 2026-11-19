@@ -341,7 +341,7 @@ export type MonitorRange = ActivityRange | '6h' | '12h' | '24h' | '7d' | '30d' |
 // 기록 파일에서 읽는 기간(GET /monitor/history)
 export type HistoryRange = Exclude<MonitorRange, ActivityRange>;
 export const LIVE_RANGES: readonly MonitorRange[] = ['5m', '30m', '1h'];
-export const isLiveRange = (range: MonitorRange): range is ActivityRange => LIVE_RANGES.includes(range);
+export const isLiveRange = (range: MonitorPeriod): range is ActivityRange => typeof range === 'string' && LIVE_RANGES.includes(range);
 // 기간의 길이(ms). all = 끝이 없다
 export const RANGE_SPAN_MS: Record<MonitorRange, number | null> = {
   '5m': 5 * 60_000,
@@ -354,6 +354,25 @@ export const RANGE_SPAN_MS: Record<MonitorRange, number | null> = {
   '30d': 30 * 86_400_000,
   '90d': 90 * 86_400_000,
   all: null,
+};
+
+// ── 날짜로 찾기(C2) — 범위 바의 달력으로 고른 지난 구간 [from, to](ms). 기록 파일에서만 읽는다 ──
+//   GET history·slow·sizes·alerts는 range= 대신 from=&to=를 받는다 → 응답의 range는 'custom'.
+//   to가 지금보다 뒤면 지금으로 줄인다. 그다음 from < to이고 10분 이상이어야 한다(아니면 400).
+//   메모리에만 있는 것(activity·top·replica·transactions)은 받지 않는다 — 화면은 "실시간 기간만" 한 줄
+export interface MonitorWindow {
+  from: number;
+  to: number;
+}
+export type MonitorPeriod = MonitorRange | MonitorWindow;
+export const WINDOW_MIN_MS = 10 * 60_000;
+export const isWindow = (period: MonitorPeriod): period is MonitorWindow => typeof period === 'object';
+// 구간 확인 — 맞으면 to를 지금으로 줄인 구간, 아니면 이유(영어, 400·화면에 그대로)
+export const checkWindow = (from: number, to: number, now: number): MonitorWindow | string => {
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from < 0) return 'from and to must be times in milliseconds';
+  const end = Math.min(Math.floor(to), now);
+  if (end - Math.floor(from) < WINDOW_MIN_MS) return 'from must be at least 10 minutes before to (to stops at now)';
+  return { from: Math.floor(from), to: end };
 };
 
 // 기록 파일의 지표 이름(서버 monitor/rollup과 같다)
@@ -445,10 +464,14 @@ export interface BackfillReport {
 }
 
 //   GET /api/monitor/history?range=6h|12h|24h|7d|30d|90d|all[&writes=1&database=&collection=] → HistoryReport
+//   GET /api/monitor/history?from=&to=[&writes=…] → 날짜로 찾기(C2), range 'custom'
 export interface HistoryReport {
-  range: MonitorRange;
-  // 한 칸의 길이(6h = 1분, 12h = 2분, 24h = 5분, 7d = 1시간, 30d = 2시간, 90d = 6시간, all = 1일)
+  range: MonitorRange | 'custom';
+  // 한 칸의 길이(6h = 1분, 12h = 2분, 24h = 5분, 7d = 1시간, 30d = 2시간, 90d = 6시간, all = 1일).
+  // custom = 1·2·5·10·15·30분, 1·2·3·6·12시간, 1일 중 점이 360개 이하가 되는 가장 짧은 것
   bucketMs: number;
+  // custom: 그 시각의 잘게 나눈 기록(분 → 시 → 일)이 이미 지워져 위 규칙보다 굵은 칸으로 읽음
+  coarse?: true;
   from: number;
   to: number;
   // 기록이 있는 칸만(오래된 것 → 최신). 비어 있는 칸은 없다 — 선이 끊긴다
@@ -523,7 +546,7 @@ export interface OperationsReport {
 }
 
 // ── Monitor › Operations › 느린 쿼리 (9-5b) ──────────────────────────────────
-//   GET /api/monitor/slow?range=&database=&collection=&min= → SlowQueriesReport
+//   GET /api/monitor/slow?range=&database=&collection=&min= → SlowQueriesReport (range 대신 from=&to= — 날짜로 찾기)
 // MongoDB가 스스로 로그에 남기는 "Slow query"(slowms보다 오래 걸린 작업)를 샘플러가 10초마다 getLog로 읽는다.
 // slowms는 바꾸지 않는다(읽기만). 같은 모양의 쿼리(queryHash, 없으면 명령의 모양)끼리 묶는다.
 
@@ -581,7 +604,7 @@ export type SlowLogStatus = 'ok' | 'closed' | 'denied' | 'unsupported' | 'error'
 
 export interface SlowQueriesReport {
   at: number;
-  range: MonitorRange;
+  range: MonitorRange | 'custom';
   status: SlowLogStatus;
   error: string | null;
   // 서버의 기준(profile:-1로 읽음). 못 읽으면 null(기본 100ms)
@@ -620,10 +643,12 @@ export interface SizeStats {
 export interface CollectionSizeRow extends SizeStats {
   database: string;
   collection: string;
-  // 기간 안 첫 측정 때 값(Δ의 기준). 그때 없던 컬렉션이면 null, 실시간 기간(5m·1h)도 null
+  // 기간 안 첫 측정 때 값(Δ의 기준). 그때 없던 컬렉션이면 null, 실시간 기간(5m·30m·1h)도 null
   base: SizeStats | null;
 }
 
+//   GET /api/monitor/sizes?range=&database=&collection= → SizesReport
+//   range 대신 from=&to=(날짜로 찾기) — rows·total = to 시점의 값, Δ = 구간 안 첫 측정부터. to가 마지막 측정보다 앞이면 그 측정은 안 쓴다
 export interface SizesReport {
   // closed = 이 연결을 쓰는 탭이 없어 안 잼, error = 마지막 측정이 실패(권한 등)
   status: 'ok' | 'closed' | 'error';
@@ -814,7 +839,7 @@ export interface StartupWarningsReport {
 //   drop-database  DB 삭제(그 안 컬렉션들의 drop을 흡수)
 //   rename         컬렉션 이름 바꾸기
 // 이어지면(5분 안에 다시 넘으면) 한 건으로 늘린다. 끝난 건은 alerts-YYYY-MM-DD.jsonl(기록이 꺼져 있으면 메모리 1시간)
-//   GET /api/monitor/alerts?range=&database=&collection= → AlertsReport,  소켓 'monitor:alert' → MonitorAlert(실시간만)
+//   GET /api/monitor/alerts?range=&database=&collection= → AlertsReport (range 대신 from=&to= — 그 구간과 겹친 알림),  소켓 'monitor:alert' → MonitorAlert(실시간만)
 export type AlertKind = 'mass-delete' | 'burst' | 'drop' | 'drop-database' | 'rename';
 export interface MonitorAlert {
   id: string;

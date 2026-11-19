@@ -1,6 +1,6 @@
 // Monitor 화면의 숫자 모양 — 작은 값은 소수까지, 큰 값은 줄여서(12.3K)
 
-import { isLiveRange, type ActivityRange, type MonitorRange } from '../../types/explorer';
+import { isLiveRange, isWindow, type ActivityRange, type MonitorPeriod, type MonitorRange } from '../../types/explorer';
 const trim = (text: string) => (text.includes('.') ? text.replace(/\.?0+$/, '') : text);
 
 // 초당 값·개수: 0 / 0.25 / 3.5 / 42 / 1,234 / 12.3K / 4.5M
@@ -134,11 +134,25 @@ export const RANGE_LABEL: Record<MonitorRange, string> = {
   all: 'All history',
 };
 
-// 문장 안의 기간 — the last 30 min / the last hour / all history
-export const rangePhrase = (range: MonitorRange): string => (range === 'all' ? 'all history' : RANGE_LABEL[range].replace(/^Last /, 'the last '));
+// 날짜로 찾기 구간(C2) — 11/18 09:00 → 15:00 (같은 날이면 끝은 시각만)
+export const windowLabel = (from: number, to: number): string =>
+  `${fmtDateTime(from)} → ${fmtDate(from) === fmtDate(to) ? fmtClock(to) : fmtDateTime(to)}`;
 
-// 메모리 카드가 물을 기간 — 긴 기간이면 1h(서버 메모리에 그만큼만 있다)
-export const memoryRange = (range: MonitorRange): ActivityRange => (isLiveRange(range) ? range : '1h');
+// 범위 바·제목의 기간 이름
+export const periodLabel = (period: MonitorPeriod): string => (isWindow(period) ? windowLabel(period.from, period.to) : RANGE_LABEL[period]);
+
+// 문장 안의 기간 — the last 30 min / the last hour / all history / 11/18 09:00 → 15:00
+export const rangePhrase = (period: MonitorPeriod): string =>
+  isWindow(period) ? periodLabel(period) : period === 'all' ? 'all history' : RANGE_LABEL[period].replace(/^Last /, 'the last ');
+
+// 캐시·effect 키
+export const periodKey = (period: MonitorPeriod): string => (isWindow(period) ? `${period.from}-${period.to}` : period);
+
+// 메모리 카드가 물을 기간 — 긴 기간이면 1h(서버 메모리에 그만큼만 있다). 날짜로 찾기면 카드가 묻지 않는다
+export const memoryRange = (period: MonitorPeriod): ActivityRange => (isLiveRange(period) ? period : '1h');
+
+// 다시 받을까 — 끝난 지 1분이 넘은 구간은 바뀔 게 없어 한 번만 받는다
+export const pollAgain = (period: MonitorPeriod): boolean => !isWindow(period) || period.to >= Date.now() - MINUTE;
 
 // 칸 길이 이름 — 5 min / 1 hour / 6 hours / 1 day
 export const fmtSpan = (ms: number): string => {

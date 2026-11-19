@@ -4,7 +4,8 @@
 //   GET /api/monitor/last-writes → LastWrites (사이드바 트리의 '마지막 쓰기')
 //   GET /api/monitor/history-info → HistoryInfo (설정 › Monitor — 기록 파일 크기·가장 오래된 기록)
 //   DELETE /api/monitor/history → 이 연결의 기록 파일 전부 지우기
-//   GET /api/monitor/history?range=24h|7d|30d|90d|all[&writes=1&database=&collection=] → HistoryReport (긴 기간, 9-3b)
+//   GET /api/monitor/history?range=6h|12h|24h|7d|30d|90d|all[&writes=1&database=&collection=] → HistoryReport (긴 기간, 9-3b)
+//   history·slow·sizes·alerts는 range= 대신 from=&to=(ms, 날짜로 찾기 C2)도 받는다 — to는 지금까지로 줄이고, 10분 미만이면 400
 //   GET /api/monitor/backfill → BackfillReport (빈 구간 불러오기, 9-4)
 //   POST /api/monitor/backfill/start {id?} — 불러오기/계속,  POST /api/monitor/backfill/stop {id?} — 멈춤
 //   GET /api/monitor/operations?database=&collection= → OperationsReport ($currentOp, 9-5a)
@@ -21,13 +22,14 @@
 //   GET /api/monitor/transactions?range=5m|1h&database=&collection= → TransactionsReport (트랜잭션, 9-8b — 메모리 1시간, DB에 묻지 않는다)
 // 피드는 이 연결을 쓰는 탭이 있을 때만 열려 있다. 없으면 빈 값(since 없음)
 import { Router } from 'express';
-import { LIVE_RANGES, RANGE_SPAN_MS, SLOW_THRESHOLDS, type ActivityRange, type ActivityReport, type AlertsReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type OplogReport, type ReplicaReport, type SlowThreshold, type TopReport, type TransactionsReport } from '@mongolive/shared';
+import { checkWindow, LIVE_RANGES, RANGE_SPAN_MS, SLOW_THRESHOLDS, type ActivityRange, type MonitorPeriod, type MonitorWindow, type ActivityReport, type AlertsReport, type BackfillReport, type LastWrites, type MonitorRange, type SizesReport, type SlowQueriesReport, type OplogReport, type ReplicaReport, type SlowThreshold, type TopReport, type TransactionsReport } from '@mongolive/shared';
 import { dropConnectionHistory, historyInfo } from '../monitor/history';
 import { isFileRange, readHistory } from '../monitor/historyRead';
 import { clusterFingerprint } from '../monitor/identity';
 import { listIndexUsage } from '../monitor/indexes';
 import { killOperation, listOperations } from '../monitor/operations';
 import { readOplog } from '../monitor/oplog';
+import { periodName } from '../monitor/slowQueries';
 import { readStartupWarnings } from '../monitor/startupWarnings';
 import { connectionUri } from '../connections';
 import { clientFor, connectionIdOf } from '../db';
@@ -77,9 +79,18 @@ monitorRouter.delete('/monitor/history', async (_req, res) => {
   res.status(204).end();
 });
 
+// 날짜로 찾기(C2) — from·to 중 하나라도 있으면 구간, 없으면 null(range를 본다)
+const windowOf = (query: Record<string, unknown>): MonitorWindow | null => {
+  if (query.from === undefined && query.to === undefined) return null;
+  if (query.range !== undefined) throw new HttpError(400, 'send either range or from/to, not both');
+  const checked = checkWindow(Number(query.from), Number(query.to), Date.now());
+  if (typeof checked === 'string') throw new HttpError(400, checked);
+  return checked;
+};
+
 monitorRouter.get('/monitor/history', async (req, res) => {
-  const range = String(req.query.range ?? '');
-  if (!isFileRange(range)) throw new HttpError(400, 'range must be 6h, 12h, 24h, 7d, 30d, 90d or all — shorter ranges come live over the socket');
+  const range = windowOf(req.query) ?? String(req.query.range ?? '');
+  if (typeof range === 'string' && !isFileRange(range)) throw new HttpError(400, 'range must be 6h, 12h, 24h, 7d, 30d, 90d or all (or from/to) — shorter ranges come live over the socket');
   const database = text(req.query.database);
   const collection = text(req.query.collection);
   if (collection && !database) throw new HttpError(400, 'collection needs a database');
@@ -94,7 +105,7 @@ monitorRouter.get('/monitor/history', async (req, res) => {
     }
   }
   if (!fingerprint) {
-    res.json({ range, bucketMs: 0, from: Date.now(), to: Date.now(), points: [], gaps: [], ready: false });
+    res.json({ range: typeof range === 'string' ? range : 'custom', bucketMs: 0, from: Date.now(), to: Date.now(), points: [], gaps: [], ready: false });
     return;
   }
   res.json(await readHistory(id, fingerprint, {
@@ -154,11 +165,18 @@ monitorRouter.post('/monitor/operations/kill', async (req, res) => {
 });
 
 const RANGES = Object.keys(RANGE_SPAN_MS) as MonitorRange[];
+// range= 또는 from=&to=
+const periodOf = (query: Record<string, unknown>): MonitorPeriod => {
+  const window = windowOf(query);
+  if (window) return window;
+  const range = String(query.range ?? '1h') as MonitorRange;
+  if (!RANGES.includes(range)) throw new HttpError(400, `range must be one of ${RANGES.join(', ')} (or from/to)`);
+  return range;
+};
 
 // 느린 쿼리 — 피드가 열려 있는 동안 샘플러가 서버 로그에서 모은 것(기록 파일 + 아직 안 적은 지금 분)
 monitorRouter.get('/monitor/slow', async (req, res) => {
-  const range = String(req.query.range ?? '1h') as MonitorRange;
-  if (!RANGES.includes(range)) throw new HttpError(400, `range must be one of ${RANGES.join(', ')}`);
+  const period = periodOf(req.query);
   const min = Number(req.query.min ?? SLOW_THRESHOLDS[0]) as SlowThreshold;
   if (!SLOW_THRESHOLDS.includes(min)) throw new HttpError(400, `min must be one of ${SLOW_THRESHOLDS.join(', ')}`);
   const database = text(req.query.database);
@@ -175,7 +193,7 @@ monitorRouter.get('/monitor/slow', async (req, res) => {
     const settings = getServerSettings();
     const closed: SlowQueriesReport = {
       at: Date.now(),
-      range,
+      range: periodName(period),
       status: settings.slowLog ? 'closed' : 'off',
       error: null,
       slowms: null,
@@ -189,7 +207,7 @@ monitorRouter.get('/monitor/slow', async (req, res) => {
     res.json(closed);
     return;
   }
-  res.json(await slow.report({ range, scope, min, expand }));
+  res.json(await slow.report({ period, scope, min, expand }));
 });
 
 const scopeOf = (query: Record<string, unknown>) => {
@@ -217,10 +235,9 @@ const closedSizes = (): SizesReport => ({
 
 // 컬렉션 크기 — 피드가 열려 있는 동안 1시간마다 잰 것(기록 파일 + 마지막 측정)
 monitorRouter.get('/monitor/sizes', async (req, res) => {
-  const range = String(req.query.range ?? '1h') as MonitorRange;
-  if (!RANGES.includes(range)) throw new HttpError(400, `range must be one of ${RANGES.join(', ')}`);
+  const period = periodOf(req.query);
   const sizes = sizesOf(connectionIdOf(res));
-  res.json(sizes ? await sizes.report({ range, scope: scopeOf(req.query) }) : closedSizes());
+  res.json(sizes ? await sizes.report({ period, scope: scopeOf(req.query) }) : closedSizes());
 });
 
 // 인덱스 사용량 — 피드와 상관없이 그때그때 묻는다(컬렉션 범위의 Indexes 카드가 열 때·새로고침 때)
@@ -271,8 +288,7 @@ monitorRouter.get('/monitor/startup-warnings', async (_req, res) => {
 
 // 알림 — 피드가 받은 이벤트로 찾은 것(기록 파일 + 아직 이어지는 건). 피드가 없으면 closed
 monitorRouter.get('/monitor/alerts', async (req, res) => {
-  const range = String(req.query.range ?? '1h') as MonitorRange;
-  if (!RANGES.includes(range)) throw new HttpError(400, `range must be one of ${RANGES.join(', ')}`);
+  const period = periodOf(req.query);
   const scope = scopeOf(req.query);
   const alerts = alertsOf(connectionIdOf(res));
   if (!alerts) {
@@ -284,7 +300,7 @@ monitorRouter.get('/monitor/alerts', async (req, res) => {
     res.json(closed);
     return;
   }
-  res.json(await alerts.report({ range, scope }));
+  res.json(await alerts.report({ period, scope }));
 });
 
 monitorRouter.post('/monitor/sizes/measure', (_req, res) => {

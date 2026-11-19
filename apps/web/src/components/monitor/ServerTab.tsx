@@ -7,8 +7,8 @@ import { useCachedReport } from '../../hooks/useCachedReport';
 import { RefreshSpinner, SkeletonRows } from '../common/Skeleton';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowRight, CircleAlert, Loader2, RefreshCw } from 'lucide-react';
-import type { MongoTopology, MonitorRange, OplogReport, ReplicaChange, ReplicaMember, ReplicaReport, StartupWarning } from '../../types/explorer';
-import { LIVE_RANGES } from '../../types/explorer';
+import type { MongoTopology, MonitorPeriod, OplogReport, ReplicaChange, ReplicaMember, ReplicaReport, StartupWarning } from '../../types/explorer';
+import { isLiveRange, isWindow } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { TimeChart, type ChartSeries } from './charts';
@@ -124,7 +124,7 @@ function usePoll<T>(card: string, load: () => Promise<T>, everyMs: number | null
   return { data, failed, loading, refreshing, refresh: () => setKick((k) => k + 1) };
 }
 
-function useReplica(range: MonitorRange) {
+function useReplica(range: MonitorPeriod) {
   // 긴 기간이면 1h로 묻는다 — 서버 메모리에 그만큼만 있다
   const queryRange = memoryRange(range);
   const { data: report, failed, refreshing } = usePoll('replica', () => api.getReplica(queryRange), POLL_MS, queryRange);
@@ -241,7 +241,7 @@ function ChangeLine({ change }: { change: ReplicaChange }) {
 }
 
 interface ServerTabProps {
-  range: MonitorRange;
+  range: MonitorPeriod;
   // Overview가 받은 서버 정보 — replSetGetStatus가 없을 때 mongos인지 가려 안내한다
   topology: MongoTopology | null;
 }
@@ -253,7 +253,7 @@ function ReplicaSection({
   failed,
   refreshing,
 }: ServerTabProps & { report: ReplicaReport | null; failed: string | null; refreshing: boolean }) {
-  const live = LIVE_RANGES.includes(range);
+  const live = isLiveRange(range);
 
   const section = (children: ReactNode) => (
     <>
@@ -338,6 +338,10 @@ function ReplicaSection({
         )}
         <MembersTable members={report.members} now={now} />
       </section>
+      {isWindow(range) ? (
+        // 날짜로 찾기(C2) — lag·상태 변화는 서버 메모리 1시간뿐
+        <p className={cn(styles.muted, 'text-[12px]')}>Replication lag and member changes are kept for the last hour only — switch the range to 5m, 30m or 1h to see them.</p>
+      ) : (
       <div className={styles.grid}>
         {(secondaries.length > 0 || series.length > 0) && (
           <TimeChart
@@ -370,6 +374,7 @@ function ReplicaSection({
           )}
         </section>
       </div>
+      )}
     </>,
   );
 }

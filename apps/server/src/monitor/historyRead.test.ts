@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readHistory } from './historyRead';
+import { pickStep, readHistory } from './historyRead';
 import { dateKey, monthKey, yearKey, type Rollup } from './rollup';
 
 const MIN = 60_000;
@@ -109,5 +109,44 @@ describe('readHistory', () => {
     const r = await readHistory('c1', 'rs-x', { range: '24h', writes: true, database: 'shop' }, NOW);
     expect(r.gaps).toHaveLength(1);
     expect(r.collections).toEqual([{ database: 'shop', collection: 'orders', total: 5, ops: ops(5), trend: [3, 2] }]);
+  });
+
+  it('날짜로 찾기 — 점 360개 이하인 가장 짧은 칸', () => {
+    const DAY = 24 * HOUR;
+    expect([6 * HOUR, 3 * DAY, 30 * DAY, 365 * DAY].map(pickStep)).toEqual([MIN, 15 * MIN, 2 * HOUR, DAY]);
+  });
+
+  it('날짜로 찾기 — 구간 안 분 기록, 구간 뒤 날짜 파일은 열지 않는다', async () => {
+    // 어제 09:00 ~ 15:00
+    const from = NOW - 27 * HOUR;
+    const to = from + 6 * HOUR;
+    await write(`minutes-${dateKey(from)}.jsonl`, [rec(from + 10 * MIN, 2), rec(to + 10 * MIN, 99)]);
+    // 덫 — 오늘 파일은 구간 뒤라 열지 않아야 한다
+    await write(`minutes-${dateKey(NOW)}.jsonl`, [rec(from + 20 * MIN, 99)]);
+    const r = await readHistory('c1', 'rs-x', { range: { from, to } }, NOW);
+    expect(r).toMatchObject({ range: 'custom', bucketMs: MIN, from, to });
+    expect(r.coarse).toBeUndefined();
+    expect(r.points.map((p) => [p.t, p.avg.conns])).toEqual([[from + 10 * MIN, 2]]);
+  });
+
+  it('날짜로 찾기 — 그때 분 기록이 지워졌으면 시 기록으로 굵게(coarse)', async () => {
+    const from = NOW - 3 * 24 * HOUR;
+    const to = from + 6 * HOUR;
+    await write(`minutes-${dateKey(NOW)}.jsonl`, [rec(NOW - 10 * MIN, 1)]);
+    await write(`hours-${monthKey(from)}.jsonl`, [rec(from + HOUR, 5, 360), rec(from + 2 * HOUR, 7, 360)]);
+    const r = await readHistory('c1', 'rs-x', { range: { from, to } }, NOW);
+    expect(r).toMatchObject({ bucketMs: HOUR, coarse: true });
+    expect(r.points.map((p) => [p.t, p.avg.conns])).toEqual([[from + HOUR, 5], [from + 2 * HOUR, 7]]);
+  });
+
+  it('날짜로 찾기 — 그 앞에 기록이 아예 없으면(뒤에 시작) 잘게 그대로', async () => {
+    // 30시간 → 5분 칸. 분 기록은 오늘부터, 시 기록도 오늘 것뿐
+    const from = NOW - 30 * HOUR;
+    await write(`minutes-${dateKey(NOW)}.jsonl`, [rec(NOW - 60 * MIN, 3)]);
+    await write(`hours-${monthKey(NOW)}.jsonl`, [rec(NOW - 2 * HOUR, 3, 360)]);
+    const r = await readHistory('c1', 'rs-x', { range: { from, to: NOW } }, NOW);
+    expect(r.bucketMs).toBe(5 * MIN);
+    expect(r.coarse).toBeUndefined();
+    expect(r.points.map((p) => p.t)).toEqual([NOW - 60 * MIN]);
   });
 });

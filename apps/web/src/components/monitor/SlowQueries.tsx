@@ -5,11 +5,11 @@ import { useCachedReport } from '../../hooks/useCachedReport';
 import { RefreshSpinner, SkeletonRows } from '../common/Skeleton';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ChevronRight } from 'lucide-react';
-import { LIVE_RANGES, SLOW_THRESHOLDS, type MonitorRange, type SlowGroup, type SlowQueriesReport, type SlowRun, type SlowThreshold } from '../../types/explorer';
+import { isLiveRange, SLOW_THRESHOLDS, type MonitorPeriod, type SlowGroup, type SlowQueriesReport, type SlowRun, type SlowThreshold } from '../../types/explorer';
 import { api } from '../../services/api';
 import { getServerSettingsSnapshot, saveServerSettings } from '../../services/serverSettings';
 import { cn } from '../../utils/cn';
-import { fmtAgo, fmtClock, fmtDateTime, fmtMs, fmtNumber, RANGE_LABEL } from './format';
+import { fmtAgo, fmtClock, fmtDateTime, fmtMs, fmtNumber, periodKey, periodLabel, pollAgain, rangePhrase } from './format';
 import { durationTone, Fact, HiddenKinds, KindChips, opStyles as styles, PlanBadge, pretty, useKindFilter, type OpKind } from './opParts';
 import type { MonitorScope } from './ScopeBar';
 
@@ -116,14 +116,14 @@ function SlowDetail({ group }: { group: SlowGroup }) {
   );
 }
 
-export function SlowQueries({ scope, range }: { scope: MonitorScope; range: MonitorRange }) {
+export function SlowQueries({ scope, range }: { scope: MonitorScope; range: MonitorPeriod }) {
   const [failed, setFailed] = useState<string | null>(null);
   const [min, setMin] = useState<SlowThreshold>(SLOW_THRESHOLDS[0]);
   const kindFilter = useKindFilter();
   const [sort, setSort] = useState<SortKey>('total');
   const [open, setOpen] = useState<string | null>(null);
   const scopeKey = `${scope.database ?? ''}\u0000${scope.collection ?? ''}`;
-  const { report, refreshing, setReport } = useCachedReport<SlowQueriesReport>('slow', `${range}\u0000${scopeKey}`);
+  const { report, refreshing, setReport } = useCachedReport<SlowQueriesReport>('slow', `${periodKey(range)}\u0000${scopeKey}`);
   const queryRef = useRef({ scope, range, min, open });
   queryRef.current = { scope, range, min, open };
 
@@ -141,14 +141,15 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
     }
   };
 
+  const rangeKey = periodKey(range);
   useEffect(() => {
     setOpen(null);
-  }, [scopeKey, range]);
+  }, [scopeKey, rangeKey]);
 
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const every = LIVE_RANGES.includes(range) ? LIVE_POLL_MS : FILE_POLL_MS;
+    const every = isLiveRange(range) ? LIVE_POLL_MS : FILE_POLL_MS;
     const tick = async () => {
       if (document.hidden) return; // 다시 보일 때 visibilitychange가 이어 간다
       try {
@@ -166,10 +167,11 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
       } catch (e) {
         if (alive) setFailed(e instanceof Error ? e.message : String(e));
       }
-      if (alive) timer = setTimeout(tick, every);
+      // 끝난 구간(날짜로 찾기)은 한 번만 — 펼치기·칩을 바꾸면 다시
+      if (alive && pollAgain(queryRef.current.range)) timer = setTimeout(tick, every);
     };
     const onVisible = () => {
-      if (!document.hidden && alive) {
+      if (!document.hidden && alive && pollAgain(queryRef.current.range)) {
         clearTimeout(timer);
         void tick();
       }
@@ -181,7 +183,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [scopeKey, range, min, open, kick]);
+  }, [scopeKey, rangeKey, min, open, kick]);
 
   const slowms = report?.slowms ?? null;
   const floor = floorOf(slowms);
@@ -213,7 +215,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
             <RefreshSpinner show={refreshing} />
           </h2>
           <span className={styles.sub} data-tt="Read from MongoDB’s own log on the node mongolive is connected to (usually the primary) — every 10 s while this card is open, 30 s otherwise, 60 s when no tab is visible. mongolive never changes slowms.">
-            Finished operations MongoDB logged as slower than {slowms ?? DEFAULT_SLOWMS} ms{slowms === null && report ? ' (default)' : ''} · {RANGE_LABEL[range]}
+            Finished operations MongoDB logged as slower than {slowms ?? DEFAULT_SLOWMS} ms{slowms === null && report ? ' (default)' : ''} · {periodLabel(range)}
             {report ? ` · ${fmtClock(report.at, true)}` : ''}
           </span>
         </div>
@@ -287,7 +289,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
           MongoDB’s log moved faster than mongolive reads it — about {fmtNumber(missedLines)} log lines went by unseen in {report?.missed.length === 1 ? 'one stretch' : `${report?.missed.length} stretches`}, so some slow queries may be missing.
         </p>
       )}
-      {report && !report.stored && !LIVE_RANGES.includes(range) && (
+      {report && !report.stored && !isLiveRange(range) && (
         <p className={styles.note}>History is off (Settings › Monitor) — slow queries are kept for the last hour only.</p>
       )}
 
@@ -300,7 +302,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
           {shown.length === 0 ? (
             <div className={styles.empty}>
               <p>
-                No slow queries on {where} — {RANGE_LABEL[range].toLowerCase()}.
+                No slow queries on {where} in {rangePhrase(range)}.
                 {report.hidden > 0
                   ? ` ${fmtNumber(report.hidden)} faster than ${thresholdLabel(min)} hidden.`
                   : status === 'off'

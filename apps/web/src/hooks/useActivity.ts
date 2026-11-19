@@ -3,8 +3,8 @@
 // 탭이 숨겨져 있으면(document.hidden) 쉬고, 다시 보이면 바로 받는다.
 import { useCachedReport } from './useCachedReport';
 import { useEffect, useState } from 'react';
-import type { ActivityRange, ActivityReport, HistoryReport, LastWrites, MonitorRange } from '../types/explorer';
-import { isLiveRange } from '../types/explorer';
+import type { ActivityRange, ActivityReport, HistoryReport, LastWrites, MonitorPeriod } from '../types/explorer';
+import { isLiveRange, isWindow } from '../types/explorer';
 import { api } from '../services/api';
 
 const POLL_MS = 10_000;
@@ -13,7 +13,8 @@ const HISTORY_POLL_MS = 60_000;
 
 // 보이는 동안 intervalMs마다 fetch — 겹치지 않게(이전 요청이 끝난 뒤 다음을 예약)
 // 마지막 응답은 기억해 둔다(useCachedReport) — 탭을 바꿔 다시 와도 바로 그리고 뒤에서 새로 받는다
-function usePoll<T>(card: string, enabled: boolean, key: string, fetch: () => Promise<T | null>, intervalMs = POLL_MS) {
+// again = 다음에도 받을까(없으면 늘). 끝난 구간(날짜로 찾기)은 한 번만
+function usePoll<T>(card: string, enabled: boolean, key: string, fetch: () => Promise<T | null>, intervalMs = POLL_MS, again: () => boolean = () => true) {
   const { report, refreshing, setReport } = useCachedReport<T>(card, key);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -39,10 +40,10 @@ function usePoll<T>(card: string, enabled: boolean, key: string, fetch: () => Pr
       busy = false;
       if (cancelled) return;
       setNow(Date.now());
-      timer = setTimeout(() => void run(), intervalMs);
+      if (again()) timer = setTimeout(() => void run(), intervalMs);
     };
     const onVisible = () => {
-      if (!document.hidden && timer === null && !busy) void run();
+      if (!document.hidden && timer === null && !busy && again()) void run();
     };
     void run();
     document.addEventListener('visibilitychange', onVisible);
@@ -92,14 +93,15 @@ export interface HistoryState {
   error: string | null;
 }
 
-// Monitor의 긴 기간(24h~All, 9-3b) — 기록 파일. 1분마다 다시 받는다
+// Monitor의 긴 기간(6h~All, 9-3b)·날짜로 찾기 구간(C2) — 기록 파일. 1분마다 다시 받는다(끝난 구간은 한 번만)
 export function useHistory(
   enabled: boolean,
-  range: MonitorRange,
+  range: MonitorPeriod,
   options: { writes?: boolean; database?: string | null; collection?: string | null } = {},
 ): HistoryState {
   const fileRange = isLiveRange(range) ? null : range;
+  const again = () => !isWindow(range) || range.to >= Date.now() - 60_000;
   const key = JSON.stringify([fileRange, options.writes ?? false, options.database ?? null, options.collection ?? null]);
-  const { value, refreshing, error } = usePoll('history', enabled && fileRange !== null, key, () => (fileRange ? api.getHistory(fileRange, options) : Promise.resolve(null)), HISTORY_POLL_MS);
+  const { value, refreshing, error } = usePoll('history', enabled && fileRange !== null, key, () => (fileRange ? api.getHistory(fileRange, options) : Promise.resolve(null)), HISTORY_POLL_MS, again);
   return { report: value, loading: value === null && error === null, refreshing, error };
 }

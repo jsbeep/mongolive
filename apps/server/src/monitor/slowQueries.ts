@@ -19,6 +19,8 @@ import {
   type ClientPresence,
   type EjsonObject,
   RANGE_SPAN_MS,
+  isWindow,
+  type MonitorPeriod,
   type MonitorRange,
   type RunningOpKind,
   type SlowGroup,
@@ -72,6 +74,14 @@ export const slowInterval = (enabled: boolean, tabs: Iterable<ClientPresence>): 
 
 // 기간 길이 — 공유 표(contract)를 그대로 쓴다
 export const RANGE_MS = RANGE_SPAN_MS;
+// 기간 → [from, to]. from null = 처음부터(all). to = 날짜로 찾기 구간의 끝(C2), 이름 붙은 기간은 null(끝 없음 —
+// MongoDB가 찍은 시각이 이 서버 시계보다 조금 앞서도 빠지지 않게)
+export const periodBounds = (period: MonitorPeriod, now: number): { from: number | null; to: number | null } => {
+  if (isWindow(period)) return { from: period.from, to: Math.min(period.to, now) };
+  const span = RANGE_MS[period];
+  return { from: span === null ? null : now - span, to: null };
+};
+export const periodName = (period: MonitorPeriod): MonitorRange | 'custom' => (isWindow(period) ? 'custom' : period);
 
 // 로그 한 줄에서 꺼낸 한 번의 실행
 export interface SlowEntry extends SlowRun {
@@ -301,10 +311,10 @@ export const addToBucket = (buckets: Map<string, SlowBucketLine>, e: SlowEntry, 
   return true;
 };
 
-// 줄들 → 화면의 묶음. from = 이 시각 뒤(null = 전부), min보다 빠른 구간은 뺀다
+// 줄들 → 화면의 묶음. [from, to]와 겹친 것만(from null = 처음부터, to 없음 = 끝까지), min보다 빠른 구간은 뺀다
 export const summarize = (
   lines: SlowLine[],
-  { from, scope, min, expand = null }: { from: number | null; scope: OperationsScope; min: SlowThreshold; expand?: string | null },
+  { from, to = Infinity, scope, min, expand = null }: { from: number | null; to?: number; scope: OperationsScope; min: SlowThreshold; expand?: string | null },
 ): { groups: SlowGroup[]; hidden: number; missed: SlowMissed[]; dropped: number } => {
   const minBand = bandOf(min);
   const groups = new Map<string, SlowGroup>();
@@ -313,15 +323,15 @@ export const summarize = (
   let dropped = 0;
   for (const line of lines) {
     if (isMissed(line)) {
-      if (from === null || line.t >= from) missed.push({ from: line.from, to: line.t, lines: line.missed });
+      if ((from === null || line.t >= from) && line.from <= to) missed.push({ from: line.from, to: line.t, lines: line.missed });
       continue;
     }
     // 못 남긴 실행은 어느 컬렉션 것인지 모른다 — 범위와 상관없이 센다
     if (isDropped(line)) {
-      if (from === null || line.t >= from) dropped += line.dropped;
+      if ((from === null || line.t >= from) && line.t <= to) dropped += line.dropped;
       continue;
     }
-    if ((from !== null && line.last < from) || !inScope(line.ns, scope)) continue;
+    if ((from !== null && line.last < from) || line.t > to || !inScope(line.ns, scope)) continue;
     if (line.b < minBand) {
       hidden += line.n;
       continue;
@@ -380,7 +390,7 @@ export const summarize = (
 };
 
 // 날짜 파일 읽기는 크기 기록(9-6a)과 같이 쓴다(monitor/history readDayFiles)
-export const readSlowFiles = (dir: string, from: number | null): Promise<SlowLine[]> => readDayFiles<SlowLine>(dir, 'slow', from);
+export const readSlowFiles = (dir: string, from: number | null, to: number | null = null): Promise<SlowLine[]> => readDayFiles<SlowLine>(dir, 'slow', from, to);
 
 export interface SlowLogHooks {
   connectionId: string;
@@ -400,7 +410,7 @@ export interface SlowLog {
   stop: () => Promise<void>;
   // 주소가 바뀜 — 지금까지 것을 옛 서버 폴더에 적고 처음부터(기록기 reset보다 먼저 부른다)
   reset: () => Promise<void>;
-  report: (query: { range: MonitorRange; scope: OperationsScope; min: SlowThreshold; expand?: string | null }) => Promise<SlowQueriesReport>;
+  report: (query: { period: MonitorPeriod; scope: OperationsScope; min: SlowThreshold; expand?: string | null }) => Promise<SlowQueriesReport>;
 }
 
 export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
@@ -606,17 +616,16 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
       slowms = null;
       return done;
     },
-    async report({ range, scope, min, expand = null }) {
+    async report({ period, scope, min, expand = null }) {
       const now = clock();
       const disabled = everyNow() === null;
-      const span = RANGE_MS[range];
-      const from = span === null ? null : now - span;
+      const { from, to } = periodBounds(period, now);
       const stored = hooks.stored();
       const lines: SlowLine[] = [];
       if (stored) {
         const fingerprint = hooks.recorder().currentFingerprint();
         // 큰 배열은 펼쳐 넣지 않는다(인자 수 한도)
-        if (fingerprint) for (const line of await readSlowFiles(serverHistoryDir(hooks.connectionId, fingerprint), from)) lines.push(line);
+        if (fingerprint) for (const line of await readSlowFiles(serverHistoryDir(hooks.connectionId, fingerprint), from, to)) lines.push(line);
       } else {
         lines.push(...memory);
       }
@@ -625,14 +634,14 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
       if (missedOpen) lines.push(missedOpen);
       return {
         at: now,
-        range,
+        range: periodName(period),
         status: disabled ? 'off' : status,
         error: disabled ? null : error,
         // 꺼져 있으면 MongoDB에 묻지 않는다
         slowms: disabled ? null : await readSlowms(),
         min,
         stored,
-        ...summarize(lines, { from, scope, min, expand }),
+        ...summarize(lines, { from, to: to ?? undefined, scope, min, expand }),
       };
     },
   };

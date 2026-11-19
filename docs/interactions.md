@@ -1,6 +1,6 @@
 # 시스템 상호작용 분석
 
-9-10 기준 (2026-11-18), C1 반영 (2026-11-20). 코드를 grep으로 훑어 만든 지도다. 부하 칸은 측정값이 아니라 코드 기준 추정(상/중/하).
+9-10 기준 (2026-11-18), C1·C2 반영 (2026-11-20). 코드를 grep으로 훑어 만든 지도다. 부하 칸은 측정값이 아니라 코드 기준 추정(상/중/하).
 새 기능을 설계할 때 코드보다 이 문서를 먼저 읽는다. 바뀌면 같이 고친다.
 
 ## 0. 부품과 통신 경계
@@ -42,20 +42,20 @@ web 안의 계약 경계는 `web/src/services/dataSource.ts`의 `DataSource` 인
 | 진단 | `/diagnostics` | `getDiagnostics` | `Diagnostics` | Mongo `serverStatus` |
 | 모니터 | 아래 표 (20개) | | | |
 
-모니터 라우트 — **서버가 어디서 답을 꺼내나**가 핵심이다.
+모니터 라우트 — **서버가 어디서 답을 꺼내나**가 핵심이다. history·slow·sizes·alerts는 `range=` 대신 `from=&to=`(날짜로 찾기, C2)도 받는다 — 응답 range `'custom'`, to는 지금까지로 줄이고 10분 미만이면 400. 나머지(메모리만)는 받지 않는다.
 
 | 경로 | 메서드 | 답의 출처 |
 |---|---|---|
 | `/monitor/activity` | `getActivity` | 메모리 (change stream 누적) |
 | `/monitor/last-writes` | `getLastWrites` | 메모리 |
-| `/monitor/history`, `/history-info`, `DELETE /history` | `getHistory` (6h 1분·12h 2분·24h 5분 칸 … 기간과 겹치는 파일만 연다) `getHistoryInfo` (`trimmed` = 디스크 한도로 지운 때·크기) `clearHistory` | 파일 metrics/ |
+| `/monitor/history`, `/history-info`, `DELETE /history` | `getHistory` (6h 1분·12h 2분·24h 5분 칸 …, custom = 점 360개 이하인 가장 짧은 칸·그 시각 분 기록이 지워졌으면 시·일로 `coarse` · 구간과 겹치는 파일만 연다) `getHistoryInfo` (`trimmed` = 디스크 한도로 지운 때·크기) `clearHistory` | 파일 metrics/ |
 | `/monitor/backfill`, `/start`, `/stop` | `get/start/stopBackfill` | 메모리 + oplog 스캔 시작·정지 |
 | `/monitor/slow` | `getSlowQueries` (`expand`=펼친 그룹만 command 포함, `dropped`=1분 50줄 상한으로 못 남긴 실행 수) | 메모리·파일 (slow 폴링이 채움) |
 | `/monitor/top` | `getTop` | 메모리 (10초 틱) |
 | `/monitor/replica` | `getReplica` | 메모리 (10초 틱) |
-| `/monitor/alerts` | `getAlerts` | 메모리 |
+| `/monitor/alerts` | `getAlerts` | 메모리·파일 (custom = 구간과 겹친 알림) |
 | `/monitor/transactions` | `getTransactions` | 메모리 |
-| `/monitor/sizes`, `POST /sizes/measure` | `getSizes` `measureSizes` | 메모리 (1시간 측정) / 측정 시작 |
+| `/monitor/sizes`, `POST /sizes/measure` | `getSizes` `measureSizes` (custom = to 시점 값 + 구간 안 Δ) | 메모리 (1시간 측정)·파일 / 측정 시작 |
 | `/monitor/operations`, `POST /operations/kill` | `getOperations` `killOperation` | **Mongo 직접** `$currentOp` `killOp` |
 | `/monitor/indexes` | `getIndexes` | **Mongo 직접** `$indexStats` `$collStats` |
 | `/monitor/oplog` | `getOplog` | **Mongo 직접** oplog.rs |
@@ -150,6 +150,7 @@ feed는 그 연결을 쓰는 탭이 있으면 돌고, 마지막 탭이 떠나고
 | IndexesCard | `getIndexes` | 열 때 | |
 | BackfillBanner | `onBackfill` push + `getBackfill` | push | |
 | 토스트 | `onAlert` push (page.tsx) | push | |
+| 날짜로 찾기 (C2) | `getHistory`·`getSlowQueries`·`getSizes`·`getAlerts` (`from`·`to`) | to가 지금이면 긴 범위처럼 60초, 지난 구간이면 **한 번만** (바뀔 게 없다) · Top·Transactions·Replica lag은 안 부른다 | 탭 숨김 |
 
 ## 3. Data Flow Matrix — 데이터가 어디서 태어나 어디로 가나
 

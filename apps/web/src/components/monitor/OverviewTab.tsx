@@ -7,13 +7,13 @@
 import { RefreshSpinner } from '../common/Skeleton';
 import { useMemo, type ReactNode } from 'react';
 import { CircleAlert, Loader2 } from 'lucide-react';
-import type { ActivityRange, HistoryGap, HistoryPoint, HistoryRange, MonitorMetricKey, MonitorRange, MonitorRates, MonitorSample } from '../../types/explorer';
+import type { ActivityRange, HistoryGap, HistoryPoint, HistoryRange, MonitorMetricKey, MonitorPeriod, MonitorRates, MonitorWindow, MonitorSample } from '../../types/explorer';
 import { isLiveRange } from '../../types/explorer';
 import type { MonitorState } from '../../hooks/useMonitor';
 import { useHistory } from '../../hooks/useActivity';
 import { cn } from '../../utils/cn';
 import { TimeChart, Sparkline, type ChartSeries } from './charts';
-import { fmtBytesRate, liveWindow, fmtDateTime, fmtDuration, fmtMs, fmtNumber, fmtSpan, fmtUptime, RANGE_LABEL } from './format';
+import { fmtBytesRate, liveWindow, fmtDateTime, fmtDuration, fmtMs, fmtNumber, fmtSpan, fmtUptime, periodLabel } from './format';
 
 // 타일의 추세선 — 실시간은 최근 5분(30칸)
 const TREND_SAMPLES = 30;
@@ -260,7 +260,7 @@ const gapLabel = (g: HistoryGap) => {
   return `Not recording ${span} — meanwhile ${w.toLocaleString()} write and ${r.toLocaleString()} read requests (whole server)`;
 };
 
-function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState; range: HistoryRange; historyOff: boolean }) {
+function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState; range: HistoryRange | MonitorWindow; historyOff: boolean }) {
   const { report, loading, refreshing, error } = useHistory(true, range);
   const points = report?.points ?? [];
 
@@ -335,9 +335,17 @@ function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState
           <CircleAlert size={14} className="mt-0.5 shrink-0" />
           {historyOff
             ? 'History is off — turn it on in Settings › Monitor. Until then only the last hour is kept, in memory.'
-            : 'No history in this range yet. It builds up while a tab uses this connection — one line per minute.'}
+            : report.range === 'custom'
+              ? 'No history in this window — nothing was recorded then (no tab used this connection, or it was removed by the retention or disk limit in Settings › Monitor).'
+              : 'No history in this range yet. It builds up while a tab uses this connection — one line per minute.'}
         </p>
       ) : null}
+      {points.length > 0 && report.coarse && (
+        <p className={styles.note}>
+          <CircleAlert size={14} className="mt-0.5 shrink-0" />
+          The finer records from then are gone (Settings › Monitor › History keeps per-minute detail for a few days), so this window shows one point per {bucket}.
+        </p>
+      )}
 
       {points.length > 0 && (
         <>
@@ -376,7 +384,7 @@ function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState
         </>
       )}
 
-      <h2 className={styles.sectionTitle}>{RANGE_LABEL[range]} · whole server · per {bucket}<RefreshSpinner show={refreshing} /></h2>
+      <h2 className={styles.sectionTitle}>{periodLabel(range)} · whole server · per {bucket}<RefreshSpinner show={refreshing} /></h2>
       <ChartGrid
         charts={charts}
         chartProps={{
@@ -396,7 +404,7 @@ function HistoryOverview({ monitor, range, historyOff }: { monitor: MonitorState
   );
 }
 
-export function OverviewTab({ monitor, range, historyOff }: { monitor: MonitorState; range: MonitorRange; historyOff: boolean }) {
+export function OverviewTab({ monitor, range, historyOff }: { monitor: MonitorState; range: MonitorPeriod; historyOff: boolean }) {
   if (isLiveRange(range)) return <LiveOverview monitor={monitor} range={range} />;
   return <HistoryOverview monitor={monitor} range={range} historyOff={historyOff} />;
 }

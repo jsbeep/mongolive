@@ -51,11 +51,15 @@ import type {
   CollectionMetadata,
   MetadataImportResult,
 } from '../types/explorer';
-import { mutationTarget } from '../types/explorer';
+import { isWindow, mutationTarget, type MonitorPeriod } from '../types/explorer';
 import { fetchAuthStatus, notifySessionExpired } from './auth';
 import { getActiveConnection, leaveConnection, onActiveConnectionChange } from './activeConnection';
 import { getPreferences } from './preferences';
 import type { DataSource, MonitorEvent } from './dataSource';
+
+// 기간 → 쿼리 — 이름 붙은 기간은 range=, 날짜로 찾기 구간(C2)은 from=&to=
+const periodParams = (period: MonitorPeriod): Record<string, string> =>
+  isWindow(period) ? { from: String(period.from), to: String(period.to) } : { range: period };
 
 const BASE = '/api';
 
@@ -438,7 +442,7 @@ export const createRemoteDataSource = (): DataSource => {
     getLastWrites: () => request<LastWrites>('/monitor/last-writes'),
     getHistoryInfo: () => request<HistoryInfo>('/monitor/history-info'),
     getHistory(range, options = {}) {
-      const params = new URLSearchParams({ range });
+      const params = new URLSearchParams(periodParams(range));
       if (options.writes) params.set('writes', '1');
       if (options.database) params.set('database', options.database);
       if (options.database && options.collection) params.set('collection', options.collection);
@@ -460,7 +464,7 @@ export const createRemoteDataSource = (): DataSource => {
       await request<void>('/monitor/operations/kill', { method: 'POST', body: JSON.stringify({ opid }) });
     },
     getSlowQueries(query) {
-      const params = new URLSearchParams({ range: query.range, min: String(query.min) });
+      const params = new URLSearchParams({ ...periodParams(query.range), min: String(query.min) });
       if (query.database) params.set('database', query.database);
       if (query.database && query.collection) params.set('collection', query.collection);
       if (query.expand) params.set('expand', query.expand);
@@ -476,7 +480,7 @@ export const createRemoteDataSource = (): DataSource => {
       };
     },
     getSizes(query) {
-      const params = new URLSearchParams({ range: query.range });
+      const params = new URLSearchParams(periodParams(query.range));
       if (query.database) params.set('database', query.database);
       if (query.database && query.collection) params.set('collection', query.collection);
       return request<SizesReport>(`/monitor/sizes?${params}`);
@@ -503,7 +507,7 @@ export const createRemoteDataSource = (): DataSource => {
       return request<StartupWarningsReport>('/monitor/startup-warnings');
     },
     getAlerts({ database, collection, range }) {
-      const params = new URLSearchParams({ range });
+      const params = new URLSearchParams(periodParams(range));
       if (database) params.set('database', database);
       if (database && collection) params.set('collection', collection);
       return request<AlertsReport>(`/monitor/alerts?${params}`);

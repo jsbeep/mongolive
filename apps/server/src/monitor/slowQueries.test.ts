@@ -189,6 +189,12 @@ describe('buckets and summary', () => {
     const lines = [...buckets.values()];
     expect(summarize(lines, { from: T0 + 300_000, scope, min: 100 }).groups.map((g) => g.ns)).toEqual(['blog.posts']);
     expect(summarize(lines, { from: null, scope: { database: 'shop', collection: null }, min: 100 }).groups.map((g) => g.ns)).toEqual(['shop.orders']);
+    // 날짜로 찾기 — 구간 끝 뒤에 시작한 분은 뺀다
+    expect(summarize(lines, { from: T0 - 60_000, to: T0 + 300_000, scope, min: 100 }).groups.map((g) => g.ns)).toEqual(['shop.orders']);
+    const marks: SlowLine[] = [{ t: T0 + 60_000, dropped: 3 }, { t: T0 + 900_000, dropped: 5 }, { t: T0 + 120_000, from: T0 + 60_000, missed: 9 }, { t: T0 + 960_000, from: T0 + 900_000, missed: 1 }];
+    const cut = summarize(marks, { from: T0, to: T0 + 300_000, scope, min: 100 });
+    expect(cut.dropped).toBe(3);
+    expect(cut.missed.map((m) => m.lines)).toEqual([9]);
   });
 
   it('caps new lines per minute — existing lines still add up, the next minute starts fresh', () => {
@@ -300,7 +306,7 @@ describe('createSlowLog', () => {
     h.advance(10_000);
     h.respond({ totalLinesWritten: 2101, log: [...filler(999), REMOVE_WRITE.replace('15:01:57.242', '15:02:17.000')] });
     await h.slow.poll();
-    const report = await h.slow.report({ range: '1h', scope: { database: null, collection: null }, min: 100 });
+    const report = await h.slow.report({ period: '1h', scope: { database: null, collection: null }, min: 100 });
     expect(report.missed).toEqual([{ from: at('2026-11-16T15:01:50.000Z'), to: at('2026-11-16T15:02:30.000Z'), lines: 1000 }]);
     // 메모리 모드 — 아직 안 끝난 분의 줄도 보인다
     expect(report.groups.map((g) => g.op)).toEqual(['delete']);
@@ -335,11 +341,11 @@ describe('createSlowLog', () => {
     const h = harness();
     h.respond(Object.assign(new Error('not authorized'), { code: 13 }));
     await h.slow.poll();
-    expect((await h.slow.report({ range: '1h', scope: { database: null, collection: null }, min: 100 })).status).toBe('denied');
+    expect((await h.slow.report({ period: '1h', scope: { database: null, collection: null }, min: 100 })).status).toBe('denied');
     const old = harness();
     old.respond({ totalLinesWritten: 1, log: ['Mon Nov 16 15:00:00.000 I COMMAND [conn1] command shop.orders ... 300ms'] });
     await old.slow.poll();
-    expect((await old.slow.report({ range: '1h', scope: { database: null, collection: null }, min: 100 })).status).toBe('unsupported');
+    expect((await old.slow.report({ period: '1h', scope: { database: null, collection: null }, min: 100 })).status).toBe('unsupported');
   });
 
   it('stop writes the unfinished minute too', async () => {
@@ -383,7 +389,7 @@ describe('read interval (9-10)', () => {
     expect(h.appended).toHaveLength(1); // 끄는 순간 모아 둔 분을 적는다
     h.advance(10_000);
     await h.slow.poll();
-    const report = await h.slow.report({ range: '1h', scope: { database: null, collection: null }, min: 100 });
+    const report = await h.slow.report({ period: '1h', scope: { database: null, collection: null }, min: 100 });
     expect(h.calls).toEqual({ getLog: 1, profile: 0 });
     expect(report.status).toBe('off');
     expect(report.slowms).toBeNull();
@@ -401,7 +407,7 @@ describe('read interval (9-10)', () => {
     // 꺼져 있던 동안 5000줄이 지나갔고, 그때 끝난 remove가 아직 버퍼에 있다
     h.respond({ totalLinesWritten: 5010, log: [...filler(999), REMOVE_WRITE.replace('15:01:57.242', '15:03:00.000')] });
     await h.slow.poll();
-    const report = await h.slow.report({ range: '1h', scope: { database: null, collection: null }, min: 100 });
+    const report = await h.slow.report({ period: '1h', scope: { database: null, collection: null }, min: 100 });
     expect(report.missed).toEqual([]);
     expect(report.groups).toEqual([]);
   });

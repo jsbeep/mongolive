@@ -45,6 +45,14 @@ describe('summarizeSizes', () => {
     expect(r.rows).toEqual([{ database: 'b', collection: 'z', count: 9, size: 900, storage: 4096, index: 4096, base: { count: 5, size: 500, storage: 4096, index: 4096 } }]);
   });
 
+  it('날짜로 찾기 — to 시점의 값, to 뒤의 줄·메모리 측정은 안 쓴다', () => {
+    const latest = { at: T0 + 3 * HOUR, map: new Map<string, SizeTuple>([['a.x', [99, 9900, 4096, 4096]]]) };
+    const r = summarizeSizes(lines, { from: T0 - HOUR, to: T0 + HOUR + 60_000, scope: { database: 'a', collection: null }, latest, history: true });
+    expect(r.at).toBe(T0 + HOUR);
+    expect(r.trend.map((p) => p.size)).toEqual([1100, 2100]);
+    expect(r.rows.map((row) => [row.collection, row.size, row.base?.size])).toEqual([['x', 2000, 1000], ['y', 100, 100]]);
+  });
+
   it('기록 없이(실시간 기간) — 기준·추이 없음', () => {
     const r = summarizeSizes([], { from: null, scope: all, latest: { at: T0, map: new Map([['a.x', [1, 1, 1, 1]]]) }, history: false });
     expect(r).toMatchObject({ baseAt: null, baseTotal: null, trend: [] });

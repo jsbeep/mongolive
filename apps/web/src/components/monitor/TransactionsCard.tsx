@@ -6,8 +6,8 @@ import { useCachedReport } from '../../hooks/useCachedReport';
 import { RefreshSpinner } from '../common/Skeleton';
 import { useEffect, useRef, useState } from 'react';
 import { CircleAlert } from 'lucide-react';
-import type { MonitorRange, TransactionsReport, TransactionSample } from '../../types/explorer';
-import { LIVE_RANGES } from '../../types/explorer';
+import type { MonitorPeriod, TransactionsReport, TransactionSample } from '../../types/explorer';
+import { isLiveRange, isWindow } from '../../types/explorer';
 import { api } from '../../services/api';
 import { cn } from '../../utils/cn';
 import { fmtClock, fmtNumber, memoryRange, rangePhrase } from './format';
@@ -35,9 +35,9 @@ const plural = (n: number, word: string) => `${fmtNumber(n)} ${word}${n === 1 ? 
 // 0.7/min · 12/min
 const rate = (n: number) => (n > 0 && n < 10 ? n.toFixed(1) : fmtNumber(Math.round(n)));
 
-function useTransactions(range: MonitorRange, scope: MonitorScope) {
+function useTransactions(range: MonitorPeriod, scope: MonitorScope) {
   const [failed, setFailed] = useState<string | null>(null);
-  const live = LIVE_RANGES.includes(range);
+  const live = isLiveRange(range);
   const asked = memoryRange(range);
   const query = useRef({ range: asked, scope });
   query.current = { range: asked, scope };
@@ -83,7 +83,7 @@ function useTransactions(range: MonitorRange, scope: MonitorScope) {
 
 interface TransactionsCardProps {
   scope: MonitorScope;
-  range: MonitorRange;
+  range: MonitorPeriod;
 }
 
 export function TransactionsCard({ scope, range }: TransactionsCardProps) {
@@ -98,7 +98,17 @@ export function TransactionsCard({ scope, range }: TransactionsCardProps) {
   }
   if (!report || report.status !== 'ok' || report.count === 0) return null;
 
-  const live = LIVE_RANGES.includes(range);
+  // 날짜로 찾기(C2) — 서버 메모리 1시간뿐이라 지난 구간은 없다
+  if (isWindow(range)) {
+    return (
+      <section className={styles.card} aria-label="Transactions">
+        <h3 className={styles.title}>Transactions</h3>
+        <p className={cn(styles.muted, 'text-[12px]')}>Kept for the last hour only — switch the range to 5m, 30m or 1h to see them.</p>
+      </section>
+    );
+  }
+
+  const live = isLiveRange(range);
   const inRange = rangePhrase(memoryRange(range));
   // 범위의 DB 안이면 컬렉션 이름만
   const label = (ns: string) => (scope.database && ns.startsWith(`${scope.database}.`) ? ns.slice(scope.database.length + 1) : ns);

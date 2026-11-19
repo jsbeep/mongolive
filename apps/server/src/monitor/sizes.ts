@@ -4,13 +4,14 @@
 // 하나씩 차례로, 각각 5초 제한 — 컬렉션이 많아도 MongoDB에 한꺼번에 몰리지 않게. 샘플러 박자에 '때가 됐나'만 본다(기다리지 않는다).
 // 기록이 켜져 있으면 sizes-날짜.jsonl에 측정마다 한 줄(파일 첫 줄은 전부, 그다음은 바뀐 컬렉션만 — monitor/history appendSizes).
 // 읽을 때는 기간 시작이 든 날짜 파일부터 차례로 되살려(replay) 추이와 기간 첫 측정(Δ의 기준)을 낸다.
+// 날짜로 찾기(C2)는 구간 끝(to)까지만 되살린다 — rows = to 시점의 값. 마지막 측정(메모리)이 to 뒤면 쓰지 않는다.
 import type { MongoClient } from 'mongodb';
-import { isLiveRange, type MonitorRange, type SizeStats, type SizesReport } from '@mongolive/shared';
+import { isLiveRange, type MonitorPeriod, type SizeStats, type SizesReport } from '@mongolive/shared';
 import { HIDDEN_DATABASES, isHiddenCollection } from '../names';
 import { readDayFiles, serverHistoryDir, type Recorder } from './history';
 import { isUnauthorized, type OperationsScope } from './operations';
 import { withTimeout } from './sampler';
-import { RANGE_MS } from './slowQueries';
+import { periodBounds } from './slowQueries';
 
 export const SIZE_INTERVAL_MS = 60 * 60_000;
 // 지금 재기 버튼 — 이보다 자주는 안 잰다
@@ -105,14 +106,16 @@ export const sizeChanges = (before: Map<string, SizeTuple>, after: Map<string, S
 // 파일 줄(시각 순) + 지금 메모리 값 → 보고서의 rows·합계·기준·추이
 export const summarizeSizes = (
   lines: SizesLine[],
-  opts: { from: number | null; scope: OperationsScope; latest: { at: number; map: Map<string, SizeTuple> } | null; history: boolean },
+  opts: { from: number | null; to?: number; scope: OperationsScope; latest: { at: number; map: Map<string, SizeTuple> } | null; history: boolean },
 ): Pick<SizesReport, 'at' | 'rows' | 'total' | 'baseAt' | 'baseTotal' | 'trend'> => {
   let state = new Map<string, SizeTuple>();
   let lastAt: number | null = null;
   let base: Map<string, SizeTuple> | null = null;
   let baseAt: number | null = null;
   let trend: SizesReport['trend'] = [];
+  const to = opts.to ?? Infinity;
   for (const line of lines) {
+    if (line.t > to) break;
     if (line.full) state = new Map(Object.entries(line.c).filter((e): e is [string, SizeTuple] => e[1] !== null));
     else for (const [key, value] of Object.entries(line.c)) value === null ? state.delete(key) : state.set(key, value);
     lastAt = line.t;
@@ -135,7 +138,8 @@ export const summarizeSizes = (
     trend = [...kept.values()];
   }
 
-  const current = opts.latest ?? (lastAt !== null && state.size ? { at: lastAt, map: state } : null);
+  const latest = opts.latest && opts.latest.at <= to ? opts.latest : null;
+  const current = latest ?? (lastAt !== null && state.size ? { at: lastAt, map: state } : null);
   const rows: SizesReport['rows'] = [];
   const total = zero();
   const baseTotal = zero();
@@ -175,7 +179,7 @@ export interface Sizes {
   stop: () => void;
   // 주소가 바뀜(다른 서버일 수 있다) — 지난 값을 버리고 다음 박자에 다시 잰다
   reset: () => void;
-  report: (query: { range: MonitorRange; scope: OperationsScope }) => Promise<SizesReport>;
+  report: (query: { period: MonitorPeriod; scope: OperationsScope }) => Promise<SizesReport>;
 }
 
 export const createSizes = (hooks: SizesHooks): Sizes => {
@@ -236,19 +240,18 @@ export const createSizes = (hooks: SizesHooks): Sizes => {
       error = null;
       nextAt = 0;
     },
-    async report({ range, scope }) {
+    async report({ period, scope }) {
       const now = clock();
-      const span = RANGE_MS[range];
-      const live = isLiveRange(range);
+      const live = isLiveRange(period);
       const stored = hooks.stored();
-      const from = span === null ? null : now - span;
+      const { from, to } = periodBounds(period, now);
       let lines: SizesLine[] = [];
       // 실시간 기간은 추이·Δ가 없다(1시간마다 재므로) — 아직 못 쟀을 때만 파일의 마지막 값을 빌린다
       if (stored && (!live || latest === null)) {
         const fingerprint = hooks.recorder().currentFingerprint();
-        if (fingerprint) lines = await readDayFiles<SizesLine>(serverHistoryDir(hooks.connectionId, fingerprint), 'sizes', live ? now - 2 * DAY_MS : from);
+        if (fingerprint) lines = await readDayFiles<SizesLine>(serverHistoryDir(hooks.connectionId, fingerprint), 'sizes', live ? now - 2 * DAY_MS : from, to);
       }
-      const summary = summarizeSizes(lines, { from: live ? null : from, scope, latest: latest && at !== null ? { at, map: latest } : null, history: stored && !live });
+      const summary = summarizeSizes(lines, { from: live ? null : from, to: to ?? undefined, scope, latest: latest && at !== null ? { at, map: latest } : null, history: stored && !live });
       return { status: error ? 'error' : 'ok', error, measuring, stored, ...summary };
     },
   };

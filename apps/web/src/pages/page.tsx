@@ -43,7 +43,7 @@ import type { MonitorTab } from '../components/monitor/MonitorView';
 import { useLastWrites } from '../hooks/useActivity';
 import { alertFocus, alertMessage } from '../components/monitor/alerts';
 import { pushSystemEvent } from '../services/systemLog';
-import { connectionLabel, type MonitorRange } from '../types/explorer';
+import { connectionLabel, type MonitorPeriod } from '../types/explorer';
 
 // Monitor 화면(9단계) — 처음 열 때만 불러온다(Explorer만 쓰면 받지 않는다)
 const MonitorView = lazy(() => import('../components/monitor/MonitorView'));
@@ -206,7 +206,7 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
   const [view, setView] = useState<'explorer' | 'monitor'>('explorer');
   const [monitorScope, setMonitorScope] = useState<MonitorScope>({ database: null, collection: null });
   const [monitorTab, setMonitorTab] = useState<MonitorTab>('overview');
-  const [monitorRange, setMonitorRange] = useState<MonitorRange>('1h');
+  const [monitorRange, setMonitorRange] = useState<MonitorPeriod>('1h');
   const monitoring = view === 'monitor';
   // Monitor를 보는 동안 사이드바 트리는 문서 수 대신 마지막 쓰기(3m)를 보여 준다
   const lastWrites = useLastWrites(monitoring && api.supportsMonitor);

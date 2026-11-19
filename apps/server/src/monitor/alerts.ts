@@ -12,9 +12,9 @@
 // 빈 구간 불러오기(9-4)로 다시 읽은 이벤트는 따로 센다 — 시각이 과거라 실시간 창과 섞으면 안 된다.
 //   filled로 표시하고 토스트는 없다. burst는 실시간만(지난 구간의 평소를 모른다).
 // 시각은 MongoDB에 기록된 시각(clusterTime).
-import type { AlertKind, AlertsReport, LiveChange, LiveOperation, MonitorAlert, MonitorRange } from '@mongolive/shared';
+import type { AlertKind, AlertsReport, LiveChange, LiveOperation, MonitorAlert, MonitorPeriod } from '@mongolive/shared';
 import { readDayFiles, serverHistoryDir, type Recorder } from './history';
-import { RANGE_MS } from './slowQueries';
+import { periodBounds } from './slowQueries';
 
 export const WINDOW_MS = 60_000;
 const SLOT_MS = 10_000;
@@ -66,7 +66,7 @@ export interface Alerts {
   stop: () => Promise<void>;
   // 주소가 바뀜 — 옛 서버 폴더에 적고 처음부터(기록기 reset보다 먼저)
   reset: () => Promise<void>;
-  report: (query: { range: MonitorRange; scope: { database: string | null; collection: string | null } }) => Promise<AlertsReport>;
+  report: (query: { period: MonitorPeriod; scope: { database: string | null; collection: string | null } }) => Promise<AlertsReport>;
 }
 
 interface Slot {
@@ -372,16 +372,15 @@ export const createAlerts = (hooks: AlertsHooks): Alerts => {
       memory = [];
       return done;
     },
-    async report({ range, scope }) {
+    async report({ period, scope }) {
       const now = clock();
-      const span = RANGE_MS[range];
-      const from = span === null ? null : now - span;
+      const { from, to } = periodBounds(period, now);
       const stored = hooks.stored();
       const all: MonitorAlert[] = [];
       if (stored) {
         const fingerprint = hooks.recorder().currentFingerprint();
         // 큰 배열은 펼쳐 넣지 않는다(인자 수 한도)
-        if (fingerprint) for (const a of await readDayFiles<MonitorAlert>(serverHistoryDir(hooks.connectionId, fingerprint), 'alerts', from)) all.push(a);
+        if (fingerprint) for (const a of await readDayFiles<MonitorAlert>(serverHistoryDir(hooks.connectionId, fingerprint), 'alerts', from, to)) all.push(a);
       } else {
         for (const a of memory) all.push(a);
       }
@@ -389,7 +388,8 @@ export const createAlerts = (hooks: AlertsHooks): Alerts => {
       const seen = new Set<string>();
       const rows: MonitorAlert[] = [];
       for (const a of all) {
-        if ((from !== null && a.end < from) || !inScope(a, scope) || seen.has(a.id)) continue;
+        // 구간과 겹친 것(날짜로 찾기면 구간 뒤에 시작한 건 뺀다)
+        if ((from !== null && a.end < from) || (to !== null && a.start > to) || !inScope(a, scope) || seen.has(a.id)) continue;
         seen.add(a.id);
         rows.push(a);
       }
