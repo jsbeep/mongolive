@@ -8,15 +8,11 @@
 import { Router } from 'express';
 import {
   idLookupCandidates,
-  queryDocuments,
-  oidTimestampMs,
-  summarizeDocument,
   type CollectionSummary,
   type DatabaseSummary,
   type Document,
   type DocumentQuery,
   type DocumentSort,
-  type DocumentSummary,
   isPlainObject,
   validateQueryFilter,
 } from '@mongolive/shared';
@@ -27,6 +23,7 @@ import { getCollectionMeta } from '../meta';
 import { toQueryHttpError, toValueHttpError } from '../queryErrors';
 import { checkCollectionName, checkDatabaseName, HIDDEN_DATABASES, HttpError, isHiddenCollection } from '../names';
 import { summarizeExplain } from '../explain';
+import { listDocumentPage } from '../documentList';
 import { fromWire, READ_OPTIONS, toWire } from '../wire';
 
 // FK 후보 목록(find-by-field, field-values) 상한 — 실수로 거대한 컬렉션을 대상으로 잡아도 버티게
@@ -122,29 +119,22 @@ const parseDocumentQuery = (q: Record<string, unknown>): DocumentQuery => {
   };
 };
 
-// 문서 목록 한 페이지. 필터가 '제목/미리보기'라는 계산된 값에 걸리고 정렬도 그렇기 때문에
-// 컬렉션 전체(쿼리가 있으면 쿼리 결과 전체)를 요약한 뒤 공유 함수(queryDocuments)로 거르고 자른다 — Mock과 결과가 같다.
-// 목표 규모(~5MB)에선 충분히 빠르다. 훨씬 커지면 여기를 MongoDB 쿼리(skip/limit)로 바꿔야 한다.
+// 문서 목록 한 페이지 — 요약 재료만 받아오고, 큰 결과는 MongoDB에서 페이지만(documentList.ts)
 const listDocuments = async ({ id, client }: MongoConn, dbName: string, colName: string, query: DocumentQuery, mongoFilter?: Filter<BsonDocument>) => {
   const db = client.db(checkDatabaseName(dbName));
   const collection = db.collection(checkCollectionName(colName));
-
   const meta = await getCollectionMeta(id, db.databaseName, collection.collectionName);
-  const [raw, collectionTotal] = await Promise.all([
-    collection.find(mongoFilter ?? {}, mongoFilter ? { ...READ_OPTIONS, maxTimeMS: QUERY_MAX_TIME_MS } : READ_OPTIONS).toArray(),
-    // 쿼리가 있으면 '전체 몇 개 중'의 전체는 따로 — 세지 않고 메타데이터에서 읽는다(빠름)
-    mongoFilter ? collection.estimatedDocumentCount({ maxTimeMS: QUERY_MAX_TIME_MS }) : undefined,
-  ]);
-  const summaries: DocumentSummary[] = raw.map((bson) => {
-    const document = toWire<Document>(bson);
-    return summarizeDocument(document, oidTimestampMs(document._id) ?? 0, meta.titleKey, meta.primaryKey);
-  });
-  const page = queryDocuments(summaries, query);
-  return collectionTotal === undefined ? page : { ...page, totalUnfiltered: Math.max(collectionTotal, page.totalUnfiltered) };
+  return listDocumentPage(collection, query, { meta, mongoFilter, maxTimeMS: QUERY_MAX_TIME_MS });
 };
 
 readRouter.get('/databases/:db/collections/:col/documents', async (req, res) => {
-  res.json(await listDocuments(await connOf(res), req.params.db, req.params.col, parseDocumentQuery(req.query as Record<string, unknown>)));
+  const conn = await connOf(res);
+  try {
+    res.json(await listDocuments(conn, req.params.db, req.params.col, parseDocumentQuery(req.query as Record<string, unknown>)));
+  } catch (e) {
+    // 큰 컬렉션의 먼 페이지(skip)가 시간 제한에 걸린 경우
+    throw toQueryHttpError(e, QUERY_MAX_TIME_MS);
+  }
 });
 
 // 본문의 사용자 쿼리(mongoFilter) — 허용 연산자 검사 → BSON 변환. 틀리면 400

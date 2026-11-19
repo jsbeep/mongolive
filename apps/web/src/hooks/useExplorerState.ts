@@ -1223,9 +1223,8 @@ export function useExplorerState(): UseExplorerStateResult {
   const livePendingRef = useRef<LivePending>(emptyLivePending());
   const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 반환값: 다시 받기에 성공했나(새로고침 버튼이 실패를 알리는 데 쓴다 — 실시간 경로는 조용히 넘어간다)
-  const flushLive = useCallback(async (): Promise<boolean> => {
-    liveTimerRef.current = null;
+  // 실제로 다시 받는 한 판 — pending에 걸린 범위만
+  const runLive = useCallback(async (): Promise<boolean> => {
     const pending = livePendingRef.current;
     livePendingRef.current = emptyLivePending();
     const db = activeDatabaseRef.current;
@@ -1285,10 +1284,37 @@ export function useExplorerState(): UseExplorerStateResult {
     }
   }, [showToast, focusDatabase, clearDocuments, loadDocuments, flashChangedPaths]);
 
+  // 다시 받기는 한 번에 하나(single-flight) — 쓰기가 몰릴 때 앞 요청이 끝나기 전에 다음이 겹쳐 쌓이지 않게.
+  // 받는 동안 온 변경은 pending에 모였다가, 끝난 뒤 '방금 걸린 시간의 2배'(최소 묶는 간격)만큼 쉬고 한 번에 받는다
+  const liveRunRef = useRef<Promise<boolean> | null>(null);
+  const liveCostMsRef = useRef(0);
+  const liveGapMs = () => Math.max(LIVE_BATCH_MS[getPreferences().liveBatch], 2 * liveCostMsRef.current);
+  const hasLivePending = (p: LivePending) => p.databases || p.collections || p.documents || p.openDocument || p.highlight.length > 0;
+
+  // 반환값: 다시 받기에 성공했나(새로고침 버튼이 실패를 알리는 데 쓴다 — 실시간 경로는 조용히 넘어간다)
+  const flushLive = useCallback(async (): Promise<boolean> => {
+    // 앞 판이 끝나길 기다린다(새로고침 버튼이 받는 중에 눌린 경우). 그 판이 걸어 둔 다음 타이머는 지금 이 판이 대신한다
+    while (liveRunRef.current) await liveRunRef.current;
+    if (liveTimerRef.current) clearTimeout(liveTimerRef.current);
+    liveTimerRef.current = null;
+    const started = performance.now();
+    const run = runLive();
+    liveRunRef.current = run;
+    try {
+      return await run;
+    } finally {
+      liveRunRef.current = null;
+      liveCostMsRef.current = performance.now() - started;
+      if (hasLivePending(livePendingRef.current) && !liveTimerRef.current) {
+        liveTimerRef.current = setTimeout(() => void flushLive(), liveGapMs());
+      }
+    }
+  }, [runLive]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const scheduleLive = useCallback(() => {
-    // 묶는 간격은 설정 › Realtime(즉시 0.15초 / 느슨하게 1.5초)
-    if (!liveTimerRef.current) liveTimerRef.current = setTimeout(() => void flushLive(), LIVE_BATCH_MS[getPreferences().liveBatch]);
-  }, [flushLive]);
+    // 묶는 간격은 설정 › Realtime(즉시 0.15초 / 느슨하게 1.5초). 받는 중이면 끝날 때 다시 잡는다(위)
+    if (!liveTimerRef.current && !liveRunRef.current) liveTimerRef.current = setTimeout(() => void flushLive(), liveGapMs());
+  }, [flushLive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 새로고침 = '다시 맞추기'. 보던 경로(컬렉션·문서·필드·페이지)는 그대로 두고 지금 화면에 걸린 것만 다시 받는다
   // — 재연결 때 자동으로 하는 resync와 같은 일을 지금 바로. 아직 첫 연결에 실패한 상태면 첫 연결부터 다시.

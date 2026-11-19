@@ -10,6 +10,8 @@ export interface SortOption {
   label: string;
   // 이 정렬일 때 버튼에 보일 아이콘(없으면 ↑↓)
   icon?: LucideIcon;
+  // 지금은 고를 수 없는 이유(툴팁) — 있으면 흐리게, 눌러도 안 바뀐다
+  disabledReason?: string;
 }
 
 interface SortMenuButtonProps {
@@ -73,11 +75,16 @@ export function SortMenuButton({ value, options, onChange }: SortMenuButtonProps
                 type="button"
                 role="menuitemradio"
                 aria-checked={selected}
+                // disabled 대신 aria-disabled — disabled 버튼은 툴팁(마우스 이벤트)이 안 뜬다
+                aria-disabled={option.disabledReason ? true : undefined}
+                data-tt={option.disabledReason}
                 className={cn(
-                  'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors hover:bg-slate-100',
-                  selected ? 'text-emerald-700' : 'text-slate-600',
+                  'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors',
+                  option.disabledReason ? 'cursor-not-allowed text-slate-300' : 'hover:bg-slate-100',
+                  !option.disabledReason && (selected ? 'text-emerald-700' : 'text-slate-600'),
                 )}
                 onClick={() => {
+                  if (option.disabledReason) return;
                   setOpen(false);
                   onChange(option.value);
                 }}

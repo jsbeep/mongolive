@@ -8,6 +8,8 @@ interface FilterSortToolbarProps {
   filterText: string;
   onFilterTextChange: (value: string) => void;
   filterPlaceholder: string;
+  // 글자 검색을 지금 못 쓰는 이유(큰 컬렉션) — 있으면 입력칸이 잠기고 이유가 툴팁·안내 글로
+  filterDisabledReason?: string;
   sortValue: string;
   onSortChange: (value: string) => void;
   sortOptions: SortOption[];
@@ -24,6 +26,7 @@ export function FilterSortToolbar({
   filterText,
   onFilterTextChange,
   filterPlaceholder,
+  filterDisabledReason,
   sortValue,
   onSortChange,
   sortOptions,
@@ -44,7 +47,7 @@ export function FilterSortToolbar({
         onClose();
       }}
     >
-      <div className="relative flex-1 min-w-0">
+      <div className="relative flex-1 min-w-0" data-tt={filterDisabledReason}>
         <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
         <input
           ref={inputRef}
@@ -52,8 +55,14 @@ export function FilterSortToolbar({
           type="text"
           value={filterText}
           onChange={(e) => onFilterTextChange(e.target.value)}
-          placeholder={filterPlaceholder}
-          className="w-full text-[13px] pl-6 pr-6 py-1.5 rounded-lg bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 transition-all"
+          // disabled 대신 readOnly — 잠긴 칸에도 툴팁이 뜨고, 남아 있던 검색어는 X로 지울 수 있게
+          readOnly={!!filterDisabledReason}
+          aria-disabled={filterDisabledReason ? true : undefined}
+          placeholder={filterDisabledReason ? 'Search off — large collection' : filterPlaceholder}
+          // 취소선은 남아 있던(안 걸린) 검색어에만 — 안내 글에는 안 긋는다
+          className={`w-full text-[13px] pl-6 pr-6 py-1.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 transition-all ${
+            filterDisabledReason ? `bg-slate-100 text-slate-400 cursor-not-allowed ${filterText ? 'line-through' : ''}` : 'bg-white'
+          }`}
         />
         {filterText && (
           <button

@@ -36,6 +36,9 @@ const DOCUMENT_SORT_OPTIONS: SortOption[] = [
   { value: 'updated-asc', label: 'Oldest updated', icon: ClockArrowUp },
 ];
 
+// 큰 컬렉션(DocumentPage.limited)에서도 되는 정렬 — 서버가 _id 순서로 한다
+const LIMITED_SORTS: ReadonlySet<string> = new Set(['none', 'updated-desc', 'updated-asc']);
+
 // 검색어 입력이 멈춘 뒤 이만큼 기다렸다가 요청 — 글자마다 서버에 묻지 않도록
 const FILTER_DEBOUNCE_MS = 250;
 
@@ -117,7 +120,16 @@ export function DocumentsColumn({
     return () => clearTimeout(timer);
     // query.filter가 바뀐 경우는 위 effect가 입력창을 맞추므로 여기선 입력값 변화에만 반응
   }, [filterInput]); // eslint-disable-line react-hooks/exhaustive-deps
-  const isDocFilterActive = query.filter.trim().length > 0 || query.sort !== 'none';
+  // 큰 컬렉션 — 서버가 글자 검색과 제목·필드 수 정렬을 안 걸었다. 이유를 툴팁으로, 정렬 표시는 실제로 된 것으로
+  const limited = pageInfo?.limited;
+  const limitedReason = limited
+    ? `Over ${limited.threshold.toLocaleString()} documents — only the page is read. Use the query below to narrow it down`
+    : undefined;
+  const sortOptions = limitedReason
+    ? DOCUMENT_SORT_OPTIONS.map((o) => (LIMITED_SORTS.has(o.value) ? o : { ...o, disabledReason: limitedReason }))
+    : DOCUMENT_SORT_OPTIONS;
+  const effectiveSort = limited && !LIMITED_SORTS.has(query.sort) ? 'none' : query.sort;
+  const isDocFilterActive = (!limited && query.filter.trim().length > 0) || effectiveSort !== 'none';
   const totalAll = pageInfo?.totalUnfiltered ?? documents.length;
   const totalMatched = pageInfo?.total ?? documents.length;
   const pageCount = pageInfo ? Math.ceil(pageInfo.total / pageInfo.pageSize) : 1;
@@ -303,9 +315,10 @@ export function DocumentsColumn({
             filterText={filterInput}
             onFilterTextChange={setFilterInput}
             filterPlaceholder="Search title or preview…"
-            sortValue={query.sort}
+            filterDisabledReason={limitedReason}
+            sortValue={effectiveSort}
             onSortChange={(value) => onQueryChange({ sort: value as DocumentSort })}
-            sortOptions={DOCUMENT_SORT_OPTIONS}
+            sortOptions={sortOptions}
             onClose={closeSearchPanel}
             autoFocus={false}
             focusSignal={searchPanel.focus === 'filter' ? searchPanel.seq : undefined}

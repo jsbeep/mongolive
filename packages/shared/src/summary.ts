@@ -53,6 +53,21 @@ export const oidTimestampMs = (value: unknown): number | undefined => {
   return Number.isFinite(seconds) ? seconds * 1000 : undefined;
 };
 
+// 목록의 제목·미리보기 한 칸은 이 길이(코드 포인트)까지만 — 서버는 MongoDB에서 $substrCP로 같은 길이만 받아온다
+export const SUMMARY_TEXT_MAX = 200;
+
+export const clipSummaryText = (text: string): string => {
+  // UTF-16 길이가 한도 안이면 코드 포인트 수도 한도 안
+  if (text.length <= SUMMARY_TEXT_MAX) return text;
+  let out = '';
+  let count = 0;
+  for (const ch of text) {
+    if (count++ === SUMMARY_TEXT_MAX) break;
+    out += ch;
+  }
+  return out;
+};
+
 const summarizePreviewValue = (value: EjsonValue): string => {
   if (isOid(value)) {
     return `ObjectId(${value.$oid.slice(-8)})`;
@@ -63,43 +78,46 @@ const summarizePreviewValue = (value: EjsonValue): string => {
   return displayValue(value);
 };
 
+// 미리보기 한 칸의 글자. arrayLength = 배열 내용 없이 길이만 받아온 경우(서버 $project)
+export const previewText = (value: EjsonValue, arrayLength?: number): string =>
+  clipSummaryText(arrayLength !== undefined ? `[${arrayLength}]` : summarizePreviewValue(value));
+
+// 미리 만든 미리보기 재료 — 서버가 MongoDB에서 문서 전체 대신 앞 두 필드(줄인 값)와 필드 수만 받아올 때.
+// 이때 document에는 _id와 제목 후보 필드만 있으면 된다
+export interface SummaryParts {
+  head: Array<[key: string, text: string]>;
+  fieldCount: number;
+}
+
 export const summarizeDocument = (
   document: Document,
   updatedAt: number,
   titleKey?: string,
   primaryKey?: string,
   index?: number,
+  parts?: SummaryParts,
 ): DocumentSummary => {
   const id = getDocumentId(document, primaryKey, index);
   // 인덱스 fallback 토큰은 사용자에게 보여줄 의미가 없으니 표시용으로는 없는 셈 취급
   const displayableId = id && !id.startsWith(INDEX_FALLBACK_PREFIX) ? id : undefined;
   let title = displayableId ? (isOid(document._id) ? displayableId.slice(-8) : displayableId) : '[document]';
 
-  if (titleKey) {
-    const candidate = document[titleKey];
-    if (typeof candidate === 'string' && candidate.trim().length > 0) {
-      title = candidate;
-    }
-  } else {
-    const nameCandidate = document.name;
-    const titleCandidate = document.title;
-    if (typeof nameCandidate === 'string' && nameCandidate.trim().length > 0) {
-      title = nameCandidate;
-    } else if (typeof titleCandidate === 'string' && titleCandidate.trim().length > 0) {
-      title = titleCandidate;
-    }
-  }
+  // 제목 후보는 잘라 낸 뒤에 빈칸인지 본다 — 서버가 잘린 값만 받아와도 같은 판단이 나온다
+  const usable = (candidate: unknown): string | undefined => {
+    if (typeof candidate !== 'string') return undefined;
+    const clipped = clipSummaryText(candidate);
+    return clipped.trim().length > 0 ? clipped : undefined;
+  };
+  const picked = titleKey ? usable(document[titleKey]) : (usable(document.name) ?? usable(document.title));
+  if (picked !== undefined) title = picked;
 
-  const previewParts: string[] = [];
-  for (const [key, value] of Object.entries(document).slice(0, 2)) {
-    previewParts.push(`${key}: ${summarizePreviewValue(value as EjsonValue)}`);
-  }
+  const head = parts?.head ?? Object.entries(document).slice(0, 2).map(([key, value]): [string, string] => [key, previewText(value as EjsonValue)]);
 
   return {
     id: id ?? '',
     title,
-    preview: previewParts.join(', '),
-    fieldCount: Object.keys(document).length,
+    preview: head.map(([key, text]) => `${key}: ${text}`).join(', '),
+    fieldCount: parts?.fieldCount ?? Object.keys(document).length,
     updatedAt,
   };
 };

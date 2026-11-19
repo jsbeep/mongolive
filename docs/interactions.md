@@ -98,6 +98,7 @@ web 안의 계약 경계는 `web/src/services/dataSource.ts`의 `DataSource` 인
 | `monitor/backfill` | oplog.rs 스캔 + `countDocuments` + `watch` | 사용자가 시작할 때 |
 | `monitor/identity` | `hello` `replSetGetConfig` | 클러스터 지문(fingerprint) |
 | `db.ts` | `hello` `buildInfo` | 연결할 때 |
+| `documentList` (문서 목록) | `estimatedDocumentCount`(쿼리면 `countDocuments`) + `aggregate([$match?, $project 요약 재료])`. 1만 개 넘으면 `$sort _id` + `$skip/$limit` 한 페이지 + 선택 문서 순위 `countDocuments(_id 범위)` | 목록 열 때·페이지·실시간 다시 받기 |
 | `routes/read` 등 | `listDatabases` `listCollections` `estimatedDocumentCount` `$collStats` `find` | 탐색할 때 |
 
 ### B3 디스크 (`~/.mongolive/`)
@@ -135,7 +136,7 @@ feed는 그 연결을 쓰는 탭이 있으면 돌고, 마지막 탭이 떠나고
 
 | 화면 | 메서드 | 주기 | 쉬는 조건 |
 |---|---|---|---|
-| 탐색기 (replica set) | `onLiveChange` push | — | — |
+| 탐색기 (replica set) | `onLiveChange` push → 보이는 범위 다시 받기 | 묶는 간격(0.15/1.5초), 한 번에 하나 — 받는 중 온 변경은 끝난 뒤 `max(간격, 걸린 시간×2)` 쉬고 한 번에 | — |
 | 탐색기 (단독 Mongo) | 보이는 범위 다시 받기 (`usePolling`) | 설정값 | 편집 중·충돌·모달·탭 숨김 |
 | Overview | `onMonitor` push + `measureRtt` | 10초 | |
 | Collections / Overview | `getActivity` / `getHistory` | 10초 / 60초 | 탭 숨김 |
@@ -187,6 +188,8 @@ feed는 그 연결을 쓰는 탭이 있으면 돌고, 마지막 탭이 떠나고
 | indexes / oplog / startup | 중 / 하~중 / 하 | 하 | 요청 시·60초 | 하 |
 | **backfill** | **상** (oplog 전체 스캔) | 중 | 수동 | 일시적으로 상 |
 | 단독 Mongo 폴링 | 중 (보이는 find 재실행) | — | 설정값 | 중 |
+| 문서 목록 ≤1만 개 | 중 (Mongo가 전체를 읽지만 보내는 건 문서당 요약 재료 ~수백 B) | 하 (요약만, 최대 1만 개) | 열 때·실시간 | 중 |
+| 문서 목록 >1만 개 | 하~중 (`_id` 인덱스로 한 페이지. 먼 페이지는 skip 비례, 선택 문서 순위 세기는 순위 비례) | 하 (한 페이지) | 열 때·실시간 | 하~중 — 글자 검색·제목/필드 정렬은 꺼짐(쿼리 바로 좁힌다) |
 | 웹 모니터 폴링 | (서버 메모리만 읽음) | — | 10초 요청 5~6개 | 하 |
 
 ## 5. 파이프라인

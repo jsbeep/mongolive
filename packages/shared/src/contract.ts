@@ -92,7 +92,13 @@ export interface DocumentPage {
   totalUnfiltered: number;
   // markId 문서가 있는 페이지(필터 결과에 없으면 없음)
   markedPage?: number;
+  // 큰 컬렉션(쿼리 결과가 threshold개 넘음) — 서버가 MongoDB에서 페이지만 잘라 왔다.
+  // 이때 글자 검색(filter)과 제목·필드 수 정렬은 안 걸렸다(무시됨). 기본 순서·updated 정렬은 _id 순서로 된다
+  limited?: { reason: 'large'; threshold: number };
 }
+
+// 이 개수까지는 전체를 요약해서 글자 검색·모든 정렬을 지원한다. 넘으면 DocumentPage.limited
+export const DOCUMENT_LIST_FULL_MAX = 10_000;
 
 export interface ReferenceInfo {
   databaseName: string;
