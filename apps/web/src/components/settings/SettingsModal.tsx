@@ -11,10 +11,10 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, m } from 'framer-motion';
 import { Activity, CircleAlert, Download, Keyboard, Upload, CircleCheck, Database, Loader2, Lock, Monitor, Plus, Radio, RefreshCw, Shield, ShieldCheck, Sparkles, Stethoscope, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import type { AlertBurstLimit, AlertDeleteLimit, BackfillAutoLimit, CollectionSummary, DatabaseSummary, Diagnostics, HistoryInfo, MonitorHistory, MutationRequest, ServerSettings } from '../../types/explorer';
-import { ALERT_BURST_LIMITS, ALERT_DELETE_LIMITS, BACKFILL_AUTO_LIMITS } from '../../types/explorer';
+import { ALERT_BURST_LIMITS, ALERT_DELETE_LIMITS, BACKFILL_AUTO_LIMITS, PAGE_SIZE } from '../../types/explorer';
 import { api, dataSourceKind } from '../../services/api';
 import { useActiveConnection } from '../../services/activeConnection';
-import { sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type DateDisplay, type Theme, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type StandaloneRefresh, type UndoDepth } from '../../services/preferences';
+import { FIELD_PAGE_SIZES, sanitizeFontName, setPreference, usePreferences, UNDO_DEPTHS, type Animations, type FieldPageSize, type DateDisplay, type Theme, type DeleteConfirmLarge, type DeleteConfirmSmall, type LiveBatch, type OidDisplay, type StandaloneRefresh, type UndoDepth } from '../../services/preferences';
 import { ANIMATION_DISABLE_THRESHOLD_MB } from '../../utils/motionPresets';
 import { saveServerSettings, useServerSettings } from '../../services/serverSettings';
 import { applyBackup, buildBackup, downloadBackup, missingCollections, parseBackup, type SettingsBackup } from '../../services/settingsBackup';
@@ -228,6 +228,15 @@ function DisplaySection() {
           ]}
         />
         <p className={styles.preview}>{formatOid(SAMPLE_OID, prefs.oidDisplay)}</p>
+      </div>
+      <div className={styles.group}>
+        <p className={styles.groupTitle}>Fields per page</p>
+        <p className={styles.groupHint}>How many fields a document column shows before it splits into pages. The document list stays at {PAGE_SIZE} per page.</p>
+        <Segment<string>
+          value={String(prefs.fieldPageSize)}
+          onChange={(v) => setPreference('fieldPageSize', Number(v) as FieldPageSize)}
+          options={FIELD_PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+        />
       </div>
       <MonoFontPicker />
       <div className={styles.group}>

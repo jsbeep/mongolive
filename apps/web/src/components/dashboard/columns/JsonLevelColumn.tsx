@@ -21,7 +21,6 @@ import {
   type MutationRequest,
   type NormalActivePath,
   type ReferenceActivePath,
-  PAGE_SIZE,
   dateMs,
   summarizeDocument,
 } from '../../../types/explorer';
@@ -221,8 +220,9 @@ export function JsonLevelColumn({
   const currentNode: JsonValue = displayDoc ? resolveAtPath(displayDoc, projectionPath) : null;
   const entries = getEntries(currentNode);
 
-  // 필드가 PAGE_SIZE개를 넘으면 페이지로 나눠 그린다(문서 목록과 같은 단위). 문서는 이미 통째로
-  // 받아와 있으므로 서버에 묻지 않고 화면에서만 자른다.
+  // 필드가 한 페이지 수(설정 › Display › Fields per page, 기본 20)를 넘으면 페이지로 나눠 그린다.
+  // 문서는 이미 통째로 받아와 있으므로 서버에 묻지 않고 화면에서만 자른다.
+  const fieldPageSize = prefs.fieldPageSize;
   const [entryPage, setEntryPage] = useState(0);
 
   // 필드 검색/정렬 — 토글 가능한 보조 툴바 (헤더의 필터 아이콘)
@@ -252,10 +252,10 @@ export function JsonLevelColumn({
     return result;
   })();
 
-  const entryPageCount = Math.max(1, Math.ceil(displayEntries.length / PAGE_SIZE));
+  const entryPageCount = Math.max(1, Math.ceil(displayEntries.length / fieldPageSize));
   // 필드가 지워져 페이지 수가 줄면 마지막 페이지로
   const currentEntryPage = Math.max(0, Math.min(entryPage, entryPageCount - 1));
-  const visibleEntries = displayEntries.slice(currentEntryPage * PAGE_SIZE, (currentEntryPage + 1) * PAGE_SIZE);
+  const visibleEntries = displayEntries.slice(currentEntryPage * fieldPageSize, (currentEntryPage + 1) * fieldPageSize);
 
   // 다음 컬럼에 펼쳐져 있는 필드의 key — 그 필드가 다른 페이지에 있으면 그 페이지를 보여준다
   // (브레드크럼/경로 입력으로 깊은 곳에 바로 들어왔을 때 활성 표시가 안 보이는 일이 없게)
@@ -268,11 +268,11 @@ export function JsonLevelColumn({
 
   // 다른 노드로 옮기거나 검색/정렬을 바꾸면 첫 페이지(또는 활성 필드가 있는 페이지)부터
   useEffect(() => {
-    setEntryPage(activeChildIndex >= 0 ? Math.floor(activeChildIndex / PAGE_SIZE) : 0);
+    setEntryPage(activeChildIndex >= 0 ? Math.floor(activeChildIndex / fieldPageSize) : 0);
     // activeChildIndex는 이 시점의 값만 쓰면 된다 — 사용자가 다른 페이지로 넘긴 뒤 다시 끌려가지 않게
-  }, [displayDoc, projectionPath.join('.'), fieldFilterText, fieldSortMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [displayDoc, projectionPath.join('.'), fieldFilterText, fieldSortMode, fieldPageSize]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (activeChildIndex >= 0) setEntryPage(Math.floor(activeChildIndex / PAGE_SIZE));
+    if (activeChildIndex >= 0) setEntryPage(Math.floor(activeChildIndex / fieldPageSize));
   }, [activeChildKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
@@ -398,7 +398,7 @@ export function JsonLevelColumn({
   // 손잡이를 잡으면 '초안'이 시작된다: base = 그 순간의 컨테이너. 끄는 동안 순서만 바꿔 들고 있다가
   // 헤더의 ✓로 한 번에 쓴다(✗·Esc = 취소). 쓸 때 base를 '본 값'으로 보내므로, 그 사이 누가 바꿨으면
   // 다른 수정과 똑같이 충돌로 거절된다. 초안 동안엔 실시간 반영이 와도 base로 그린다.
-  // 평소엔 페이지(PAGE_SIZE개씩)로 보이지만 초안 동안엔 전체를 펼쳐 다른 페이지 자리로도 옮길 수 있다.
+  // 평소엔 페이지(fieldPageSize개씩)로 보이지만 초안 동안엔 전체를 펼쳐 다른 페이지 자리로도 옮길 수 있다.
   const [reorder, setReorder] = useState<{ base: JsonValue; order: string[] } | null>(null);
   const reorderSource = reorder ? reorder.base : currentNode;
   const isRootLevel = projectionPath.length === 0;
@@ -1166,7 +1166,7 @@ export function JsonLevelColumn({
       {!reorder && <PageRail
         page={currentEntryPage}
         pageCount={entryPageCount}
-        markedPage={activeChildIndex >= 0 ? Math.floor(activeChildIndex / PAGE_SIZE) : undefined}
+        markedPage={activeChildIndex >= 0 ? Math.floor(activeChildIndex / fieldPageSize) : undefined}
         onChange={setEntryPage}
         // 중첩 컬럼은 자체 스크롤이 없다 — head 컬럼의 스크롤 안에서 위에 붙어 따라오게
         className={isNested ? 'self-start sticky top-0' : undefined}

@@ -12,7 +12,7 @@ import { NotificationCenter, type NotificationTab } from '../components/notifica
 import { Toast } from '../components/notifications/Toast';
 import { SettingsModal, type SettingsSection } from '../components/settings/SettingsModal';
 import { QuickJump, type QuickCommand } from '../components/palette/QuickJump';
-import { Activity, Bell, ListTree, Lock, LogOut, PanelLeft, Plus, RefreshCw, Settings, Undo2, Unplug } from 'lucide-react';
+import { Activity, Bell, Check, ListOrdered, ListTree, Lock, LogOut, PanelLeft, Plus, RefreshCw, Settings, Undo2, Unplug } from 'lucide-react';
 import { useAuth } from '../components/auth/AuthGate';
 import { getServerSettingsSnapshot, saveServerSettings } from '../services/serverSettings';
 import { startServerSettingsSync } from '../services/serverSettings';
@@ -21,7 +21,7 @@ import { useSidebar } from '../hooks/useSidebar';
 import { useSystemLog } from '../hooks/useSystemLog';
 import { useMillerKeyboard } from '../hooks/useMillerKeyboard';
 import { usePolling } from '../hooks/usePolling';
-import { STANDALONE_REFRESH_MS, usePreferences } from '../services/preferences';
+import { FIELD_PAGE_SIZES, setPreference, STANDALONE_REFRESH_MS, usePreferences } from '../services/preferences';
 import { QueryHistoryPanel } from '../components/query/QueryHistoryPanel';
 import { ReferencesPanel } from '../components/references/ReferencesPanel';
 import { BookmarksPanel } from '../components/bookmarks/BookmarksPanel';
@@ -336,6 +336,14 @@ export default function ExplorerPage({ connectionId }: { connectionId: string | 
     { id: 'resync', label: "Re-sync what's on screen", icon: RefreshCw, hint: 'R', run: refreshNow },
     { id: 'undo', label: 'Undo last edit', icon: Undo2, hint: `${mod}Z`, run: () => void undo() },
     { id: 'tree', label: treeMode ? 'Switch to column mode' : 'Switch to tree mode', icon: ListTree, run: () => setTreeMode(!treeMode) },
+    // 문서 컬럼 한 페이지의 필드 수(설정 › Display와 같은 값) — 값마다 하나씩, 지금 값엔 체크
+    ...FIELD_PAGE_SIZES.map((n): QuickCommand => ({
+      id: `field-page-${n}`,
+      label: `Fields per page: ${n}`,
+      icon: prefs.fieldPageSize === n ? Check : ListOrdered,
+      hint: prefs.fieldPageSize === n ? 'current' : undefined,
+      run: () => setPreference('fieldPageSize', n),
+    })),
     { id: 'sidebar', label: sidebar.mode === 'full' ? 'Collapse sidebar to icons' : 'Expand sidebar', icon: PanelLeft, hint: `${mod}B`, run: () => sidebar.setMode(sidebar.mode === 'full' ? 'rail' : 'full') },
     {
       id: 'readonly',

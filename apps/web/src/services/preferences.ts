@@ -24,6 +24,9 @@ export const STANDALONE_REFRESH_MS: Record<StandaloneRefresh, number> = { off: 0
 export type Animations = 'auto' | 'on' | 'off';
 // 테마: system = OS 설정을 따른다
 export type Theme = 'system' | 'light' | 'dark';
+// 문서 컬럼 한 페이지의 필드 행 수. 문서 목록·Aggregation 결과는 PAGE_SIZE(10) 그대로
+export const FIELD_PAGE_SIZES = [10, 20, 50, 100] as const;
+export type FieldPageSize = (typeof FIELD_PAGE_SIZES)[number];
 
 // 고정폭 글꼴 — 이 컴퓨터에 설치된 글꼴 이름(빈 문자열 = 기본 목록). 내려받지 않는다(오프라인에서도 같게)
 export const DEFAULT_MONO_STACK = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
@@ -46,10 +49,11 @@ export interface Preferences {
   animations: Animations;
   monoFont: string;
   theme: Theme;
+  fieldPageSize: FieldPageSize;
 }
 
 const KEY = 'mongolive.preferences';
-const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate', standaloneRefresh: '1m', animations: 'auto', monoFont: '', theme: 'system' };
+const DEFAULTS: Preferences = { dateDisplay: 'local', showMs: false, oidDisplay: 'full', deleteConfirmLarge: 'type', deleteConfirmSmall: 'confirm', undoDepth: 10, liveBatch: 'immediate', standaloneRefresh: '1m', animations: 'auto', monoFont: '', theme: 'system', fieldPageSize: 20 };
 
 const load = (): Preferences => {
   try {
@@ -66,6 +70,7 @@ const load = (): Preferences => {
       animations: saved.animations === 'on' || saved.animations === 'off' || saved.animations === 'auto' ? saved.animations : DEFAULTS.animations,
       monoFont: typeof saved.monoFont === 'string' ? sanitizeFontName(saved.monoFont) : DEFAULTS.monoFont,
       theme: saved.theme === 'light' || saved.theme === 'dark' || saved.theme === 'system' ? saved.theme : DEFAULTS.theme,
+      fieldPageSize: (FIELD_PAGE_SIZES as readonly number[]).includes(saved.fieldPageSize as number) ? (saved.fieldPageSize as FieldPageSize) : DEFAULTS.fieldPageSize,
     };
   } catch {
     return DEFAULTS;
