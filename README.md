@@ -2,7 +2,7 @@
 
 # MongoLive - MongoDB Live Dashboard
 
-**컬럼 기반 실시간 MongoDB 데이터 탐색기**
+**컬럼 기반 실시간 MongoDB 탐색·모니터링 도구**
 
 **한국어** · [English](README.en.md)
 

@@ -2,7 +2,7 @@
 
 # MongoLive - MongoDB Live Dashboard
 
-**A column-based, realtime MongoDB data explorer**
+**A column-based, realtime MongoDB explorer and monitor**
 
 [한국어](README.md) · **English**
 
