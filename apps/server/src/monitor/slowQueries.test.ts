@@ -11,6 +11,7 @@ import {
   SLOW_BASE_MS,
   SLOW_FAST_MS,
   SLOW_IDLE_MS,
+  SLOW_LINES_PER_MINUTE,
   type SlowBucketLine,
   type SlowEntry,
   type SlowLine,
@@ -190,6 +191,27 @@ describe('buckets and summary', () => {
     expect(summarize(lines, { from: null, scope: { database: 'shop', collection: null }, min: 100 }).groups.map((g) => g.ns)).toEqual(['shop.orders']);
   });
 
+  it('caps new lines per minute — existing lines still add up, the next minute starts fresh', () => {
+    const buckets = new Map<string, SlowBucketLine>();
+    const shape = (i: number) => ({ key: `user|shop.c${i}|find|H${i}`, ns: `shop.c${i}` });
+    expect(addToBucket(buckets, entry(200, T0, shape(0)), 2)).toBe(true);
+    expect(addToBucket(buckets, entry(200, T0 + 1000, shape(1)), 2)).toBe(true);
+    expect(addToBucket(buckets, entry(200, T0 + 2000, shape(2)), 2)).toBe(false); // 세 번째 모양
+    expect(addToBucket(buckets, entry(300, T0 + 3000, shape(0)), 2)).toBe(true); // 있던 줄에 더하기
+    expect(addToBucket(buckets, entry(200, T0 + 61_000, shape(2)), 2)).toBe(true); // 다음 분
+    expect(buckets.size).toBe(3);
+    expect([...buckets.values()].find((l) => l.ns === 'shop.c0')?.n).toBe(2);
+  });
+
+  it('counts dropped runs in the range, whatever the scope', () => {
+    const lines: SlowLine[] = [
+      { t: T0, dropped: 7 },
+      { t: T0 + 600_000, dropped: 3 },
+    ];
+    expect(summarize(lines, { from: null, scope, min: 100 }).dropped).toBe(10);
+    expect(summarize(lines, { from: T0 + 300_000, scope: { database: 'shop', collection: 'orders' }, min: 100 }).dropped).toBe(3);
+  });
+
   it('merges back-to-back missed stretches', () => {
     const missed: SlowLine[] = [
       { t: T0 + 600_000, from: T0, missed: 500 },
@@ -284,6 +306,29 @@ describe('createSlowLog', () => {
     expect(report.groups.map((g) => g.op)).toEqual(['delete']);
     expect(report.slowms).toBe(100);
     expect(report.stored).toBe(false);
+  });
+
+  it('writes at most SLOW_LINES_PER_MINUTE lines a minute and a count for the rest', async () => {
+    const h = harness();
+    const shapes = Array.from({ length: SLOW_LINES_PER_MINUTE + 5 }, (_, i) =>
+      line('2026-11-16T15:01:57.000+00:00', 'COMMAND', 'conn15', {
+        type: 'command',
+        ns: `shop.c${i}`,
+        command: { find: `c${i}`, filter: { a: 1 }, $db: 'shop' },
+        planSummary: 'COLLSCAN',
+        queryHash: `H${i}`,
+        remote: '127.0.0.1:60218',
+        durationMillis: 150,
+      }),
+    );
+    h.respond({ totalLinesWritten: shapes.length, log: shapes });
+    await h.slow.poll();
+    h.advance(10_000); // 15:01 분이 끝났다
+    h.respond({ totalLinesWritten: shapes.length, log: shapes });
+    await h.slow.poll();
+    const written = h.appended.flatMap((a) => a.lines);
+    expect(written.filter((l) => 'k' in l)).toHaveLength(SLOW_LINES_PER_MINUTE);
+    expect(written.filter((l) => 'dropped' in l)).toEqual([{ t: at('2026-11-16T15:01:00.000Z'), dropped: 5 }]);
   });
 
   it('reports denied and unsupported servers without throwing', async () => {

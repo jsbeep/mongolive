@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ChevronRight } from 'lucide-react';
 import { LIVE_RANGES, SLOW_THRESHOLDS, type MonitorRange, type SlowGroup, type SlowQueriesReport, type SlowRun, type SlowThreshold } from '../../types/explorer';
 import { api } from '../../services/api';
+import { getServerSettingsSnapshot, saveServerSettings } from '../../services/serverSettings';
 import { cn } from '../../utils/cn';
 import { fmtAgo, fmtClock, fmtDateTime, fmtMs, fmtNumber, RANGE_LABEL } from './format';
 import { durationTone, Fact, HiddenKinds, KindChips, opStyles as styles, PlanBadge, pretty, useKindFilter, type OpKind } from './opParts';
@@ -129,6 +130,17 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
   // 떠 있는 동안 서버가 로그를 10초마다 읽는다(9-10)
   useEffect(() => api.watchSlowCard(), []);
 
+  // 꺼진 카드의 Turn on — 설정 › Monitor와 같은 서버 설정. 켜면 바로 다시 받는다
+  const [kick, setKick] = useState(0);
+  const turnOn = async () => {
+    try {
+      await saveServerSettings({ ...getServerSettingsSnapshot(), slowLog: true });
+      setKick((k) => k + 1);
+    } catch (e) {
+      setFailed(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   useEffect(() => {
     setOpen(null);
   }, [scopeKey, range]);
@@ -169,7 +181,7 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [scopeKey, range, min, open]);
+  }, [scopeKey, range, min, open, kick]);
 
   const slowms = report?.slowms ?? null;
   const floor = floorOf(slowms);
@@ -253,7 +265,22 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
         </p>
       )}
       {status === 'closed' && <p className={styles.note}>Slow queries are read while this connection is open in a tab.</p>}
-      {status === 'off' && <p className={styles.note}>Slow query collection is off (Settings › Monitor) — MongoDB’s log isn’t read. Earlier records are still shown.</p>}
+      {status === 'off' && (
+        <p className={styles.note}>
+          <span>
+            Slow query collection is off (Settings › Monitor) — MongoDB’s log isn’t read. Earlier records are still shown.{' '}
+            <button type="button" className="font-semibold text-emerald-700 hover:underline" onClick={() => void turnOn()}>
+              Turn on
+            </button>
+          </span>
+        </p>
+      )}
+      {(report?.dropped ?? 0) > 0 && (
+        <p className={styles.note}>
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700" />
+          About {fmtNumber(report?.dropped ?? 0)} slow runs weren’t recorded — more than 50 query shapes in a minute (a cap that keeps the log files small). Counted for the whole server.
+        </p>
+      )}
       {missedLines > 0 && (
         <p className={styles.note} data-tt={report?.missed.map((m) => `${fmtDateTime(m.from)} – ${fmtClock(m.to)} · ${fmtNumber(m.lines)} lines`).join('\n')}>
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700" />
@@ -274,7 +301,11 @@ export function SlowQueries({ scope, range }: { scope: MonitorScope; range: Moni
             <div className={styles.empty}>
               <p>
                 No slow queries on {where} — {RANGE_LABEL[range].toLowerCase()}.
-                {report.hidden > 0 ? ` ${fmtNumber(report.hidden)} faster than ${thresholdLabel(min)} hidden.` : ' With small data they’re rare.'}
+                {report.hidden > 0
+                  ? ` ${fmtNumber(report.hidden)} faster than ${thresholdLabel(min)} hidden.`
+                  : status === 'off'
+                    ? ' Nothing is being collected right now.'
+                    : ' With small data they’re rare.'}
               </p>
               <HiddenKinds filter={kindFilter} counts={kindCounts} />
             </div>

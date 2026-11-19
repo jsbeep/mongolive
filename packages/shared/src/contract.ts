@@ -572,6 +572,9 @@ export interface SlowQueriesReport {
   // min보다 빨라서 뺀 실행 수
   hidden: number;
   missed: SlowMissed[];
+  // 1분에 줄이 50개(쿼리 모양 × 걸린 시간 구간)를 넘어 기록하지 않은 실행 수 — 파일이 끝없이 커지지 않게.
+  // 어느 컬렉션 것인지 남기지 않으므로 범위와 상관없이 서버 전체 수
+  dropped: number;
   // 기록 파일에 남기는가(설정 › Monitor 기록이 켜져 있음). 꺼져 있으면 최근 1시간만 메모리에
   stored: boolean;
 }

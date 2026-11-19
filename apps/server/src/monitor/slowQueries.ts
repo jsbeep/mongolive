@@ -38,6 +38,9 @@ const SLOW_QUERY_ID = 51803;
 const COMMAND_MAX = 4096;
 const RUNS_PER_GROUP = 20;
 const MAX_GROUPS = 200;
+// 1분에 적는 줄 상한 — 쿼리 모양이 끝없이 많아도 slow 파일이 하루 약 360MB(50줄 × 약 5KB × 1440분)를 못 넘게.
+// 넘친 실행은 줄로 안 남기고 그 분의 개수만 센다(SlowDroppedLine)
+export const SLOW_LINES_PER_MINUTE = 50;
 // 기록이 꺼져 있을 때 메모리에 두는 기간
 const MEMORY_MS = 60 * 60 * 1000;
 // 놓친 구간이 계속 이어지면 이만큼마다 끊어서 적는다
@@ -111,8 +114,17 @@ export interface SlowMissedLine {
   missed: number;
 }
 
-export type SlowLine = SlowBucketLine | SlowMissedLine;
+// 1분 상한(SLOW_LINES_PER_MINUTE)을 넘어 줄로 못 남긴 실행 수(t = 그 분)
+export interface SlowDroppedLine {
+  t: number;
+  dropped: number;
+}
+
+export type SlowLine = SlowBucketLine | SlowMissedLine | SlowDroppedLine;
 const isMissed = (line: SlowLine): line is SlowMissedLine => 'missed' in line;
+const isDropped = (line: SlowLine): line is SlowDroppedLine => 'dropped' in line;
+// 그 줄이 끝난 때(보관·기간 비교용) — 묶음 줄은 마지막 실행, 나머지는 t
+const lineEnd = (line: SlowLine): number => ('last' in line ? line.last : line.t);
 
 // 0: 100ms 미만(서버 slowms를 낮춰 둔 경우), 1: 100ms~, 2: 500ms~, 3: 1s~, 4: 5s~
 export const bandOf = (ms: number): number => SLOW_THRESHOLDS.filter((t) => ms >= t).length;
@@ -251,12 +263,18 @@ const runOf = (e: SlowEntry): SlowRun => ({
   command: e.command,
 });
 
-export const addToBucket = (buckets: Map<string, SlowBucketLine>, e: SlowEntry) => {
+// 새 줄을 만들어야 하는데 그 분에 이미 cap개가 있으면 안 넣고 false(이미 있는 줄에 더하는 건 늘 된다)
+export const addToBucket = (buckets: Map<string, SlowBucketLine>, e: SlowEntry, cap = Infinity): boolean => {
   const t = minuteStart(e.at);
   const b = bandOf(e.ms);
   const id = `${t}|${e.key}|${b}`;
   const cur = buckets.get(id);
   if (!cur) {
+    if (Number.isFinite(cap)) {
+      let inMinute = 0;
+      for (const line of buckets.values()) if (line.t === t) inMinute += 1;
+      if (inMinute >= cap) return false;
+    }
     buckets.set(id, {
       t,
       k: e.key,
@@ -274,7 +292,7 @@ export const addToBucket = (buckets: Map<string, SlowBucketLine>, e: SlowEntry) 
       last: e.at,
       ex: runOf(e),
     });
-    return;
+    return true;
   }
   cur.n += 1;
   cur.sum += e.ms;
@@ -286,20 +304,27 @@ export const addToBucket = (buckets: Map<string, SlowBucketLine>, e: SlowEntry) 
     cur.max = e.ms;
     cur.ex = runOf(e);
   }
+  return true;
 };
 
 // 줄들 → 화면의 묶음. from = 이 시각 뒤(null = 전부), min보다 빠른 구간은 뺀다
 export const summarize = (
   lines: SlowLine[],
   { from, scope, min, expand = null }: { from: number | null; scope: OperationsScope; min: SlowThreshold; expand?: string | null },
-): { groups: SlowGroup[]; hidden: number; missed: SlowMissed[] } => {
+): { groups: SlowGroup[]; hidden: number; missed: SlowMissed[]; dropped: number } => {
   const minBand = bandOf(min);
   const groups = new Map<string, SlowGroup>();
   const missed: SlowMissed[] = [];
   let hidden = 0;
+  let dropped = 0;
   for (const line of lines) {
     if (isMissed(line)) {
       if (from === null || line.t >= from) missed.push({ from: line.from, to: line.t, lines: line.missed });
+      continue;
+    }
+    // 못 남긴 실행은 어느 컬렉션 것인지 모른다 — 범위와 상관없이 센다
+    if (isDropped(line)) {
+      if (from === null || line.t >= from) dropped += line.dropped;
       continue;
     }
     if ((from !== null && line.last < from) || !inScope(line.ns, scope)) continue;
@@ -357,7 +382,7 @@ export const summarize = (
       prev.lines += m.lines;
     } else merged.push({ ...m });
   }
-  return { groups: list, hidden, missed: merged };
+  return { groups: list, hidden, missed: merged, dropped };
 };
 
 // 날짜 파일 읽기는 크기 기록(9-6a)과 같이 쓴다(monitor/history readDayFiles)
@@ -398,6 +423,8 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
   let generation = 0;
   const writes = new Map<string, number>();
   let pending = new Map<string, SlowBucketLine>();
+  // 분 → 1분 상한을 넘어 줄로 못 남긴 실행 수(아직 안 적은 것)
+  const dropped = new Map<number, number>();
   let missedOpen: SlowMissedLine | null = null;
   let missedClosed: SlowMissedLine[] = [];
   // 기록이 꺼져 있을 때만 — 최근 1시간
@@ -429,6 +456,12 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
         pending.delete(id);
       }
     }
+    for (const [t, n] of dropped) {
+      if (all || t < edge) {
+        out.push({ t, dropped: n });
+        dropped.delete(t);
+      }
+    }
     if (all && missedOpen) {
       missedClosed.push(missedOpen);
       missedOpen = null;
@@ -442,11 +475,11 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
   const write = (out: SlowLine[]): Promise<void> => {
     if (!out.length) return Promise.resolve();
     if (hooks.stored()) {
-      const newest = out.reduce((n, l) => (isMissed(l) ? n : Math.max(n, l.last)), -Infinity);
+      const newest = out.reduce((n, l) => ('last' in l ? Math.max(n, l.last) : n), -Infinity);
       return hooks.recorder().appendSlow(out, Number.isFinite(newest) ? newest : null);
     }
     const keepFrom = clock() - MEMORY_MS;
-    memory = [...memory, ...out].filter((l) => (isMissed(l) ? l.t : l.last) >= keepFrom);
+    memory = [...memory, ...out].filter((l) => lineEnd(l) >= keepFrom);
     return Promise.resolve();
   };
 
@@ -526,7 +559,10 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
     const after = prevTotal === null ? since : null;
     for (const line of fresh) {
       const entry = parseSlowLine(line, writes);
-      if (entry && (after === null || entry.at > after)) addToBucket(pending, entry);
+      if (entry && (after === null || entry.at > after) && !addToBucket(pending, entry, SLOW_LINES_PER_MINUTE)) {
+        const t = minuteStart(entry.at);
+        dropped.set(t, (dropped.get(t) ?? 0) + 1);
+      }
     }
     if (Number.isFinite(total)) prevTotal = total;
     prevNewest = lineTime(lines[lines.length - 1]) ?? prevNewest;
@@ -571,6 +607,7 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
       off = false;
       writes.clear();
       pending = new Map();
+      dropped.clear();
       memory = [];
       slowms = null;
       return done;
@@ -590,6 +627,7 @@ export const createSlowLog = (hooks: SlowLogHooks): SlowLog => {
         lines.push(...memory);
       }
       lines.push(...pending.values(), ...missedClosed);
+      for (const [t, n] of dropped) lines.push({ t, dropped: n });
       if (missedOpen) lines.push(missedOpen);
       return {
         at: now,

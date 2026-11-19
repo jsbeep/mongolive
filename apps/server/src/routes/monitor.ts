@@ -180,6 +180,7 @@ monitorRouter.get('/monitor/slow', async (req, res) => {
       groups: [],
       hidden: 0,
       missed: [],
+      dropped: 0,
       stored: settings.monitorHistory !== 'off',
     };
     res.json(closed);

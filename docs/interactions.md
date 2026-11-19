@@ -50,7 +50,7 @@ web 안의 계약 경계는 `web/src/services/dataSource.ts`의 `DataSource` 인
 | `/monitor/last-writes` | `getLastWrites` | 메모리 |
 | `/monitor/history`, `/history-info`, `DELETE /history` | `getHistory` `getHistoryInfo` `clearHistory` | 파일 metrics/ |
 | `/monitor/backfill`, `/start`, `/stop` | `get/start/stopBackfill` | 메모리 + oplog 스캔 시작·정지 |
-| `/monitor/slow` | `getSlowQueries` (`expand`=펼친 그룹만 command 포함) | 메모리·파일 (slow 폴링이 채움) |
+| `/monitor/slow` | `getSlowQueries` (`expand`=펼친 그룹만 command 포함, `dropped`=1분 50줄 상한으로 못 남긴 실행 수) | 메모리·파일 (slow 폴링이 채움) |
 | `/monitor/top` | `getTop` | 메모리 (10초 틱) |
 | `/monitor/replica` | `getReplica` | 메모리 (10초 틱) |
 | `/monitor/alerts` | `getAlerts` | 메모리 |
@@ -87,7 +87,7 @@ web 안의 계약 경계는 `web/src/services/dataSource.ts`의 `DataSource` 인
 |---|---|---|
 | `monitor/sampler` | `ping` + `serverStatus`(필요 섹션만 ~4KB) | 10초 틱 |
 | `realtime` | `watch()` change stream | 연결을 쓰는 동안 계속 |
-| `monitor/slowQueries` | `getLog global` (+ `profile:-1`로 slowms 읽기, 5분 캐시) | 10초 틱 위에서 10/30/60초 (아래), 설정에서 끄면 안 함 |
+| `monitor/slowQueries` | `getLog global` (+ `profile:-1`로 slowms 읽기, 5분 캐시) | 10초 틱 위에서 10/30/60초 (아래), **기본 꺼짐**(설정·카드의 Turn on으로 켬). 1분에 50줄까지만 적고 나머지는 개수만 |
 | `monitor/top` | `top` | 10초 틱 (거부되면 5분 뒤 재시도) |
 | `monitor/replica` | `replSetGetStatus` `replSetGetConfig` | 10초 틱 |
 | `monitor/sizes` | `listDatabases` `listCollections` + 컬렉션마다 `$collStats` | 1시간 + 수동(최소 30초 간격) |
@@ -180,7 +180,7 @@ feed는 그 연결을 쓰는 탭이 있으면 돌고, 마지막 탭이 떠나고
 |---|---|---|---|---|
 | ping + serverStatus | 하 (~4KB) | 하 | 10초 | 하 |
 | change stream | 하~중 (쓰기량 비례) | 중 (로그 backlog, lag 1000개, 송신 버퍼 탭당 4MB까지 + 보내는 중인 한 묶음) | 상시 | 중 |
-| slow (`getLog`) | 중 (한 번에 버퍼 전체 0.2~1MB) | 중 (1시간 보관) | 대부분 30초, 카드 볼 때 10초, 숨으면 60초, off 가능 | 중 — 10초 고정일 때의 약 1/3 |
+| slow (`getLog`) | 중 (한 번에 버퍼 전체 0.2~1MB) | 중 (1시간 보관, 파일은 1분 50줄 상한 → 하루 최대 약 360MB) | 기본 off. 켜면 대부분 30초, 카드 볼 때 10초, 숨으면 60초 | 중 — 10초 고정일 때의 약 1/3 |
 | top / replica | 하 | 하~중 (1시간 보관) | 10초 | 하 |
 | metrics/ 기록 | — | 디스크 쓰기 | 10초 | 하 (SD카드면 주의) |
 | **sizes** | **상** (컬렉션 수 비례) | 하 | 1시간 + 수동 | 드물지만 무거움 |

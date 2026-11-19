@@ -586,9 +586,9 @@ function MonitorSection() {
           <Switch label="Collect slow queries" checked={settings.slowLog} onChange={(v) => void save({ slowLog: v })} />
         </div>
         <p className={styles.groupHint}>
-          mongolive reads MongoDB’s own log to find slow operations — the whole recent log (up to about 1 MB) on every read: every 10 s while the
-          Slow queries card is open, 30 s otherwise, 60 s when no tab is visible. Turn it off to never read the log, e.g. on a remote server
-          with a slow link. Saved on the server, for every browser.
+          Off by default. When on, mongolive reads MongoDB’s own log to find slow operations — the whole recent log (up to about 1 MB) on every
+          read: every 10 s while the Slow queries card is open, 30 s otherwise, 60 s when no tab is visible. Needs the getLog privilege. At most
+          50 query shapes a minute are recorded; runs beyond that are only counted. Saved on the server, for every browser.
         </p>
       </div>
 
